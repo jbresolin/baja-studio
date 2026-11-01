@@ -1,0 +1,309 @@
+"""Host for adapters that run as child processes, and the loop those children run.
+
+Adapters built on native libraries that can crash the interpreter (MIDI, UVC)
+run in a separate Python process so a crash only takes the child down. Host and
+child talk JSON lines over the child's stdin/stdout:
+
+    host -> child   {"id": 7, "method": "upper", "params": {"text": "hi"}}
+    child -> host   {"id": 7, "result": "HI"}     or   {"id": 7, "error": "..."}
+    child -> host   {"event": "button", "data": {...}}   (unsolicited)
+
+The child's stderr is forwarded to the service log. The host pings the child
+every two seconds; a missed ping or an exit counts as the device being offline.
+"""
+
+import json
+import logging
+import os
+import subprocess
+import sys
+import threading
+from collections.abc import Callable
+from typing import IO, Any
+
+from baja_studio.core.clock import Clock
+from baja_studio.core.supervisor import DeviceOfflineError, WorkerContext
+
+logger = logging.getLogger(__name__)
+
+PING_INTERVAL_SECONDS = 2.0
+REQUEST_TIMEOUT_SECONDS = 5.0
+STOP_TIMEOUT_SECONDS = 2.0
+
+EventCallback = Callable[[str, Any], None]
+ChildHandler = Callable[[str, dict[str, Any]], Any]
+
+
+class ChildRequestError(Exception):
+    """The child answered a request with an error message."""
+
+
+class _PendingRequest:
+    def __init__(self) -> None:
+        self.answered = threading.Event()
+        self.reply: dict[str, Any] = {}
+
+
+class ChildProcessHost:
+    """Starts one child process and exchanges requests and events with it."""
+
+    def __init__(
+        self,
+        python_module: str,
+        clock: Clock,
+        owner_module: str,
+        on_event: EventCallback | None = None,
+    ) -> None:
+        """Prepare to run `python -m <python_module>`; nothing starts until `start`.
+
+        `owner_module` is the studio module this child belongs to, used to tag logs.
+        """
+        self.python_module = python_module
+        self._clock = clock
+        self._owner_module = owner_module
+        self._on_event = on_event
+        self._process: subprocess.Popen[str] | None = None
+        self._write_lock = threading.Lock()
+        self._pending_lock = threading.Lock()
+        self._pending: dict[int, _PendingRequest] = {}
+        self._next_request_id = 1
+        self._exit_listeners: list[Callable[[], None]] = []
+        self.exited = threading.Event()
+
+    def add_exit_listener(self, listener: Callable[[], None]) -> None:
+        """Call `listener()` from the reader thread when the child's output ends."""
+        self._exit_listeners.append(listener)
+
+    def start(self) -> None:
+        """Spawn the child and start threads reading its stdout and stderr."""
+        self.exited.clear()
+        environment = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1"}
+        # On Windows the service has no console; without this each child would open one.
+        creation_flags = (
+            getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
+        )
+        self._process = subprocess.Popen(
+            [sys.executable, "-m", self.python_module],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            encoding="utf-8",
+            bufsize=1,
+            env=environment,
+            creationflags=creation_flags,
+        )
+        logger.info(
+            "child process started (pid %s)",
+            self._process.pid,
+            extra={"studio_module": self._owner_module, "child": self.python_module},
+        )
+        assert self._process.stdout is not None and self._process.stderr is not None
+        threading.Thread(
+            target=self._read_replies,
+            args=(self._process.stdout,),
+            name=f"{self.python_module}.stdout",
+            daemon=True,
+        ).start()
+        threading.Thread(
+            target=self._forward_stderr,
+            args=(self._process.stderr,),
+            name=f"{self.python_module}.stderr",
+            daemon=True,
+        ).start()
+
+    @property
+    def is_running(self) -> bool:
+        """True while the child process exists and has not exited."""
+        return self._process is not None and self._process.poll() is None
+
+    @property
+    def exit_code(self) -> int | None:
+        """The child's exit code once it has exited, otherwise None."""
+        return None if self._process is None else self._process.poll()
+
+    def request(
+        self,
+        method: str,
+        params: dict[str, Any] | None = None,
+        timeout_seconds: float = REQUEST_TIMEOUT_SECONDS,
+    ) -> Any:
+        """Send a request and wait for its answer.
+
+        Raises `DeviceOfflineError` if the child is not running, exits, or does
+        not answer in time; `ChildRequestError` if it answers with an error.
+        """
+        if not self.is_running:
+            raise DeviceOfflineError(f"child {self.python_module} is not running")
+        pending = _PendingRequest()
+        with self._pending_lock:
+            request_id = self._next_request_id
+            self._next_request_id += 1
+            self._pending[request_id] = pending
+        try:
+            self._write({"id": request_id, "method": method, "params": params or {}})
+            if not self._clock.wait(pending.answered, timeout_seconds):
+                raise DeviceOfflineError(
+                    f"child {self.python_module} did not answer {method!r} "
+                    f"within {timeout_seconds:.0f} s"
+                )
+        finally:
+            with self._pending_lock:
+                self._pending.pop(request_id, None)
+        if "error" in pending.reply:
+            if pending.reply.get("offline"):
+                raise DeviceOfflineError(pending.reply["error"])
+            raise ChildRequestError(pending.reply["error"])
+        return pending.reply.get("result")
+
+    def ping(self, timeout_seconds: float = REQUEST_TIMEOUT_SECONDS) -> None:
+        """Check the child is alive and responsive; raises `DeviceOfflineError` if not."""
+        self.request("ping", timeout_seconds=timeout_seconds)
+
+    def kill(self) -> None:
+        """Terminate the child abruptly; used to test and demonstrate recovery."""
+        if self._process is not None and self.is_running:
+            self._process.kill()
+
+    def stop(self, timeout_seconds: float = STOP_TIMEOUT_SECONDS) -> None:
+        """Close the child's stdin (its signal to exit), then terminate if it lingers."""
+        process = self._process
+        if process is None:
+            return
+        try:
+            if process.stdin is not None:
+                process.stdin.close()
+        except OSError:
+            pass
+        try:
+            process.wait(timeout_seconds)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait(timeout_seconds)
+        logger.info(
+            "child process stopped (exit code %s)",
+            process.returncode,
+            extra={"studio_module": self._owner_module, "child": self.python_module},
+        )
+
+    def _write(self, message: dict[str, Any]) -> None:
+        assert self._process is not None and self._process.stdin is not None
+        line = json.dumps(message) + "\n"
+        try:
+            with self._write_lock:
+                self._process.stdin.write(line)
+                self._process.stdin.flush()
+        except (OSError, ValueError) as error:
+            raise DeviceOfflineError(
+                f"cannot write to child {self.python_module}: {error}"
+            ) from error
+
+    def _read_replies(self, stream: IO[str]) -> None:
+        """Reader thread: route each line from the child to its waiting request or as an event."""
+        for line in stream:
+            self._handle_line(line)
+        self._fail_all_pending("child exited")
+        self.exited.set()
+        for listener in self._exit_listeners:
+            listener()
+
+    def _handle_line(self, line: str) -> None:
+        try:
+            message = json.loads(line)
+        except json.JSONDecodeError:
+            logger.warning(
+                "child wrote a non-JSON line: %r",
+                line.rstrip(),
+                extra={"studio_module": self._owner_module},
+            )
+            return
+        if "event" in message:
+            if self._on_event is not None:
+                try:
+                    self._on_event(message["event"], message.get("data"))
+                except Exception:
+                    logger.exception(
+                        "child event handler failed", extra={"studio_module": self._owner_module}
+                    )
+            return
+        with self._pending_lock:
+            pending = self._pending.get(message.get("id", -1))
+        if pending is not None:
+            pending.reply = message
+            pending.answered.set()
+
+    def _fail_all_pending(self, reason: str) -> None:
+        with self._pending_lock:
+            waiting = list(self._pending.values())
+        for pending in waiting:
+            pending.reply = {"error": reason, "offline": True}
+            pending.answered.set()
+
+    def _forward_stderr(self, stream: IO[str]) -> None:
+        """Reader thread: whatever the child prints to stderr goes to the service log."""
+        for line in stream:
+            logger.info(
+                "child: %s",
+                line.rstrip(),
+                extra={"studio_module": self._owner_module, "child": self.python_module},
+            )
+
+
+def run_child_session(
+    host: ChildProcessHost,
+    context: WorkerContext,
+    ping_interval_seconds: float = PING_INTERVAL_SECONDS,
+) -> None:
+    """Worker body for a module backed by a child process.
+
+    Starts the child, reports the module online once it answers a ping, then
+    pings it every interval. When the child dies or stops answering this
+    raises `DeviceOfflineError`, and the supervisor restarts the worker
+    (and so the child) with its usual backoff.
+    """
+    host.add_exit_listener(context.wake)
+    host.start()
+    try:
+        host.ping()
+        context.mark_online()
+        while not context.should_stop:
+            context.sleep(ping_interval_seconds)
+            if context.should_stop:
+                break
+            if not host.is_running or host.exited.is_set():
+                raise DeviceOfflineError(
+                    f"child {host.python_module} exited (code {host.exit_code})"
+                )
+            host.ping()
+    finally:
+        host.stop()
+
+
+def run_child(
+    handler: ChildHandler, stdin: IO[str] | None = None, stdout: IO[str] | None = None
+) -> None:
+    """The loop a child process runs: read requests, call `handler`, write replies.
+
+    A real adapter only writes `handler(method, params) -> result`; pings are
+    answered here. The loop ends when the host closes stdin.
+    """
+    input_stream = stdin if stdin is not None else sys.stdin
+    output_stream = stdout if stdout is not None else sys.stdout
+    for line in input_stream:
+        if not line.strip():
+            continue
+        try:
+            request = json.loads(line)
+        except json.JSONDecodeError:
+            print(f"ignoring non-JSON line: {line!r}", file=sys.stderr)
+            continue
+        reply: dict[str, Any] = {"id": request.get("id")}
+        try:
+            if request.get("method") == "ping":
+                reply["result"] = "pong"
+            else:
+                reply["result"] = handler(request.get("method", ""), request.get("params") or {})
+        except Exception as error:
+            reply["error"] = f"{type(error).__name__}: {error}"
+        output_stream.write(json.dumps(reply) + "\n")
+        output_stream.flush()

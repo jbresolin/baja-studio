@@ -1,0 +1,345 @@
+/* Dark, dense theme: operators work in dim rooms and want a lot on one screen. */
+
+:root {
+  --background: #121417;
+  --surface: #1b1e23;
+  --surface-raised: #23272e;
+  --border: #2e333b;
+  --text: #d8dce2;
+  --text-muted: #8a919c;
+  --accent: #5aa9ff;
+  --ok: #3fb950;
+  --degraded: #d29922;
+  --offline: #f85149;
+  --stopped: #6e7681;
+  color-scheme: dark;
+  font-family:
+    system-ui,
+    -apple-system,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
+  font-size: 14px;
+  line-height: 1.4;
+  background: var(--background);
+  color: var(--text);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+a {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+h1 {
+  font-size: 1.3rem;
+  margin: 0;
+}
+
+h2 {
+  font-size: 1rem;
+  margin: 1.2rem 0 0.4rem;
+  color: var(--text-muted);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.3rem 0.6rem;
+}
+
+button {
+  cursor: pointer;
+}
+
+button:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+button:not(:disabled):hover {
+  border-color: var(--accent);
+}
+
+.top-bar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.5rem 1rem;
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+
+.top-bar nav {
+  display: flex;
+  gap: 0.8rem;
+  flex: 1;
+}
+
+.top-bar nav a {
+  color: var(--text-muted);
+}
+
+.top-bar nav a.active {
+  color: var(--text);
+  font-weight: 600;
+}
+
+.brand {
+  font-weight: 700;
+}
+
+main {
+  padding: 1rem;
+  max-width: 1200px;
+  margin: 0 auto;
+}
+
+.muted {
+  color: var(--text-muted);
+}
+
+.connection {
+  font-size: 0.85rem;
+  white-space: nowrap;
+}
+
+.connection-open {
+  color: var(--ok);
+}
+
+.connection-connecting {
+  color: var(--degraded);
+}
+
+.connection-closed {
+  color: var(--offline);
+}
+
+.badge {
+  display: inline-block;
+  padding: 0 0.5rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: #0d1117;
+  background: var(--stopped);
+}
+
+.badge-ok {
+  background: var(--ok);
+}
+
+.badge-degraded {
+  background: var(--degraded);
+}
+
+.badge-offline {
+  background: var(--offline);
+}
+
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 0.75rem;
+}
+
+.card {
+  display: block;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.75rem;
+  color: var(--text);
+}
+
+.card:hover {
+  border-color: var(--accent);
+}
+
+.card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.card-title {
+  font-weight: 600;
+}
+
+.card-message {
+  margin-top: 0.4rem;
+  color: var(--degraded);
+  font-size: 0.85rem;
+  word-break: break-word;
+}
+
+.page-header {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.8rem;
+}
+
+.button-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin: 0.8rem 0;
+}
+
+.command-form {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.command-form input {
+  flex: 1;
+  min-width: 8rem;
+}
+
+.notice {
+  margin: 0.6rem 0;
+  padding: 0.5rem 0.7rem;
+  border-radius: 4px;
+  background: var(--surface-raised);
+  border-left: 3px solid var(--ok);
+  display: flex;
+  gap: 0.8rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.notice-error {
+  border-left-color: var(--offline);
+}
+
+.state-view,
+.traceback {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.6rem;
+  overflow-x: auto;
+  font-size: 0.85rem;
+  margin: 0;
+}
+
+.dense-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.85rem;
+}
+
+.dense-table td {
+  padding: 0.2rem 0.5rem;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+.nowrap {
+  white-space: nowrap;
+}
+
+.log-warning td {
+  color: var(--degraded);
+}
+
+.log-error td,
+.log-critical td {
+  color: var(--offline);
+}
+
+.log-debug td {
+  color: var(--text-muted);
+}
+
+.settings-layout {
+  display: flex;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.settings-sections {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  min-width: 10rem;
+}
+
+.settings-sections a {
+  color: var(--text-muted);
+  padding: 0.3rem 0.5rem;
+  border-radius: 4px;
+}
+
+.settings-sections a.active {
+  color: var(--text);
+  background: var(--surface-raised);
+}
+
+.settings-editor {
+  flex: 1;
+  min-width: 260px;
+}
+
+.schema-form {
+  display: flex;
+  flex-direction: column;
+  gap: 0.8rem;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  max-width: 28rem;
+}
+
+.field label {
+  font-weight: 600;
+}
+
+.field input[type="checkbox"] {
+  align-self: flex-start;
+}
+
+.field-help {
+  color: var(--text-muted);
+  font-size: 0.8rem;
+}
+
+.field-error {
+  color: var(--offline);
+  font-size: 0.8rem;
+}
+
+/* Phone width: stack the settings navigation above the form. */
+@media (max-width: 600px) {
+  main {
+    padding: 0.6rem;
+  }
+
+  .settings-sections {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+}
