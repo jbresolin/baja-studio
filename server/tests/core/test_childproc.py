@@ -137,9 +137,46 @@ def test_killing_the_child_sets_exited_and_calls_exit_listeners(
 
     host.kill()
 
+    # The host learns the child died when the child's output pipe ends. On
+    # Windows that pipe can end a moment *before* the operating system reports
+    # the process as finished, so asking the OS ("poll") right then could still
+    # say "running". This test once failed on Windows CI for exactly that
+    # reason. Now the host's reader thread waits for the process to really
+    # exit, and only then marks the host stopped and calls the listeners. So by
+    # the time `exited` is set, `is_running` must already be False.
     assert host.exited.wait(10)
     assert listener_called.wait(10)
     assert not host.is_running
+
+
+def test_exit_listeners_already_see_the_host_stopped_with_an_exit_code(
+    fake_clock: FakeClock, started_hosts: list[ChildProcessHost]
+) -> None:
+    # The listener writes down what the host looked like at the moment it was
+    # called. We check that record afterwards, from the test's own thread,
+    # because an assert failing inside the reader thread would go unnoticed.
+    seen_by_listener: dict[str, Any] = {}
+    listener_called = threading.Event()
+    host = ChildProcessHost(ECHO_CHILD, fake_clock, owner_module="test")
+
+    def record_what_the_host_says() -> None:
+        seen_by_listener["is_running"] = host.is_running
+        seen_by_listener["exit_code"] = host.exit_code
+        listener_called.set()
+
+    host.add_exit_listener(record_what_the_host_says)
+    host.start()
+    started_hosts.append(host)
+
+    host.kill()
+    assert listener_called.wait(10)
+
+    # Killing gives a non-zero exit code (its exact value differs between
+    # Linux and Windows), so we only check that one was recorded, and that it
+    # is the same code the host reports now.
+    assert seen_by_listener["is_running"] is False
+    assert seen_by_listener["exit_code"] is not None
+    assert seen_by_listener == {"is_running": False, "exit_code": host.exit_code}
 
 
 @pytest.mark.usefixtures("fake_children_importable")

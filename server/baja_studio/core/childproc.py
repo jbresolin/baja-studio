@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 PING_INTERVAL_SECONDS = 2.0
 REQUEST_TIMEOUT_SECONDS = 5.0
 STOP_TIMEOUT_SECONDS = 2.0
+EXIT_WAIT_SECONDS = 5.0
 
 EventCallback = Callable[[str, Any], None]
 ChildHandler = Callable[[str, dict[str, Any]], Any]
@@ -68,6 +69,10 @@ class ChildProcessHost:
         self._pending: dict[int, _PendingRequest] = {}
         self._next_request_id = 1
         self._exit_listeners: list[Callable[[], None]] = []
+        # Lifecycle state. Only `start` and the stdout reader thread write these,
+        # so every caller sees the same answer (see `_read_replies`).
+        self._running = False
+        self._exit_code: int | None = None
         self.exited = threading.Event()
 
     def add_exit_listener(self, listener: Callable[[], None]) -> None:
@@ -77,12 +82,13 @@ class ChildProcessHost:
     def start(self) -> None:
         """Spawn the child and start threads reading its stdout and stderr."""
         self.exited.clear()
+        self._exit_code = None
         environment = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUNBUFFERED": "1"}
         # On Windows the service has no console; without this each child would open one.
         creation_flags = (
             getattr(subprocess, "CREATE_NO_WINDOW", 0) if sys.platform == "win32" else 0
         )
-        self._process = subprocess.Popen(
+        process = subprocess.Popen(
             [sys.executable, "-m", self.python_module],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
@@ -93,34 +99,41 @@ class ChildProcessHost:
             env=environment,
             creationflags=creation_flags,
         )
+        self._process = process
+        self._running = True
         logger.info(
             "child process started (pid %s)",
-            self._process.pid,
+            process.pid,
             extra={"studio_module": self._owner_module, "child": self.python_module},
         )
-        assert self._process.stdout is not None and self._process.stderr is not None
+        assert process.stdout is not None and process.stderr is not None
         threading.Thread(
             target=self._read_replies,
-            args=(self._process.stdout,),
+            args=(process, process.stdout),
             name=f"{self.python_module}.stdout",
             daemon=True,
         ).start()
         threading.Thread(
             target=self._forward_stderr,
-            args=(self._process.stderr,),
+            args=(process.stderr,),
             name=f"{self.python_module}.stderr",
             daemon=True,
         ).start()
 
     @property
     def is_running(self) -> bool:
-        """True while the child process exists and has not exited."""
-        return self._process is not None and self._process.poll() is None
+        """True from `start` until the reader thread has seen the child exit.
+
+        This is the host's own flag, not `poll()`: on Windows the child's stdout
+        can reach end-of-file before `poll()` reports the exit, and the two
+        must never disagree.
+        """
+        return self._running
 
     @property
     def exit_code(self) -> int | None:
-        """The child's exit code once it has exited, otherwise None."""
-        return None if self._process is None else self._process.poll()
+        """The child's exit code once the reader thread has reaped it, otherwise None."""
+        return self._exit_code
 
     def request(
         self,
@@ -180,11 +193,9 @@ class ChildProcessHost:
         except subprocess.TimeoutExpired:
             process.kill()
             process.wait(timeout_seconds)
-        logger.info(
-            "child process stopped (exit code %s)",
-            process.returncode,
-            extra={"studio_module": self._owner_module, "child": self.python_module},
-        )
+        # The reader thread records the exit (flag, exit code, log line); wait
+        # for it so that `is_running` is already False when `stop` returns.
+        self.exited.wait(timeout_seconds)
 
     def _write(self, message: dict[str, Any]) -> None:
         assert self._process is not None and self._process.stdin is not None
@@ -198,14 +209,44 @@ class ChildProcessHost:
                 f"cannot write to child {self.python_module}: {error}"
             ) from error
 
-    def _read_replies(self, stream: IO[str]) -> None:
-        """Reader thread: route each line from the child to its waiting request or as an event."""
+    def _read_replies(self, process: subprocess.Popen[str], stream: IO[str]) -> None:
+        """Reader thread: route each line from the child to its waiting request or as an event.
+
+        When the output ends, this thread is the one place that records the
+        exit, in a fixed order: reap the process for its exit code, clear the
+        running flag, log, set `exited`, then call the exit listeners. So a
+        listener always sees `is_running` False and `exit_code` set.
+        """
         for line in stream:
             self._handle_line(line)
+        self._exit_code = self._reap(process)
+        self._running = False
+        logger.info(
+            "child process stopped (exit code %s)",
+            self._exit_code,
+            extra={"studio_module": self._owner_module, "child": self.python_module},
+        )
         self._fail_all_pending("child exited")
         self.exited.set()
         for listener in self._exit_listeners:
             listener()
+
+    def _reap(self, process: subprocess.Popen[str]) -> int:
+        """Wait for a child whose output has ended to exit, and return its exit code.
+
+        End-of-file usually means the process is gone or about to be (on Windows
+        the pipe can close slightly before the exit is visible). A child that
+        closes stdout but keeps running is killed.
+        """
+        try:
+            return process.wait(timeout=EXIT_WAIT_SECONDS)
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "child closed its output but did not exit; killing it",
+                extra={"studio_module": self._owner_module, "child": self.python_module},
+            )
+            process.kill()
+            return process.wait()
 
     def _handle_line(self, line: str) -> None:
         try:
@@ -270,7 +311,7 @@ def run_child_session(
             context.sleep(ping_interval_seconds)
             if context.should_stop:
                 break
-            if not host.is_running or host.exited.is_set():
+            if not host.is_running:
                 raise DeviceOfflineError(
                     f"child {host.python_module} exited (code {host.exit_code})"
                 )
