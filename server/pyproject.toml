@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "baja_studio"
+version = "0.1.0"
+description = "Baja Studio: one service for the studio tools (camera control, playout, audio)"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "fastapi==0.162.0",
+    "starlette==1.10.0",
+    "uvicorn==0.54.0",
+    "websockets==17.4",
+    "pydantic==2.14.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==9.2.0",
+    "httpx2==2.16.0",
+    "ruff==0.17.3",
+    "mypy==2.4.1",
+]
+
+[project.scripts]
+baja-studio = "baja_studio.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["baja_studio*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+# A test that hangs is a bug; this turns a hang into a clear failure.
+faulthandler_timeout = 60
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "N", "SIM", "RUF"]
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+files = ["baja_studio", "tests"]

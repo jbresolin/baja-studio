@@ -1,0 +1,114 @@
+"""The `Module` base class every studio tool is built from, and its context.
+
+A module is a self-contained feature (cameras, playout, audio...). It declares
+its settings model, initial state, commands, workers and optional extra HTTP
+routes; the registry wires it to the shared services through a `ModuleContext`.
+"""
+
+import logging
+from collections.abc import MutableMapping
+from dataclasses import dataclass
+from typing import Any, ClassVar
+
+from fastapi import APIRouter
+from pydantic import BaseModel
+
+from baja_studio.core.childproc import ChildProcessHost, EventCallback
+from baja_studio.core.clock import Clock
+from baja_studio.core.commandlog import CommandLog
+from baja_studio.core.settings import ModuleSettings, SettingsStore
+from baja_studio.core.state import StateStore
+from baja_studio.core.supervisor import Supervisor, WorkerSpec
+
+
+class CommandError(Exception):
+    """A command was refused (unknown name, bad arguments, wrong moment).
+
+    The message is shown to the operator, so it should say what to do.
+    """
+
+
+class ModuleLogger(logging.LoggerAdapter[logging.Logger]):
+    """A logger that tags every record with the module name (merging other extras)."""
+
+    def process(
+        self, msg: Any, kwargs: MutableMapping[str, Any]
+    ) -> tuple[Any, MutableMapping[str, Any]]:
+        """Called by `logging` for each call; adds `module` to the record's extras."""
+        kwargs["extra"] = {**(self.extra or {}), **kwargs.get("extra", {})}
+        return msg, kwargs
+
+
+@dataclass
+class ModuleContext:
+    """Everything a module may use from the shared base, handed to `Module.start`."""
+
+    name: str
+    settings: SettingsStore
+    state: StateStore
+    command_log: CommandLog
+    supervisor: Supervisor
+    clock: Clock
+    logger: ModuleLogger
+
+    def current_settings(self) -> BaseModel:
+        """This module's settings as they are right now."""
+        return self.settings.get(self.name)
+
+    def update_state(self, path: str, value: Any) -> None:
+        """Set a value in this module's state subtree; browsers see it within ~30 ms."""
+        self.state.update(self.name, path, value)
+
+    def new_child_process(
+        self, python_module: str, on_event: EventCallback | None = None
+    ) -> ChildProcessHost:
+        """Create (but not start) a child-process host owned by this module."""
+        return ChildProcessHost(python_module, self.clock, self.name, on_event)
+
+
+class Module:
+    """Base class for studio modules; subclasses override what they need."""
+
+    name: ClassVar[str]
+    title: ClassVar[str]
+    SettingsModel: ClassVar[type[ModuleSettings]] = ModuleSettings
+    # The home module must stay on, or there would be no page to turn it back on from.
+    can_be_disabled: ClassVar[bool] = True
+
+    def __init__(self) -> None:
+        """Modules are created in `main.py`; the context arrives later in `start`."""
+        self._context: ModuleContext | None = None
+
+    @property
+    def context(self) -> ModuleContext:
+        """The context given to `start`; only valid while the module runs."""
+        if self._context is None:
+            raise RuntimeError(f"module {self.name!r} has not been started")
+        return self._context
+
+    def initial_state(self) -> dict[str, Any]:
+        """The module's state subtree before anything has happened."""
+        return {}
+
+    def start(self, context: ModuleContext) -> None:
+        """Called when the service starts or the module is enabled; before workers start."""
+        self._context = context
+
+    def stop(self) -> None:
+        """Called when the service stops or the module is disabled; after workers stopped."""
+
+    def handle_command(self, command: str, args: dict[str, Any], source: str) -> Any:
+        """Carry out `command`; return a JSON-serialisable result or raise `CommandError`.
+
+        Called on a worker thread from the thread pool, never on the event loop,
+        so it may block briefly (e.g. waiting for a child process to answer).
+        """
+        raise CommandError(f"module {self.name!r} has no command {command!r}")
+
+    def workers(self) -> list[WorkerSpec]:
+        """Long-running loops the supervisor should keep alive for this module."""
+        return []
+
+    def routes(self) -> APIRouter | None:
+        """Optional extra HTTP routes, mounted under `/api/<name>`."""
+        return None
