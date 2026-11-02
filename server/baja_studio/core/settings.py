@@ -8,9 +8,10 @@ so two browsers editing at once cannot silently overwrite each other.
 import json
 import logging
 import threading
+import types
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Union, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -62,6 +63,9 @@ class SettingsRecord:
 
 SettingsCallback = Callable[[BaseModel], None]
 
+# Items of a list of models are matched by this field when restoring masked secrets.
+LIST_ITEM_KEY = "id"
+
 
 def secret_field_names(model_class: type[BaseModel]) -> set[str]:
     """Names of fields marked `json_schema_extra={"secret": True}`."""
@@ -71,6 +75,89 @@ def secret_field_names(model_class: type[BaseModel]) -> set[str]:
         if isinstance(extra, dict) and extra.get("secret") is True:
             names.add(name)
     return names
+
+
+def nested_model_fields(model_class: type[BaseModel]) -> dict[str, tuple[type[BaseModel], bool]]:
+    """Fields holding another model (`Model`, `Model | None`) or a list of them.
+
+    Maps field name to (inner model class, is a list). Secrets inside these
+    are masked and restored just like top-level ones.
+    """
+    nested: dict[str, tuple[type[BaseModel], bool]] = {}
+    for name, field in model_class.model_fields.items():
+        annotation = field.annotation
+        is_list = get_origin(annotation) is list
+        if is_list:
+            annotation = get_args(annotation)[0]
+        if get_origin(annotation) in (Union, types.UnionType):
+            options = [option for option in get_args(annotation) if option is not type(None)]
+            annotation = options[0] if len(options) == 1 else None
+        if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+            nested[name] = (annotation, is_list)
+    return nested
+
+
+def mask_secrets(model_class: type[BaseModel], values: dict[str, Any]) -> dict[str, Any]:
+    """A copy of dumped `values` with every non-empty secret, at any depth, masked."""
+    masked = dict(values)
+    for name in secret_field_names(model_class):
+        if masked.get(name):
+            masked[name] = SECRET_MASK
+    for name, (inner_class, is_list) in nested_model_fields(model_class).items():
+        value = masked.get(name)
+        if is_list and isinstance(value, list):
+            masked[name] = [
+                mask_secrets(inner_class, item) if isinstance(item, dict) else item
+                for item in value
+            ]
+        elif isinstance(value, dict):
+            masked[name] = mask_secrets(inner_class, value)
+    return masked
+
+
+def restore_masked_secrets(
+    model_class: type[BaseModel], patch: dict[str, Any], current: dict[str, Any]
+) -> dict[str, Any]:
+    """`patch` with every secret sent back as the mask replaced by its current value.
+
+    Items of a list of models are matched to the current list by their `id`
+    field when they have one (so reordering or deleting items keeps the right
+    secret with the right item), otherwise by position. A masked secret with
+    nothing to match becomes empty rather than the literal mask.
+    """
+    restored = dict(patch)
+    for name in secret_field_names(model_class):
+        if restored.get(name) == SECRET_MASK:
+            restored[name] = current.get(name, "")
+    for name, (inner_class, is_list) in nested_model_fields(model_class).items():
+        if name not in restored:
+            continue
+        value, current_value = restored[name], current.get(name)
+        if is_list and isinstance(value, list):
+            current_items = current_value if isinstance(current_value, list) else []
+            restored[name] = [
+                restore_masked_secrets(
+                    inner_class, item, _matching_item(item, index, current_items)
+                )
+                if isinstance(item, dict)
+                else item
+                for index, item in enumerate(value)
+            ]
+        elif isinstance(value, dict):
+            current_dict = current_value if isinstance(current_value, dict) else {}
+            restored[name] = restore_masked_secrets(inner_class, value, current_dict)
+    return restored
+
+
+def _matching_item(item: dict[str, Any], index: int, current_items: list[Any]) -> dict[str, Any]:
+    if LIST_ITEM_KEY in item:
+        for candidate in current_items:
+            if isinstance(candidate, dict) and candidate.get(LIST_ITEM_KEY) == item[LIST_ITEM_KEY]:
+                return candidate
+        return {}
+    if index < len(current_items) and isinstance(current_items[index], dict):
+        return dict(current_items[index])
+    return {}
 
 
 class SettingsStore:
@@ -134,13 +221,9 @@ class SettingsStore:
         return model_class.model_json_schema()
 
     def masked_values(self, section: str) -> dict[str, Any]:
-        """Settings as a plain dict with secret values replaced by a mask, for the API."""
+        """Settings as a plain dict with secret values (at any depth) masked, for the API."""
         record = self.record(section)
-        values = record.values.model_dump(mode="json")
-        for name in secret_field_names(type(record.values)):
-            if values.get(name):
-                values[name] = SECRET_MASK
-        return values
+        return mask_secrets(type(record.values), record.values.model_dump(mode="json"))
 
     def update(
         self, section: str, patch: dict[str, Any], expected_version: int | None = None
@@ -149,7 +232,8 @@ class SettingsStore:
 
         `expected_version` is the version the caller last saw; if someone else
         saved since, `SettingsConflictError` is raised and nothing changes.
-        A secret field sent back as the mask means "unchanged". Raises
+        A secret field sent back as the mask means "unchanged", also inside
+        nested models and lists of models (see `restore_masked_secrets`). Raises
         pydantic's `ValidationError` if the result is invalid.
         """
         with self._lock:
@@ -159,13 +243,9 @@ class SettingsStore:
             if expected_version is not None and expected_version != current.version:
                 raise SettingsConflictError(section, expected_version, current.version)
             model_class = self._models[section]
-            secrets = secret_field_names(model_class)
-            effective_patch = {
-                key: value
-                for key, value in patch.items()
-                if not (key in secrets and value == SECRET_MASK)
-            }
-            merged = {**current.values.model_dump(), **effective_patch}
+            current_values = current.values.model_dump()
+            effective_patch = restore_masked_secrets(model_class, patch, current_values)
+            merged = {**current_values, **effective_patch}
             values = model_class.model_validate(merged)
             record = self._save(section, values, version=current.version + 1)
             self._records[section] = record

@@ -181,6 +181,43 @@ def test_device_offline_error_reports_offline_and_mark_online_restores_ok(
     recorder.wait_for_sequence("demo", [HealthState.OFFLINE, HealthState.OK])
 
 
+def test_a_running_worker_can_report_its_own_health_and_it_sticks(
+    supervisor: Supervisor, fake_clock: FakeClock, recorder: HealthRecorder
+) -> None:
+    # A worker that looks after several devices keeps running when one of
+    # them goes away, so it cannot raise. Instead it reports "degraded" itself.
+    def multi_device_worker(worker: WorkerContext) -> None:
+        worker.report_health(HealthState.DEGRADED, "1 of 2 agents offline")
+        sleep_until_stopped(worker)
+
+    supervisor.register_module("demo")
+    supervisor.start_module("demo", [WorkerSpec("devices", multi_device_worker)])
+    recorder.wait_for_sequence("demo", [HealthState.DEGRADED])
+    assert supervisor.module_health("demo").message == "1 of 2 agents offline"
+    eventually(lambda: fake_clock.sleeping_count == 1)
+
+    # After ten seconds the "ran stably" rule would normally flip a degraded
+    # worker back to ok. It must not override a health the worker reported.
+    fake_clock.advance(11)
+
+    assert supervisor.module_health("demo").state == HealthState.DEGRADED
+
+
+def test_a_reported_health_is_replaced_by_the_next_report(
+    supervisor: Supervisor, recorder: HealthRecorder
+) -> None:
+    def recovering_worker(worker: WorkerContext) -> None:
+        worker.report_health(HealthState.OFFLINE, "all agents offline")
+        worker.report_health(HealthState.OK, "2 agents ok")
+        sleep_until_stopped(worker)
+
+    supervisor.register_module("demo")
+    supervisor.start_module("demo", [WorkerSpec("devices", recovering_worker)])
+
+    recorder.wait_for_sequence("demo", [HealthState.OFFLINE, HealthState.OK])
+    assert supervisor.module_health("demo").message == "2 agents ok"
+
+
 def test_a_worker_that_returns_on_its_own_is_treated_as_a_failure(
     supervisor: Supervisor, recorder: HealthRecorder
 ) -> None:

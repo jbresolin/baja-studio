@@ -27,6 +27,7 @@ from baja_studio.core.services import SYSTEM_SETTINGS_SECTION, StudioServices, S
 from baja_studio.core.settings import SettingsStore
 from baja_studio.core.state import DEFAULT_COALESCE_SECONDS, StateStore
 from baja_studio.core.supervisor import Supervisor
+from baja_studio.modules.agents import AgentsModule
 from baja_studio.modules.echo import EchoModule
 from baja_studio.modules.heartbeat import HeartbeatModule
 from baja_studio.modules.home import HomeModule
@@ -46,6 +47,7 @@ def build_module_list(registry: ModuleRegistry) -> list[Module]:
     """The modules this service runs, in the order they appear on the home page."""
     return [
         HomeModule(registry),
+        AgentsModule(),
         HeartbeatModule(),
         EchoModule(),
     ]

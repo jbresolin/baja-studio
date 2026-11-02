@@ -6,6 +6,10 @@ worker raised `DeviceOfflineError`), and the worker is restarted after an
 exponential backoff. A worker that then runs for ten seconds without failing
 is considered healthy again. The service process itself never goes down
 because of a worker.
+
+A worker that looks after several devices and keeps running while some of
+them are away (the agents module, for one) reports its health itself with
+`WorkerContext.report_health` instead of raising.
 """
 
 import logging
@@ -56,7 +60,12 @@ class WorkerContext:
     """What a running worker uses to sleep, notice stop requests and report recovery."""
 
     def __init__(
-        self, module: str, worker_name: str, clock: Clock, on_online: Callable[[], None]
+        self,
+        module: str,
+        worker_name: str,
+        clock: Clock,
+        on_online: Callable[[], None],
+        on_report: Callable[[Health], None] | None = None,
     ) -> None:
         """Created by the supervisor for each worker; workers never build one."""
         self.module = module
@@ -65,6 +74,7 @@ class WorkerContext:
         self.stop_requested = threading.Event()
         self._wake_requested = threading.Event()
         self._on_online = on_online
+        self._on_report = on_report
 
     @property
     def should_stop(self) -> bool:
@@ -88,6 +98,15 @@ class WorkerContext:
     def mark_online(self) -> None:
         """Report that the device is reachable again, so `offline` turns back to `ok`."""
         self._on_online()
+
+    def report_health(self, state: HealthState, message: str = "") -> None:
+        """Set this worker's health while it keeps running (e.g. 1 of 3 devices away).
+
+        The reported health stays until the worker reports again or fails; the
+        ten-second "ran stably" rule does not override it.
+        """
+        if self._on_report is not None:
+            self._on_report(Health(state, message))
 
 
 WorkerFunction = Callable[[WorkerContext], None]
@@ -140,6 +159,8 @@ class _RunningWorker:
     health: Health = field(default_factory=lambda: Health(HealthState.OK))
     run_number: int = 0
     stability_timer: TimerHandle | None = None
+    # True while `health` came from `report_health` rather than from a failure.
+    health_was_reported: bool = False
 
 
 HealthListener = Callable[[str, Health], None]
@@ -235,6 +256,7 @@ class Supervisor:
             spec.name,
             self._clock,
             on_online=lambda: self._worker_came_online(module, spec.name),
+            on_report=lambda health: self._worker_reported(module, spec.name, health),
         )
         worker = _RunningWorker(spec, context)
         if spec.starts_offline:
@@ -302,6 +324,8 @@ class Supervisor:
             if worker.run_number != run_number or worker.context.should_stop:
                 return
             worker.policy.reset()
+            if worker.health_was_reported:
+                return
         if worker.health.state != HealthState.OK:
             logger.info(
                 "worker recovered", extra={"studio_module": module, "worker": worker.spec.name}
@@ -317,9 +341,18 @@ class Supervisor:
             )
             self._set_worker_health(module, worker, Health(HealthState.OK))
 
-    def _set_worker_health(self, module: str, worker: _RunningWorker, health: Health) -> None:
+    def _worker_reported(self, module: str, worker_name: str, health: Health) -> None:
+        with self._lock:
+            worker = self._workers.get(module, {}).get(worker_name)
+        if worker is not None and not worker.context.should_stop:
+            self._set_worker_health(module, worker, health, reported=True)
+
+    def _set_worker_health(
+        self, module: str, worker: _RunningWorker, health: Health, reported: bool = False
+    ) -> None:
         with self._lock:
             worker.health = health
+            worker.health_was_reported = reported
         self._report_if_changed(module)
 
     def _report_if_changed(self, module: str) -> None:

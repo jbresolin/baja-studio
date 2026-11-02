@@ -35,6 +35,8 @@ export interface JsonSchemaProperty {
   $ref?: string;
   anyOf?: JsonSchemaProperty[];
   secret?: boolean;
+  /** Edited on the module's own page (e.g. the agents list), so the form skips it. */
+  managed_elsewhere?: boolean;
 }
 
 export interface SettingsSchema {

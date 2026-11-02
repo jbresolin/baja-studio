@@ -3,6 +3,7 @@
  *
  * Booleans become checkboxes, numbers number inputs, enums dropdowns, fields
  * marked `secret` password inputs, and anything more complex a JSON text box.
+ * Fields marked `managed_elsewhere` are left out: their module's page edits them.
  * Later work packages can add field kinds here and every Settings page gains them.
  */
 
@@ -35,23 +36,25 @@ export function resolveProperty(
 export function SchemaForm({ schema, values, fieldErrors, onChange }: SchemaFormProps) {
   return (
     <div className="schema-form">
-      {Object.entries(schema.properties).map(([field, rawProperty]) => {
-        const property = resolveProperty(schema, rawProperty);
-        const inputId = `setting-${field}`;
-        return (
-          <div className="field" key={field}>
-            <label htmlFor={inputId}>{property.title ?? field}</label>
-            <FieldInput
-              id={inputId}
-              property={property}
-              value={values[field]}
-              onChange={(value) => onChange(field, value)}
-            />
-            {property.description && <div className="field-help">{property.description}</div>}
-            {fieldErrors[field] && <div className="field-error">{fieldErrors[field]}</div>}
-          </div>
-        );
-      })}
+      {Object.entries(schema.properties)
+        .filter(([, rawProperty]) => !rawProperty.managed_elsewhere)
+        .map(([field, rawProperty]) => {
+          const property = resolveProperty(schema, rawProperty);
+          const inputId = `setting-${field}`;
+          return (
+            <div className="field" key={field}>
+              <label htmlFor={inputId}>{property.title ?? field}</label>
+              <FieldInput
+                id={inputId}
+                property={property}
+                value={values[field]}
+                onChange={(value) => onChange(field, value)}
+              />
+              {property.description && <div className="field-help">{property.description}</div>}
+              {fieldErrors[field] && <div className="field-error">{fieldErrors[field]}</div>}
+            </div>
+          );
+        })}
     </div>
   );
 }

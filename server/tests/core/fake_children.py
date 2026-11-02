@@ -15,7 +15,7 @@ import os
 import sys
 from typing import Any
 
-from baja_studio.core.childproc import run_child
+from baja_studio.core.childproc_child import run_child
 
 
 def refuse_everything(method: str, params: dict[str, Any]) -> Any:
