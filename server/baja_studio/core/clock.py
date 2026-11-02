@@ -1,9 +1,11 @@
 """Time source used by every core component.
 
 All waiting and timing goes through a `Clock` so tests can swap in a fake
-clock and control time explicitly instead of sleeping.
+clock and control time explicitly instead of sleeping. Threads wait with
+`wait`; coroutines (the agent client, the fake agent) wait with `sleep`.
 """
 
+import asyncio
 import threading
 import time
 from collections.abc import Callable
@@ -33,6 +35,9 @@ class Clock(Protocol):
     def call_later(self, seconds: float, callback: Callable[[], None]) -> TimerHandle:
         """Run `callback` once after `seconds`, on some other thread."""
 
+    async def sleep(self, seconds: float) -> None:
+        """Pause the calling coroutine for `seconds`; cancellable like `asyncio.sleep`."""
+
 
 class SystemClock:
     """The real clock used when the service runs."""
@@ -55,3 +60,7 @@ class SystemClock:
         timer.daemon = True
         timer.start()
         return timer
+
+    async def sleep(self, seconds: float) -> None:
+        """A plain `asyncio.sleep`."""
+        await asyncio.sleep(seconds)

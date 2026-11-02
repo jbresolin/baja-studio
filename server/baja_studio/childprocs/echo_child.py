@@ -6,7 +6,7 @@ Real adapters (MIDI, UVC) follow the same shape: a handler function passed to
 
 from typing import Any
 
-from baja_studio.core.childproc import run_child
+from baja_studio.core.childproc_child import run_child
 
 
 def handle_request(method: str, params: dict[str, Any]) -> Any:

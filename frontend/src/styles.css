@@ -343,3 +343,33 @@ main {
     flex-wrap: wrap;
   }
 }
+
+/* Agents page: one block per agent, cameras greyed while their agent is away. */
+.agent-card {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.6rem 0.8rem;
+  margin-bottom: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.agent-cameras th {
+  text-align: left;
+  font-weight: 600;
+  padding: 0.2rem 0.5rem;
+}
+
+.agent-cameras tr.stale {
+  opacity: 0.5;
+}
+
+.command-form input.narrow {
+  width: 5rem;
+}
+
+button.danger {
+  border-color: var(--offline);
+  color: var(--offline);
+}

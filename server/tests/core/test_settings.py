@@ -8,7 +8,7 @@ import json
 from pathlib import Path
 
 import pytest
-from pydantic import Field, ValidationError
+from pydantic import BaseModel, Field, ValidationError
 
 from baja_studio.core.database import Database
 from baja_studio.core.settings import (
@@ -154,6 +154,66 @@ def test_sending_the_mask_back_keeps_the_existing_secret(store: SettingsStore) -
     assert isinstance(current, CameraSettings)
     assert current.password == "hunter2"
     assert current.port == 9
+
+
+class RemoteSettings(BaseModel):
+    """One entry of a made-up list of remote machines, each with its own secret."""
+
+    id: str
+    token: str = Field(default="", json_schema_extra={"secret": True})
+
+
+class FleetSettings(ModuleSettings):
+    """Made-up settings holding a list of models, like the agents module does."""
+
+    remotes: list[RemoteSettings] = Field(default_factory=list)
+
+
+@pytest.fixture
+def fleet_store(store: SettingsStore) -> SettingsStore:
+    """The same store with a "fleet" section holding two remotes with tokens."""
+    store.register("fleet", FleetSettings)
+    store.update(
+        "fleet", {"remotes": [{"id": "a", "token": "token-a"}, {"id": "b", "token": "token-b"}]}
+    )
+    return store
+
+
+def test_secrets_inside_a_list_of_models_are_masked_too(fleet_store: SettingsStore) -> None:
+    shown = fleet_store.masked_values("fleet")
+
+    assert shown["remotes"] == [
+        {"id": "a", "token": SECRET_MASK},
+        {"id": "b", "token": SECRET_MASK},
+    ]
+
+
+def test_masked_secrets_in_a_list_stay_with_their_item_even_after_reordering(
+    fleet_store: SettingsStore,
+) -> None:
+    # The page sends the list back in another order, with one item removed
+    # and both remaining tokens still masked. Matching by "id" (not by
+    # position) means "b" keeps token-b instead of inheriting token-a.
+    fleet_store.update(
+        "fleet", {"remotes": [{"id": "b", "token": SECRET_MASK}, {"id": "c", "token": "token-c"}]}
+    )
+
+    current = fleet_store.get("fleet")
+    assert isinstance(current, FleetSettings)
+    assert [(remote.id, remote.token) for remote in current.remotes] == [
+        ("b", "token-b"),
+        ("c", "token-c"),
+    ]
+
+
+def test_a_masked_secret_for_a_new_list_item_is_saved_as_empty_not_as_the_mask(
+    fleet_store: SettingsStore,
+) -> None:
+    fleet_store.update("fleet", {"remotes": [{"id": "new", "token": SECRET_MASK}]})
+
+    current = fleet_store.get("fleet")
+    assert isinstance(current, FleetSettings)
+    assert current.remotes[0].token == ""
 
 
 def test_the_schema_marks_secret_fields_for_the_settings_form(store: SettingsStore) -> None:

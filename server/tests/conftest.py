@@ -11,6 +11,8 @@ all service code asks a `Clock` object for the time and for waiting, and tests
 hand it this fake one, where time only moves when the test calls `advance()`.
 """
 
+import asyncio
+import contextlib
 import threading
 import time
 from collections.abc import Callable, Iterator
@@ -27,6 +29,9 @@ from baja_studio.core.registry import ModuleRegistry
 from baja_studio.core.supervisor import Health, HealthState
 from baja_studio.main import build_module_list, create_app
 
+# Fixtures for tests that need fake camera-laptop agents (tests/fake_agents.py).
+pytest_plugins = ["tests.fake_agents"]
+
 # How long (in real seconds) a helper waits before declaring the test failed.
 # It is a safety net against hangs, not a timing assumption: in a passing run
 # the thing we wait for happens within milliseconds.
@@ -34,6 +39,15 @@ SAFETY_TIMEOUT_SECONDS = 10.0
 
 # Fixed starting date for the fake clock, so timestamps in tests are predictable.
 FAKE_CLOCK_START = datetime(2026, 10, 1, 12, 0, 0, tzinfo=UTC)
+
+
+@dataclass
+class _AsyncSleeper:
+    """A coroutine paused in `FakeClock.sleep`: when to wake it, and how."""
+
+    due: float
+    loop: asyncio.AbstractEventLoop
+    future: asyncio.Future[None]
 
 
 @dataclass
@@ -51,6 +65,8 @@ class FakeClock:
 
     Threads that call `wait(event, seconds)` stay blocked until either the
     event is set or the test has advanced fake time past their deadline.
+    Coroutines that call `await sleep(seconds)` likewise stay paused until the
+    test advances time past their deadline (they may live on any event loop).
     """
 
     def __init__(self) -> None:
@@ -59,6 +75,7 @@ class FakeClock:
         # Deadlines of the threads currently blocked in `wait`, by thread id.
         self._sleeper_deadlines: dict[int, float] = {}
         self._timers: list[_FakeTimer] = []
+        self._async_sleepers: list[_AsyncSleeper] = []
 
     def monotonic(self) -> float:
         with self._condition:
@@ -81,6 +98,21 @@ class FakeClock:
                 del self._sleeper_deadlines[threading.get_ident()]
                 self._condition.notify_all()
 
+    async def sleep(self, seconds: float) -> None:
+        if seconds <= 0:
+            await asyncio.sleep(0)
+            return
+        loop = asyncio.get_running_loop()
+        with self._condition:
+            sleeper = _AsyncSleeper(self._now + seconds, loop, loop.create_future())
+            self._async_sleepers.append(sleeper)
+        try:
+            await sleeper.future
+        finally:
+            with self._condition:
+                if sleeper in self._async_sleepers:
+                    self._async_sleepers.remove(sleeper)
+
     def call_later(self, seconds: float, callback: Callable[[], None]) -> _FakeTimer:
         timer = _FakeTimer(self.monotonic() + seconds, callback)
         with self._condition:
@@ -93,6 +125,12 @@ class FakeClock:
         with self._condition:
             return len(self._sleeper_deadlines)
 
+    @property
+    def async_sleeping_count(self) -> int:
+        """How many coroutines are paused in `sleep` right now."""
+        with self._condition:
+            return len(self._async_sleepers)
+
     def wake_up_times(self) -> list[float]:
         """The fake times at which the currently sleeping threads will wake, earliest first."""
         with self._condition:
@@ -103,11 +141,20 @@ class FakeClock:
 
         Returns only once every thread whose deadline has passed has actually
         left `wait`, so the test can safely look at what they did next.
+        Coroutines whose deadline has passed are only *scheduled* to resume
+        (their event loop runs them soon after), so tests check what they did
+        with `eventually` / `eventually_async`.
         """
         with self._condition:
             self._now += seconds
             due_timers = [timer for timer in self._timers if timer.due <= self._now]
             self._timers = [timer for timer in self._timers if timer.due > self._now]
+            due_sleepers = [sleeper for sleeper in self._async_sleepers if sleeper.due <= self._now]
+            self._async_sleepers = [
+                sleeper for sleeper in self._async_sleepers if sleeper.due > self._now
+            ]
+            for sleeper in due_sleepers:
+                _resume_soon(sleeper)
             self._condition.notify_all()
             woke_up = self._condition.wait_for(
                 lambda: all(deadline > self._now for deadline in self._sleeper_deadlines.values()),
@@ -117,6 +164,18 @@ class FakeClock:
         for timer in due_timers:
             if not timer.cancelled:
                 timer.callback()
+
+
+def _resume_soon(sleeper: _AsyncSleeper) -> None:
+    """Ask the sleeper's event loop to finish its `sleep` (from whatever thread we are on)."""
+
+    def resume() -> None:
+        if not sleeper.future.done():
+            sleeper.future.set_result(None)
+
+    # RuntimeError: that event loop has already closed, so nobody is waiting any more.
+    with contextlib.suppress(RuntimeError):
+        sleeper.loop.call_soon_threadsafe(resume)
 
 
 def eventually(condition: Callable[[], bool], message: str = "condition never became true") -> None:
@@ -130,6 +189,20 @@ def eventually(condition: Callable[[], bool], message: str = "condition never be
     while not condition():
         assert time.monotonic() < give_up_at, message
         pause.wait(0.005)
+
+
+async def eventually_async(
+    condition: Callable[[], bool], message: str = "condition never became true"
+) -> None:
+    """`eventually` for async tests: polls without blocking the test's own event loop.
+
+    Other coroutines on the same loop (the agent client, say) keep running
+    while this waits, which a plain `eventually` would prevent.
+    """
+    give_up_at = time.monotonic() + SAFETY_TIMEOUT_SECONDS
+    while not condition():
+        assert time.monotonic() < give_up_at, message
+        await asyncio.sleep(0.005)
 
 
 class HealthRecorder:
@@ -161,6 +234,20 @@ class HealthRecorder:
             contains_in_order,
             f"{module} never went through {expected}; saw {self.states_of(module)}",
         )
+
+
+def pytest_addoption(parser: pytest.Parser) -> None:
+    """Options of the agent conformance suite (tests/agent_contract; see docs/agent-api.md)."""
+    group = parser.getgroup("agent contract")
+    group.addoption(
+        "--agent-url",
+        default=None,
+        help="check a real agent, e.g. http://laptop:8890 (default: an in-process fake)",
+    )
+    group.addoption("--agent-token", default="", help="the X-Agent-Token the agent expects")
+    group.addoption(
+        "--agent-camera", default=None, help="id of the PTZ to test (default: the first PTZ)"
+    )
 
 
 @pytest.fixture

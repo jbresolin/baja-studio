@@ -35,12 +35,30 @@ reading its tests.
   device answers. Never catch-and-ignore errors to look healthy; let the
   supervisor see them.
 - Adapters built on native libraries that can crash Python run as child
-  processes: write a handler for `childproc.run_child(handler)` under
+  processes: write a handler for `childproc_child.run_child(handler)` under
   `baja_studio/childprocs/`, and drive it from a worker with
-  `run_child_session`.
+  `childproc.run_child_session`. The child side imports only
+  `core/childproc_child.py`, never the host side.
+- A worker that looks after several devices and keeps running while some are
+  away reports a summary with `worker.report_health(state, message)` instead
+  of raising.
+- Secrets inside nested models or lists of models are masked like top-level
+  ones; give list items an `id` field so a masked secret sent back stays with
+  its item.
 - Log with `context.logger` (it tags records with the module). When using a
   plain logger, pass `extra={"studio_module": name}` — `module` is reserved
   by Python's `LogRecord`.
+
+## Network clients and units
+
+- Any network client has explicit connect/read timeouts and a documented
+  offline rule (e.g. the agent client: 2 s per request, `offline` after 5 s
+  without hearing from the agent).
+- Normalised units at API boundaries: `-1..1` velocities, `0..1` crops and
+  zoom. Device-specific tables (VISCA speed steps, UVC ranges) live only
+  inside drivers.
+- Async code waits with `await clock.sleep(...)`, never `asyncio.sleep`, so
+  tests can run it on the fake clock.
 
 ## Tests
 
@@ -57,6 +75,16 @@ reading its tests.
 - Fakes live next to the tests they serve (e.g. `tests/core/fake_children.py`,
   `frontend/tests/fakeSocket.ts`). No mocking library beyond `unittest.mock`
   (Python) / `vi.fn` (Vitest), and only for the rare case.
+- Fakes that stand in for external systems are runnable programs, not just
+  test fixtures, and live in the package under `baja_studio/fakes/` (e.g.
+  `python -m baja_studio.fakes.fake_agent`). Tests reach them in-process,
+  without opening ports.
+- Async tests are marked `@pytest.mark.anyio`. With the fake clock, let time
+  pass with `advance_in_steps` / `advance_in_steps_async`, not one big
+  `advance`, so pushes and timeouts interleave as they would for real.
+- The agent conformance suite (`tests/agent_contract`) is the one place that
+  runs in real time, because it must also check real agents
+  (`--agent-url`). It waits for events with deadlines, never fixed sleeps.
 - Frontend: Vitest + Testing Library under `frontend/tests/`, same naming and
   comment rules.
 

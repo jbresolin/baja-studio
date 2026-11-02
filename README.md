@@ -5,8 +5,11 @@ playout and audio, each as a **module**. It is a Python program, built on
 FastAPI, that also serves a React web page. Every browser connected to it
 sees the same live state.
 
-This first version (work package WP0) has no real devices yet. It ships the
-shared base that later modules build on, plus two demo modules:
+Work package WP0 built the shared base that every module builds on. WP1
+added the **agents** module: the studio's link to the camera laptops
+("agents") at trackside. Their API is the contract in
+[docs/agent-api.md](docs/agent-api.md). There is no real camera driver yet;
+that comes in WP2. Two demo modules remain:
 
 - **heartbeat** counts up once per second. You can change the interval in
   Settings, reset it, or make its worker crash once to watch it recover.
@@ -14,8 +17,9 @@ shared base that later modules build on, plus two demo modules:
   into capitals. You can kill the child and watch the service restart it.
 
 Background reading: [docs/goals.md](docs/goals.md) (what we are building and
-why), [docs/conventions.md](docs/conventions.md) (how the code is written)
-and [docs/adr/](docs/adr/) (decisions taken in each work package).
+why), [docs/conventions.md](docs/conventions.md) (how the code is written),
+[docs/agent-api.md](docs/agent-api.md) (the camera-laptop agent API) and
+[docs/adr/](docs/adr/) (decisions taken in each work package).
 
 ## What you need
 
@@ -78,8 +82,9 @@ python -m baja_studio
 ```
 
 Open <http://localhost:8888>. The home page shows a card for each module:
-**home**, **heartbeat** and **echo**. Each card has a health badge, which
-should be green `ok` after a second or two. Stop the service with `Ctrl+C`.
+**home**, **camera agents**, **heartbeat** and **echo**. Each card has a
+health badge, which should be green `ok` after a second or two. Stop the
+service with `Ctrl+C`.
 
 Options:
 
@@ -106,6 +111,26 @@ Log files are in its `logs` subfolder, one JSON object per line.
 | Live sync between browsers | Open the heartbeat page on your PC and on your phone (`http://<pc-ip>:8888`) | Both show the same count, updating together. |
 | Watch a worker recover | Heartbeat page → **Crash worker once** | The badge turns amber `degraded`. Counting resumes after about 1 s, and the badge returns to `ok` after 10 s without errors. |
 | Turn a module off | Settings → Heartbeat → untick *Enabled* → Save | The heartbeat card shows grey `stopped`. Tick it again to restart it. |
+
+## A fake camera laptop on the bench
+
+You do not need a trackside laptop to try the agents module. In a second
+terminal (virtual environment active), start a fake agent:
+
+```
+python -m baja_studio.fakes.fake_agent --port 8890 --cameras 2
+```
+
+It speaks the full agent API, with two simulated PTZs. Options:
+`--crop-cameras 1` adds a crop camera, `--token T` requires a token, and
+`--host 127.0.0.1` keeps it off the network.
+
+| What | How | What you should see |
+|---|---|---|
+| Find it | Home → **Camera agents** → type your network (e.g. `192.168.1.0/24`, or `127.0.0.1/32` on the same PC) → **Scan subnet** → **Add** | The agent appears, green `ok`, with cameras `cam1` and `cam2` in `manual`. |
+| Lose it | Stop the fake agent with `Ctrl+C` | About five seconds later the agent turns red `offline` and the home card says so. Start it again (try `--cameras 3`): it comes back `ok` with the new camera list. |
+| Manual wins over auto | `curl -X PUT localhost:8890/cameras/cam1/mode -H 'Content-Type: application/json' -d '{"mode":"auto","profile":{"resume_after_ms":3000}}'`, then `curl -X POST localhost:8890/cameras/cam1/move -H 'Content-Type: application/json' -d '{"pan":0.3}'` | On the Agents page cam1 goes `auto` → `auto_paused` → `auto` again about three seconds later, on its own. |
+| Break it on purpose | `curl -X POST localhost:8890/_fake/silence -H 'Content-Type: application/json' -d '{"silent":true}'` | The agent hangs: no more state. It shows `offline` after five seconds. The other switches are listed in `server/baja_studio/fakes/fake_agent_routes.py`. |
 
 ## Running the tests
 
@@ -136,6 +161,18 @@ and the frontend on Linux. See [.github/workflows/ci.yml](.github/workflows/ci.y
 Start reading the tests at `server/tests/conftest.py`. It explains the fake
 clock that lets the tests control time without waiting.
 
+`pytest` includes the **agent conformance suite** (`tests/agent_contract`),
+run against an in-process fake agent. The same suite checks a real agent,
+such as the AUTOPTZ hub app on a laptop:
+
+```
+cd server
+pytest tests/agent_contract --agent-url http://laptop:8890 --agent-token <token>
+```
+
+Its camera moves a little during the run. See section 10 of
+[docs/agent-api.md](docs/agent-api.md) for what is checked and what is skipped.
+
 ## Working on the web page
 
 To change the frontend with instant reload, keep the service running in one
@@ -157,12 +194,15 @@ server/baja_studio/
   main.py          builds the app; the module list lives here
   core/            the shared base: settings, state + WebSocket, supervisor,
                    child processes, command log, logging, HTTP API
-  modules/         one folder per module (home, heartbeat, echo)
+  agents/          the agent API: contract models, client, scan, live links
+  fakes/           runnable stand-ins for external systems (fake_agent)
+  modules/         one folder per module (home, agents, heartbeat, echo)
   childprocs/      programs run as child processes (echo_child)
 server/tests/      one test file per source file
+  agent_contract/  conformance suite for any agent (--agent-url)
 frontend/src/
   lib/             WebSocket state client, React hooks, typed API helpers
-  pages/           Home, ModulePage, Settings, Logs
+  pages/           Home, AgentsPage, ModulePage, Settings, Logs
   components/      shared UI pieces (badges, the schema-driven form)
 frontend/tests/    Vitest tests
 ```

@@ -4,6 +4,7 @@ These are the only tests that touch real time, and only with zero-length
 waits or already-set events, so they still finish instantly.
 """
 
+import asyncio
 import threading
 from datetime import UTC
 
@@ -35,3 +36,8 @@ def test_now_is_in_utc_and_monotonic_never_goes_backwards() -> None:
     assert clock.now_utc().tzinfo == UTC
     first = clock.monotonic()
     assert clock.monotonic() >= first
+
+
+def test_sleep_with_zero_seconds_returns() -> None:
+    # The async sleep is a plain asyncio.sleep; zero seconds returns at once.
+    asyncio.run(SystemClock().sleep(0))

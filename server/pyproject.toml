@@ -13,12 +13,13 @@ dependencies = [
     "uvicorn==0.54.0",
     "websockets==17.4",
     "pydantic==2.14.2",
+    # The agent client's HTTP side (and Starlette's TestClient in the tests).
+    "httpx2==2.16.0",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest==9.2.0",
-    "httpx2==2.16.0",
     "ruff==0.17.3",
     "mypy==2.4.1",
 ]
