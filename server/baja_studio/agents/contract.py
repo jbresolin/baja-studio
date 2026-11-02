@@ -20,11 +20,16 @@ STUDIO_ID_HEADER = "X-Studio-Id"
 
 # Timings every implementation must respect (see docs/agent-api.md, "Timings").
 MIN_STATE_PUSH_HZ = 2.0
+STALE_AFTER_NO_STATE_SECONDS = 3.0
 OFFLINE_AFTER_SILENCE_SECONDS = 5.0
 DEFAULT_TTL_MS = 300
 MAX_TTL_MS = 2000
 DEFAULT_RESUME_AFTER_MS = 3000
 INFO_ANSWER_WITHIN_SECONDS = 0.3
+# Preset numbers on the wire are 0..255; each camera's `limits.preset_max` may be lower.
+MAX_PRESET_NUMBER = 255
+# The `reason` of the mode_changed an agent sends when it cannot restore auto after a restart.
+RESTORE_REASON_TRACKER_NOT_READY = "tracker_not_ready"
 
 
 def contract_major(version: str) -> int | None:
@@ -119,16 +124,22 @@ class ContractModel(BaseModel):
 class Preset(ContractModel):
     """A stored preset: its number and the operator's name for it."""
 
-    n: int = Field(ge=0, le=255)
+    n: int = Field(ge=0, le=MAX_PRESET_NUMBER)
     label: str
 
 
-class SpeedLimits(ContractModel):
-    """Top speeds at velocity 1.0: degrees per second, and zoom range per second."""
+class CameraLimits(ContractModel):
+    """Top speeds at velocity 1.0, and the highest preset number the camera can store.
+
+    Speeds are degrees per second for a PTZ, frame fractions per second for a
+    crop camera's window centre, and zoom range per second for both.
+    `preset_max` is None for cameras without presets (crop, fixed).
+    """
 
     pan_speed_max: float
     tilt_speed_max: float
     zoom_speed_max: float
+    preset_max: int | None = Field(ge=0, le=MAX_PRESET_NUMBER)
 
 
 class CameraInfo(ContractModel):
@@ -143,7 +154,7 @@ class CameraInfo(ContractModel):
     supports_auto: bool
     image_controls: list[str]
     presets: list[Preset]
-    limits: SpeedLimits
+    limits: CameraLimits
 
 
 class AgentInfo(ContractModel):
@@ -181,7 +192,12 @@ class LogEntry(ContractModel):
 
 
 class Position(ContractModel):
-    """Pan and tilt in degrees from the device's home; zoom 0 (wide) to 1 (tele)."""
+    """Where a camera points; zoom 0 (wide) to 1 (tele).
+
+    For a PTZ, pan and tilt are degrees from the device's home. For a crop
+    camera they are the window centre's x and y, as fractions of the frame
+    from its top-left corner (the same axes as `CropRect`).
+    """
 
     pan: float
     tilt: float
@@ -239,7 +255,7 @@ class MoveRequest(ContractModel):
 
 
 class CommandReply(ContractModel):
-    """Answer to /move, /stop, preset recall and /resync."""
+    """Answer to /move, /stop, preset recall and /resync; `mode` is the mode afterwards."""
 
     accepted: bool
     mode: Mode

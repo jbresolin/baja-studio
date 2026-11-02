@@ -125,6 +125,20 @@ describe("Agents page", () => {
     expect(within(card).getByText(/tracking car-12/)).toBeInTheDocument();
   });
 
+  it("shows a PTZ's position in degrees and a crop camera's as its window centre", () => {
+    const state = stateWithOneAgent();
+    const agent = state.agents["laptop-a"]!;
+    const cam1 = agent.cameras.cam1!;
+    agent.info!.cameras.push({ id: "crop1", label: "Paddock", kind: "crop", driver: "uvc" });
+    agent.cameras.crop1 = { ...cam1, position: { pan: 0.5, tilt: 0.35, zoom: 0.6 } };
+
+    showAgentsPage(state);
+
+    const card = screen.getByTestId("agent-laptop-a");
+    expect(within(card).getByText("pan 12.5° tilt -3.0° zoom 0.40")).toBeInTheDocument();
+    expect(within(card).getByText("centre x 0.50 y 0.35 zoom 0.60")).toBeInTheDocument();
+  });
+
   it("follows a mode change pushed by the server", () => {
     const server = showAgentsPage(stateWithOneAgent("auto"));
 

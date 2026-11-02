@@ -9,12 +9,21 @@ export interface TrackerView {
   confidence?: number | null;
 }
 
+/** PTZ: degrees from home. Crop camera: the window centre, as fractions of the frame. */
+export interface CameraPosition {
+  pan: number;
+  tilt: number;
+  zoom: number;
+}
+
+export type CameraKind = "ptz" | "crop" | "fixed";
+
 /** CameraState: pushed by the agent at least twice a second. */
 export interface CameraStateView {
   status: "ok" | "degraded" | "offline";
   mode: "manual" | "auto" | "auto_paused" | "hold";
   tracker: TrackerView;
-  position: { pan: number; tilt: number; zoom: number } | null;
+  position: CameraPosition | null;
   moving: boolean;
   last_command_source?: string | null;
   last_command_ts?: string | null;
@@ -24,7 +33,7 @@ export interface CameraStateView {
 export interface CameraInfoView {
   id: string;
   label: string;
-  kind: "ptz" | "crop" | "fixed";
+  kind: CameraKind;
   driver: string;
 }
 

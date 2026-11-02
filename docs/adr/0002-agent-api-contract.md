@@ -43,62 +43,94 @@ Contract: [docs/agent-api.md](../agent-api.md), version 1.0.
     `step`), and `auto: null` for controls without an automatic mode, so a UI
     can draw sliders without knowing the device. They are raw device values,
     not normalised: image settings are LIVESTACK-3's to shape.
-11. **Preset numbers are 0–255**; labels 1–60 characters.
+11. **Preset numbers are 0–255** on the wire, and 0 to `limits.preset_max`
+    per camera (item 13); labels 1–60 characters.
 12. **Both sides ignore unknown JSON fields** (requests and answers), which
     is what makes MINOR versions safe.
 
+13. **Amendments folded into 1.0 before it was pinned** (still one 1.0
+    changelog entry, as asked). The brief's wording was turned into rules
+    as follows:
+    - **`/move` on crop cameras.** Pan and tilt move the window centre, zoom
+      shrinks or grows the window around it, keeping its shape; positive
+      tilt is up, as on a PTZ, so it makes the centre's y smaller. A crop
+      camera's `position` is that centre in frame fractions, with
+      `has_position_feedback: true`, and its `limits` speeds are frame
+      fractions/s. How zoom maps to window size is the agent's (the fake:
+      zoom 0 is the whole frame, 1 a window a tenth of it). `PUT /crop` is a
+      motion command like a preset recall: the window jumps, any velocity
+      stops, auto pauses and the countdown starts at once.
+    - **`limits.preset_max`** is required and nullable: `null` for cameras
+      without presets. A preset above it is `400 bad_request`. The fake's
+      PTZs stop at 127, below the wire's 255, so the conformance suite's
+      "highest free number ≤ `preset_max`" is really exercised.
+    - **"State stale"** is `degraded` with that reason, checked by the same
+      watchdog as the offline rule (one task, so fake-time tests still
+      settle). It is cleared by the next `state`. An agent that answers
+      pings but pushes no state stays `degraded` and never goes `offline`.
+    - **Restore after restart.** A pause does not survive a restart:
+      `auto_paused` comes back as `auto`. The `mode_changed` sent when auto
+      cannot be restored would reach nobody, because a restart closes every
+      socket. So the agent replays it, with its original `ts`, on each
+      WebSocket it accepts, until the mode next changes or a studio sets
+      it with `PUT /mode` (even to the same mode); the studio's
+      registry ignores an event it has already recorded. The fake has a
+      `/_fake/restart` switch for this, and a `/_fake/freeze_state` switch
+      that stops state pushes but keeps pongs and events flowing.
+
 ### Studio side
 
-13. **Layout.** The client library is `baja_studio/agents/` (`contract`,
+14. **Layout.** The client library is `baja_studio/agents/` (`contract`,
     `transport`, `client`, `subscription`, `scan`, `registry`). The `Module`
     itself lives in `modules/agents/`, as the conventions require. The brief
     put the Module in `agents/registry.py`; there, `registry.py` is the
     `AgentRegistry`, the async core the module runs.
-14. **HTTP library is `httpx2`, not `httpx`.** It is the same API and the one
+15. **HTTP library is `httpx2`, not `httpx`.** It is the same API and the one
     Starlette 1.10 already uses. It moved from the dev to the runtime
     dependencies.
-15. **The module runs one worker holding an asyncio event loop** with every
+16. **The module runs one worker holding an asyncio event loop** with every
     agent link on it. Settings changes are handed over with
     `call_soon_threadsafe`. Scan and probe commands run their own short
     `asyncio.run` on the command thread.
-16. **Core additions:** `Clock.sleep` (async), so coroutines also run on the
+17. **Core additions:** `Clock.sleep` (async), so coroutines also run on the
     fake clock in tests; `WorkerContext.report_health`, so a worker that keeps
     running while some of its devices are away can say so (the home card
     shows "1 of 2 agents away: laptop-b offline"); secrets nested in lists of
     models are masked too, and a masked secret sent back is matched to its
     item by `id`.
-17. **An extra `update` command** (host, port, token, enabled) beside the
+18. **An extra `update` command** (host, port, token, enabled) beside the
     brief's `scan`, `add`, `remove` and `probe`. The Agents page needs it to set
     a token and to enable or disable an agent.
-18. **Reconnect backoff is 0.5, 1, 2, then every 4 s**, kept under the 5 s
+19. **Reconnect backoff is 0.5, 1, 2, then every 4 s**, kept under the 5 s
     offline rule. An agent that answers but cannot be used (wrong version or
     token) is heard on every retry and stays `degraded`, without flickering to
     `offline`.
-19. **A scan shares one HTTP client** for all addresses. Creating an httpx2
+20. **A scan shares one HTTP client** for all addresses. Creating an httpx2
     client blocks the event loop for about 12 ms (it loads the trust store);
     one per address used up every probe's 300 ms budget and found nothing.
     The end-to-end check caught this; there is now a regression test.
-20. **`X-Studio-Id` is `baja-studio@<hostname>`.**
-21. **Link statuses** are `connecting`, `ok`, `degraded`, `offline`, plus
-    `disabled` for agents switched off in settings. The module is `offline`
+21. **`X-Studio-Id` is `baja-studio@<hostname>`.**
+22. **Link statuses** are `connecting`, `ok`, `degraded` (wrong version or
+    token, or state stale), `offline`, plus `disabled` for agents switched
+    off in settings. The module is `offline`
     when every enabled agent is away and `degraded` when some are.
 
 ### Fake agent and tests
 
-22. **The fake agent** (`fakes/fake_agent.py`, routes in
+23. **The fake agent** (`fakes/fake_agent.py`, routes in
     `fake_agent_routes.py`, cameras in `simulated_ptz.py`) also takes
     `--crop-cameras` and `--contract-version`, and announces itself with the
     capability `fake_controls`. Its simulated camera is pure code told the
     time on every call, so the mode rules are unit-tested without any clock.
     Each `/_fake` switch has a matching contract behaviour: go silent, drop
     WebSockets, delay answers, take a device offline, set the tracker state.
-23. **In-process transport.** The brief asked for the fake to be reached
+24. **In-process transport.** The brief asked for the fake to be reached
     "through an in-process ASGI transport". Each fake runs on its own thread
     and event loop (`FakeAgentRunner`), like a separate laptop.
     `InProcessTransport` carries HTTP (httpx2's ASGI transport) and the
     WebSocket (ASGI messages over queues) to it. Tests can unplug an agent
     and plug a new one in at the same address, with no ports opened.
-24. **The conformance suite runs in real time.** It is the one exception to
+25. **The conformance suite runs in real time.** It is the one exception to
     "no sleep-based timing": a real agent's clock cannot be faked. It waits
     for things to happen, with deadlines of one push cycle plus a margin,
     never fixed sleeps. Checks that need the fake's switches are skipped
@@ -106,7 +138,7 @@ Contract: [docs/agent-api.md](../agent-api.md), version 1.0.
     answers `tracker_not_ready`. It takes about 8 s. It was also run over a
     real network, with the fake served by uvicorn on loopback and
     `--agent-url`.
-25. **Fake-time tests advance in quarter-second steps** (`advance_in_steps`)
+26. **Fake-time tests advance in quarter-second steps** (`advance_in_steps`)
     and wait after each step until every woken coroutine sleeps again.
     Jumping five seconds at once would let a healthy agent look silent.
     "Goes offline" checks allow one second of delivery slack, because the
@@ -132,9 +164,9 @@ Contract: [docs/agent-api.md](../agent-api.md), version 1.0.
   must be added by address.
 - **The Agents page is covered by Vitest only.** It has not been clicked
   through in a real browser yet.
-- **CI has still not run on Windows** (carried over from ADR 0001); the new
-  tests open no sockets and need no hardware.
-- **Files over the ~300-line guideline:** `fakes/simulated_ptz.py` (~355;
-  its image controls were split out to `simulated_image.py`, and what is left
-  is one camera whose mode, motion and preset rules change together), and
+- **Files over the ~300-line guideline:** `fakes/simulated_ptz.py` (~410
+  after the 1.0 amendments; its image controls and crop window are already
+  split out to `simulated_image.py` and `simulated_crop.py`, and what is left
+  is one camera whose mode, motion, preset and restart rules change
+  together), and
   `core/supervisor.py` (~370 after `report_health`). Revisit if they grow.

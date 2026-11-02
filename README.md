@@ -130,7 +130,7 @@ It speaks the full agent API, with two simulated PTZs. Options:
 | Find it | Home → **Camera agents** → type your network (e.g. `192.168.1.0/24`, or `127.0.0.1/32` on the same PC) → **Scan subnet** → **Add** | The agent appears, green `ok`, with cameras `cam1` and `cam2` in `manual`. |
 | Lose it | Stop the fake agent with `Ctrl+C` | About five seconds later the agent turns red `offline` and the home card says so. Start it again (try `--cameras 3`): it comes back `ok` with the new camera list. |
 | Manual wins over auto | `curl -X PUT localhost:8890/cameras/cam1/mode -H 'Content-Type: application/json' -d '{"mode":"auto","profile":{"resume_after_ms":3000}}'`, then `curl -X POST localhost:8890/cameras/cam1/move -H 'Content-Type: application/json' -d '{"pan":0.3}'` | On the Agents page cam1 goes `auto` → `auto_paused` → `auto` again about three seconds later, on its own. |
-| Break it on purpose | `curl -X POST localhost:8890/_fake/silence -H 'Content-Type: application/json' -d '{"silent":true}'` | The agent hangs: no more state. It shows `offline` after five seconds. The other switches are listed in `server/baja_studio/fakes/fake_agent_routes.py`. |
+| Break it on purpose | `curl -X POST localhost:8890/_fake/silence -H 'Content-Type: application/json' -d '{"silent":true}'` | The agent hangs: no more state. It shows `degraded` ("state stale") after three seconds, then `offline` after five. The other switches are listed in `server/baja_studio/fakes/fake_agent_routes.py`. |
 
 ## Running the tests
 

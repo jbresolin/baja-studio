@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 import uvicorn
 from fastapi.testclient import TestClient
+from starlette.websockets import WebSocketDisconnect
 
 from baja_studio.agents.contract import TOKEN_HEADER
 from baja_studio.fakes import fake_agent
@@ -69,6 +70,53 @@ def test_the_silence_switch_stops_pongs(client: TestClient) -> None:
 
         # Only the second ping, sent after the agent spoke again, is answered.
         assert socket.receive_json() == {"type": "pong"}
+
+
+def test_freezing_state_stops_state_pushes_but_not_pongs_or_events(
+    client: TestClient, fake_clock: FakeClock
+) -> None:
+    client.post("/_fake/freeze_state", json={"frozen": True})
+
+    with client.websocket_connect("/agent/ws", headers={TOKEN_HEADER: "secret"}) as socket:
+        socket.send_json({"type": "ping"})
+        # No state on connect; the pong is the first message.
+        assert socket.receive_json() == {"type": "pong"}
+        client.put("/cameras/cam1/mode", json={"mode": "hold"})
+        assert socket.receive_json()["event"] == "mode_changed"
+
+        client.post("/_fake/freeze_state", json={"frozen": False})
+        eventually(lambda: fake_clock.async_sleeping_count >= 1)
+        fake_clock.advance(0.25)
+        assert socket.receive_json()["type"] == "state"
+
+
+def test_a_restart_closes_every_socket(client: TestClient) -> None:
+    with client.websocket_connect("/agent/ws", headers={TOKEN_HEADER: "secret"}) as socket:
+        socket.receive_json()  # the first state
+
+        client.post("/_fake/restart")
+
+        with pytest.raises(WebSocketDisconnect):
+            socket.receive_json()
+
+
+def test_a_studio_connecting_after_a_restart_hears_why_auto_was_not_restored(
+    client: TestClient, agent: FakeAgent
+) -> None:
+    client.put("/cameras/cam1/mode", json={"mode": "auto"})
+    client.post("/_fake/cameras/cam1/tracker", json={"tracker": "not_ready"})
+    client.post("/_fake/restart")
+
+    # Every studio that connects is told, until the mode changes again.
+    for _ in range(2):
+        with client.websocket_connect("/agent/ws", headers={TOKEN_HEADER: "secret"}) as socket:
+            assert socket.receive_json()["cameras"]["cam1"]["mode"] == "manual"
+            notice = socket.receive_json()
+        assert (notice["camera_id"], notice["event"]) == ("cam1", "mode_changed")
+        assert notice["detail"]["reason"] == "tracker_not_ready"
+
+    client.put("/cameras/cam1/mode", json={"mode": "hold"})
+    assert [message["type"] for message in agent.greeting()] == ["state"]
 
 
 def test_unplugging_a_device_makes_its_commands_fail_with_503(client: TestClient) -> None:

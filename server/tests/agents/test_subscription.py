@@ -163,15 +163,58 @@ async def test_a_silent_agent_is_offline_after_five_seconds_not_before(
     subscribe()
     await wait_for_status(recorder, LinkStatus.OK)
 
-    # The agent hangs: no more state, no pongs. Its socket stays open.
+    # The agent hangs: no more state, no pongs. Its socket stays open. (After
+    # three seconds without state it is already degraded; that has its own test.)
     runner.run(lambda: setattr(runner.agent, "silent", True))
     await advance_in_steps_async(fake_clock, 4.75)
-    assert recorder.last_status().status == LinkStatus.OK
+    assert recorder.last_status().status != LinkStatus.OFFLINE
 
     await advance_in_steps_async(fake_clock, 0.25 + DELIVERY_SLACK_SECONDS)
 
     await wait_for_status(recorder, LinkStatus.OFFLINE)
     assert "nothing heard for 5 s" in recorder.last_status().reason
+
+
+async def test_no_state_for_three_seconds_is_degraded_then_ok_when_state_comes_back(
+    start_agent: StartAgent,
+    subscribe: Subscribe,
+    recorder: UpdateRecorder,
+    fake_clock: FakeClock,
+) -> None:
+    runner = start_agent()
+    subscribe()
+    await wait_for_status(recorder, LinkStatus.OK)
+
+    # The agent stops pushing state but still answers pings: not silent, stale.
+    runner.run(lambda: setattr(runner.agent, "state_frozen", True))
+    await advance_in_steps_async(fake_clock, 2.5)
+    assert recorder.last_status().status == LinkStatus.OK
+
+    await advance_in_steps_async(fake_clock, 0.5 + DELIVERY_SLACK_SECONDS)
+    await wait_for_status(recorder, LinkStatus.DEGRADED)
+    assert recorder.last_status().reason == "state stale: no state for 3 s"
+
+    runner.run(lambda: setattr(runner.agent, "state_frozen", False))
+    await advance_in_steps_async(fake_clock, 0.5)
+    await wait_for_status(recorder, LinkStatus.OK)
+
+
+async def test_stale_state_alone_never_makes_an_agent_offline(
+    start_agent: StartAgent,
+    subscribe: Subscribe,
+    recorder: UpdateRecorder,
+    fake_clock: FakeClock,
+) -> None:
+    # The five-second offline rule counts anything heard; the pongs keep it away.
+    runner = start_agent()
+    subscribe()
+    await wait_for_status(recorder, LinkStatus.OK)
+
+    runner.run(lambda: setattr(runner.agent, "state_frozen", True))
+    await advance_in_steps_async(fake_clock, 12)
+
+    assert recorder.last_status().status == LinkStatus.DEGRADED
+    assert LinkStatus.OFFLINE not in recorder.statuses()
 
 
 async def test_an_agent_that_vanishes_goes_offline_and_comes_back_with_its_new_cameras(

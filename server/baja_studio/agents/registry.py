@@ -180,6 +180,8 @@ class AgentRegistry:
                 self._publish(f"agents.{link.entry.id}.cameras", cameras)
         elif isinstance(update, EventUpdate):
             event = update.message.model_dump(mode="json")
+            if event in link.events:
+                return  # replayed on reconnect (a restore notice, contract §9): seen already
             link.events.appendleft(event)
             self._publish(f"agents.{link.entry.id}.events", list(link.events))
             self._logger.info(

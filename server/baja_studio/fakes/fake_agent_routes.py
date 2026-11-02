@@ -6,7 +6,9 @@ Errors are always `{error, detail}`. The `/_fake` routes never need a token:
 
     GET  /_fake                              current switches
     POST /_fake/silence {silent}             stop pushing and answering pings
+    POST /_fake/freeze_state {frozen}        stop pushing state; events and pongs still flow
     POST /_fake/drop_websockets              close every state WebSocket now
+    POST /_fake/restart                      behave as if the agent had just restarted
     POST /_fake/delay {ms}                   answer every contract request late
     POST /_fake/cameras/{id}/device {online} unplug / re-plug the device
     POST /_fake/cameras/{id}/tracker {tracker: not_ready|ready|tracking}
@@ -59,6 +61,10 @@ def error_response(status_code: int, code: str, detail: str) -> JSONResponse:
 
 class SilenceSwitch(BaseModel):
     silent: bool
+
+
+class FreezeSwitch(BaseModel):
+    frozen: bool
 
 
 class DelaySwitch(BaseModel):
@@ -208,12 +214,16 @@ def add_fake_agent_routes(app: FastAPI, agent: "FakeAgent") -> None:
 
     @app.get("/cameras/{camera_id}/crop")
     def get_crop(camera_id: str) -> CropRect:
-        return agent.camera(camera_id).crop()
+        return agent.camera(camera_id).crop(agent.now())
 
     @app.put("/cameras/{camera_id}/crop")
     def set_crop(camera_id: str, body: CropRect, request: Request) -> CropRect:
         return run_command(
-            request, camera_id, "set_crop", body.model_dump(), lambda cam, src: cam.set_crop(body)
+            request,
+            camera_id,
+            "set_crop",
+            body.model_dump(),
+            lambda cam, src: cam.set_crop(agent.now(), body, src),
         )
 
     @app.post("/cameras/{camera_id}/resync")
@@ -226,11 +236,25 @@ def add_fake_agent_routes(app: FastAPI, agent: "FakeAgent") -> None:
 
     @app.get("/_fake")
     def get_switches() -> dict[str, Any]:
-        return {"silent": agent.silent, "delay_ms": round(agent.delay_seconds * 1000)}
+        return {
+            "silent": agent.silent,
+            "state_frozen": agent.state_frozen,
+            "delay_ms": round(agent.delay_seconds * 1000),
+        }
 
     @app.post("/_fake/silence")
     def set_silence(body: SilenceSwitch) -> dict[str, Any]:
         agent.silent = body.silent
+        return get_switches()
+
+    @app.post("/_fake/freeze_state")
+    def freeze_state(body: FreezeSwitch) -> dict[str, Any]:
+        agent.state_frozen = body.frozen
+        return get_switches()
+
+    @app.post("/_fake/restart")
+    def restart() -> dict[str, Any]:
+        agent.restart()
         return get_switches()
 
     @app.post("/_fake/drop_websockets")
@@ -288,8 +312,8 @@ async def _serve_state_socket(agent: "FakeAgent", websocket: WebSocket) -> None:
         return
     await websocket.accept()
     queue = agent.add_subscriber()
-    if not agent.silent:
-        queue.put_nowait(agent.state_message())  # the studio need not wait for the next push
+    for message in agent.greeting():
+        queue.put_nowait(message)
 
     async def send_messages() -> None:
         while (message := await queue.get()) is not None:

@@ -6,7 +6,7 @@
 
 import { useState } from "react";
 
-import type { AgentView, CameraStateView } from "../lib/agents";
+import type { AgentView, CameraKind, CameraPosition, CameraStateView } from "../lib/agents";
 import { HealthBadge } from "./HealthBadge";
 
 interface AgentCardProps {
@@ -20,6 +20,7 @@ export function AgentCard({ id, agent, run }: AgentCardProps) {
   const [token, setToken] = useState("");
   const [confirmingRemove, setConfirmingRemove] = useState(false);
   const labels = Object.fromEntries((agent.info?.cameras ?? []).map((c) => [c.id, c.label]));
+  const kinds = Object.fromEntries((agent.info?.cameras ?? []).map((c) => [c.id, c.kind]));
   const cameraIds = Object.keys(agent.cameras).length
     ? Object.keys(agent.cameras)
     : Object.keys(labels);
@@ -57,6 +58,7 @@ export function AgentCard({ id, agent, run }: AgentCardProps) {
                 key={cameraId}
                 id={cameraId}
                 label={labels[cameraId] ?? cameraId}
+                kind={kinds[cameraId]}
                 state={agent.cameras[cameraId]}
                 // An offline agent's last known state is shown greyed, not hidden.
                 stale={agent.status !== "ok"}
@@ -107,11 +109,21 @@ export function AgentCard({ id, agent, run }: AgentCardProps) {
 interface CameraRowProps {
   id: string;
   label: string;
+  kind: CameraKind | undefined;
   state: CameraStateView | undefined;
   stale: boolean;
 }
 
-function CameraRow({ id, label, state, stale }: CameraRowProps) {
+/** A PTZ's head in degrees; a crop camera's window centre in fractions of the frame. */
+function describePosition(kind: CameraKind | undefined, position: CameraPosition): string {
+  const zoom = `zoom ${position.zoom.toFixed(2)}`;
+  if (kind === "crop") {
+    return `centre x ${position.pan.toFixed(2)} y ${position.tilt.toFixed(2)} ${zoom}`;
+  }
+  return `pan ${position.pan.toFixed(1)}° tilt ${position.tilt.toFixed(1)}° ${zoom}`;
+}
+
+function CameraRow({ id, label, kind, state, stale }: CameraRowProps) {
   const position = state?.position;
   return (
     <tr className={stale || state?.status === "offline" ? "stale" : undefined}>
@@ -127,11 +139,7 @@ function CameraRow({ id, label, state, stale }: CameraRowProps) {
         {state?.tracker.state ?? "–"}
         {state?.tracker.target_id && ` ${state.tracker.target_id}`}
       </td>
-      <td className="nowrap">
-        {position
-          ? `pan ${position.pan.toFixed(1)}° tilt ${position.tilt.toFixed(1)}° zoom ${position.zoom.toFixed(2)}`
-          : "–"}
-      </td>
+      <td className="nowrap">{position ? describePosition(kind, position) : "–"}</td>
     </tr>
   );
 }

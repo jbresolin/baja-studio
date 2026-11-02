@@ -17,7 +17,9 @@ from baja_studio.agents.contract import (
     MoveRequest,
     TrackerStatus,
 )
+from baja_studio.fakes.simulated_crop import CROP_LIMITS
 from baja_studio.fakes.simulated_ptz import (
+    PRESET_MAX,
     CameraCommandError,
     FakeTracker,
     Moment,
@@ -210,7 +212,7 @@ def test_crop_is_only_for_crop_cameras_and_presets_only_for_ptz() -> None:
     crop = SimulatedCamera("crop1", "Crop 1", CameraKind.CROP)
 
     with pytest.raises(CameraCommandError) as ptz_refused:
-        ptz.set_crop(CropRect(x=0, y=0, w=0.5, h=0.5))
+        ptz.set_crop(at(0), CropRect(x=0, y=0, w=0.5, h=0.5), STUDIO)
     with pytest.raises(CameraCommandError) as crop_refused:
         crop.store_preset(at(0), 1)
 
@@ -225,3 +227,144 @@ def test_storing_and_renaming_presets_announces_the_change() -> None:
 
     assert [preset.label for preset in camera.info().presets] == ["Finish line"]
     assert event_names(camera) == ["presets_changed", "presets_changed"]
+
+
+def test_a_preset_number_above_preset_max_is_refused() -> None:
+    camera = SimulatedCamera("cam1", "Cam 1", CameraKind.PTZ)
+    preset_max = camera.info().limits.preset_max
+    assert preset_max == PRESET_MAX
+
+    with pytest.raises(CameraCommandError) as refused:
+        camera.store_preset(at(0), PRESET_MAX + 1)
+
+    assert refused.value.code == ErrorCode.BAD_REQUEST
+    assert camera.store_preset(at(0), PRESET_MAX).n == PRESET_MAX
+
+
+def test_cameras_without_presets_have_no_preset_max() -> None:
+    crop = SimulatedCamera("crop1", "Crop 1", CameraKind.CROP)
+    fixed = SimulatedCamera("fixed1", "Fixed 1", CameraKind.FIXED)
+
+    assert crop.info().limits.preset_max is None
+    assert fixed.info().limits.preset_max is None
+
+
+# --- crop cameras move too ---------------------------------------------------------
+
+
+def crop_camera() -> SimulatedCamera:
+    """A crop camera with a 0.4 x 0.4 window in the middle of the frame."""
+    camera = SimulatedCamera("crop1", "Crop 1", CameraKind.CROP)
+    camera.set_crop(at(0), CropRect(x=0.3, y=0.3, w=0.4, h=0.4), STUDIO)
+    return camera
+
+
+def test_a_move_drives_a_crop_window_until_its_ttl_runs_out() -> None:
+    camera = crop_camera()
+
+    camera.move(at(0), MoveRequest(pan=1.0, ttl_ms=200), STUDIO)
+
+    assert camera.state(at(0.1)).moving is True
+    position = camera.state(at(5)).position
+    assert position is not None
+    # 0.2 s at the top speed, and no further after the TTL.
+    assert position.pan == pytest.approx(0.5 + CROP_LIMITS.pan_speed_max * 0.2)
+    assert camera.crop(at(5)).x == pytest.approx(0.3 + CROP_LIMITS.pan_speed_max * 0.2)
+
+
+def test_a_crop_cameras_position_is_its_window_centre_and_zoom() -> None:
+    camera = crop_camera()
+
+    position = camera.position(at(0))
+
+    assert position is not None
+    assert (position.pan, position.tilt) == pytest.approx((0.5, 0.5))
+    assert camera.info().has_position_feedback is True
+
+
+def test_a_move_on_a_crop_camera_in_auto_pauses_auto() -> None:
+    camera = crop_camera()
+    camera.set_mode(ModeRequest(mode=Mode.AUTO))
+
+    reply = camera.move(at(1), MoveRequest(zoom=0.5), STUDIO)
+
+    assert reply.mode == Mode.AUTO_PAUSED
+
+
+def test_put_crop_is_a_studio_motion_and_starts_the_resume_countdown_at_once() -> None:
+    camera = crop_camera()
+    camera.set_mode(ModeRequest(mode=Mode.AUTO, profile={"resume_after_ms": 1000}))
+
+    camera.set_crop(at(2), CropRect(x=0, y=0, w=0.5, h=0.5), STUDIO)
+    assert mode_of(camera) == Mode.AUTO_PAUSED
+    camera.advance(at(2.9))
+    assert mode_of(camera) == Mode.AUTO_PAUSED
+
+    camera.advance(at(3.0))
+    assert mode_of(camera) == Mode.AUTO
+
+
+def test_a_fixed_camera_does_not_move() -> None:
+    camera = SimulatedCamera("fixed1", "Fixed 1", CameraKind.FIXED)
+
+    with pytest.raises(CameraCommandError) as refused:
+        camera.move(at(0), MoveRequest(pan=0.5), STUDIO)
+
+    assert refused.value.code == ErrorCode.NOT_SUPPORTED
+
+
+# --- restarts ------------------------------------------------------------------------
+
+
+def test_a_restart_restores_auto_and_a_pause_does_not_survive_it() -> None:
+    camera = ptz_in_auto()
+    camera.move(at(0), MoveRequest(pan=0.5), STUDIO)  # now auto_paused
+
+    camera.restart(at(1))
+
+    assert mode_of(camera) == Mode.AUTO
+    assert camera.restore_notice is None
+    assert camera.state(at(1)).moving is False
+
+
+def test_a_restart_without_a_tracker_restores_manual_and_keeps_a_notice() -> None:
+    camera = ptz_in_auto()
+    camera.set_tracker(FakeTracker.NOT_READY)
+
+    camera.restart(at(1))
+
+    assert mode_of(camera) == Mode.MANUAL
+    assert camera.restore_notice == (
+        "t+1",
+        {"from": Mode.AUTO, "to": Mode.MANUAL, "reason": "tracker_not_ready"},
+    )
+
+
+def test_the_restore_notice_is_dropped_once_the_mode_changes_again() -> None:
+    camera = ptz_in_auto()
+    camera.set_tracker(FakeTracker.NOT_READY)
+    camera.restart(at(1))
+
+    camera.set_mode(ModeRequest(mode=Mode.HOLD))
+
+    assert camera.restore_notice is None
+
+
+def test_the_restore_notice_is_dropped_when_a_studio_sets_the_same_mode() -> None:
+    camera = ptz_in_auto()
+    camera.set_tracker(FakeTracker.NOT_READY)
+    camera.restart(at(1))
+
+    camera.set_mode(ModeRequest(mode=Mode.MANUAL))
+
+    assert camera.restore_notice is None
+
+
+def test_a_restart_keeps_manual_and_hold() -> None:
+    for mode in (Mode.MANUAL, Mode.HOLD):
+        camera = SimulatedCamera("cam1", "Cam 1", CameraKind.PTZ)
+        camera.set_mode(ModeRequest(mode=mode))
+
+        camera.restart(at(1))
+
+        assert mode_of(camera) == mode

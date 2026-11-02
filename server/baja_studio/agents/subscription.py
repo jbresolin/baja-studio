@@ -7,7 +7,10 @@ Two tasks run side by side:
   anything fails, wait (0.5 s, 1 s, 2 s, then every 4 s) and start over.
 - the *silence watchdog*: if nothing at all has been heard from the agent for
   five seconds, report `offline` and abandon the current attempt, however it
-  is stuck (a laptop that loses power never closes its socket).
+  is stuck (a laptop that loses power never closes its socket). It also
+  watches for *stale state*: an agent whose socket is open, and which may
+  still answer pings or send events, but has pushed no state for three
+  seconds is `degraded` ("state stale") until state comes again.
 """
 
 import asyncio
@@ -22,6 +25,7 @@ from pydantic import ValidationError
 
 from baja_studio.agents.contract import (
     OFFLINE_AFTER_SILENCE_SECONDS,
+    STALE_AFTER_NO_STATE_SECONDS,
     AgentInfo,
     EventMessage,
     StateMessage,
@@ -45,6 +49,7 @@ FIRST_RECONNECT_DELAY_SECONDS = 0.5
 # but cannot be used (wrong version, wrong token) is heard from on every attempt,
 # so it stays "degraded" instead of flickering to "offline".
 MAX_RECONNECT_DELAY_SECONDS = 4.0
+STATE_STALE_REASON = f"state stale: no state for {STALE_AFTER_NO_STATE_SECONDS:.0f} s"
 
 
 class LinkStatus(StrEnum):
@@ -52,7 +57,7 @@ class LinkStatus(StrEnum):
 
     CONNECTING = "connecting"
     OK = "ok"
-    DEGRADED = "degraded"  # reachable, but unusable: wrong contract version or token
+    DEGRADED = "degraded"  # reachable, but unusable (version, token) or its state is stale
     OFFLINE = "offline"
 
 
@@ -110,9 +115,12 @@ class Subscription:
         self._clock = clock
         self._on_update = on_update
         self._status: LinkStatus | None = None
+        self._reason = ""
         self._info: AgentInfo | None = None
         self._last_problem = "no answer yet"
         self._attempt: asyncio.Task[bool] | None = None
+        self._last_state_at = 0.0
+        self._listening = False
 
     async def run(self) -> None:
         """Run both tasks until cancelled."""
@@ -186,17 +194,23 @@ class Subscription:
         socket (agents send their state as soon as they accept it): an agent
         that accepts connections but has hung must not look healthy.
         """
+        self._last_state_at = self._clock.monotonic()
+        self._listening = True
         pinger = asyncio.create_task(self._send_pings(socket))
         announced = False
         try:
             while True:
                 message = await socket.receive_json()
                 self._client.heard_from_agent()
-                if not announced:
+                is_state = isinstance(message, dict) and message.get("type") == "state"
+                if is_state:
+                    self._last_state_at = self._clock.monotonic()
+                if not announced or (is_state and self._reason == STATE_STALE_REASON):
                     announced = True
                     self._set_status(LinkStatus.OK, "")  # with the info just read
                 self._pass_on(message)
         finally:
+            self._listening = False
             pinger.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await pinger
@@ -220,20 +234,38 @@ class Subscription:
             )
 
     async def _watch_for_silence(self) -> None:
+        """Both rules: offline after 5 s of silence, degraded after 3 s without state.
+
+        It sleeps until the nearer of the two deadlines, then looks again, so a
+        deadline moved by a message (or a socket that just opened) is honoured.
+        """
         while True:
-            silent_for = self._clock.monotonic() - self._client.last_heard
-            if silent_for < OFFLINE_AFTER_SILENCE_SECONDS:
-                await self._clock.sleep(OFFLINE_AFTER_SILENCE_SECONDS - silent_for)
-                continue
-            if self._status != LinkStatus.OFFLINE:
-                self._set_status(
-                    LinkStatus.OFFLINE,
-                    f"nothing heard for {OFFLINE_AFTER_SILENCE_SECONDS:.0f} s "
-                    f"({self._last_problem})",
+            now = self._clock.monotonic()
+            silent_for = now - self._client.last_heard
+            if silent_for >= OFFLINE_AFTER_SILENCE_SECONDS:
+                self._go_offline()
+                silent_for = 0.0  # look again a full period from now
+            stale_for = now - self._last_state_at if self._listening else 0.0
+            if stale_for >= STALE_AFTER_NO_STATE_SECONDS:
+                if self._status == LinkStatus.OK:
+                    self._set_status(LinkStatus.DEGRADED, STATE_STALE_REASON)
+                stale_for = 0.0
+            await self._clock.sleep(
+                min(
+                    OFFLINE_AFTER_SILENCE_SECONDS - silent_for,
+                    STALE_AFTER_NO_STATE_SECONDS - stale_for,
                 )
-                if self._attempt is not None:
-                    self._attempt.cancel()
-            await self._clock.sleep(OFFLINE_AFTER_SILENCE_SECONDS)
+            )
+
+    def _go_offline(self) -> None:
+        if self._status == LinkStatus.OFFLINE:
+            return
+        self._set_status(
+            LinkStatus.OFFLINE,
+            f"nothing heard for {OFFLINE_AFTER_SILENCE_SECONDS:.0f} s ({self._last_problem})",
+        )
+        if self._attempt is not None:
+            self._attempt.cancel()
 
     def _note_problem(self, problem: Exception) -> None:
         self._last_problem = str(problem) or type(problem).__name__
@@ -241,5 +273,5 @@ class Subscription:
     def _set_status(self, status: LinkStatus, reason: str) -> None:
         if status == self._status and status != LinkStatus.OK:
             return
-        self._status = status
+        self._status, self._reason = status, reason
         self._on_update(StatusUpdate(status, reason, self._info))

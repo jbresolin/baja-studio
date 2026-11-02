@@ -5,9 +5,9 @@ Run it on the bench, with no laptop or camera:
     python -m baja_studio.fakes.fake_agent --port 8890 --cameras 2
 
 Every camera is a `SimulatedCamera`. Failure switches under `/_fake/...`
-(see fake_agent_routes.py) make it go silent, drop its WebSockets, answer
-slowly, lose a device or a tracker, so the studio's recovery paths can be
-exercised. Tests use the same app in-process (fakes/in_process.py).
+(see fake_agent_routes.py) make it go silent, stop pushing state, drop its
+WebSockets, restart, answer slowly, lose a device or a tracker, so the
+studio's recovery paths can be exercised. Tests use the same app in-process (fakes/in_process.py).
 """
 
 import argparse
@@ -30,6 +30,7 @@ from baja_studio.agents.contract import (
     CameraKind,
     ErrorCode,
     EventMessage,
+    EventName,
     LogEntry,
     StateMessage,
     Status,
@@ -82,6 +83,7 @@ class FakeAgent:
             self.cameras[camera.id] = camera
         # Failure switches.
         self.silent = False
+        self.state_frozen = False
         self.delay_seconds = 0.0
         self._subscribers: set[SubscriberQueue] = set()
         self._log: deque[LogEntry] = deque(maxlen=LOG_LENGTH)
@@ -168,6 +170,33 @@ class FakeAgent:
         )
         return message.model_dump(mode="json")
 
+    def greeting(self) -> list[dict[str, Any]]:
+        """What a newly accepted WebSocket gets at once: the state, then any restore notices.
+
+        The studio need not wait for the next push. A camera that could not
+        restore auto after a restart says so to every studio that connects,
+        until its mode next changes or a studio sets it (contract §9).
+        """
+        if self.silent:
+            return []
+        messages = [] if self.state_frozen else [self.state_message()]
+        for camera in self.cameras.values():
+            if camera.restore_notice is not None:
+                ts, detail = camera.restore_notice
+                notice = EventMessage(
+                    ts=ts, camera_id=camera.id, event=EventName.MODE_CHANGED, detail=detail
+                )
+                messages.append(notice.model_dump(mode="json"))
+        return messages
+
+    def restart(self) -> None:
+        """Failure switch: every socket closes and each camera restores its last mode."""
+        self.drop_websockets()
+        now = self.now()
+        for camera in self.cameras.values():
+            camera.restart(now)
+        self._started_at = self.clock.monotonic()
+
     def send_pending_events(self) -> None:
         """Send events the cameras produced since last time (held back while silent)."""
         if self.silent:
@@ -207,7 +236,8 @@ class FakeAgent:
                 camera.advance(now)
             if not self.silent:
                 self.send_pending_events()
-                self._broadcast(self.state_message())
+                if not self.state_frozen:
+                    self._broadcast(self.state_message())
             await self.clock.sleep(PUSH_INTERVAL_SECONDS)
 
 

@@ -10,11 +10,13 @@ from typing import Any
 
 import pytest
 
+from baja_studio.agents.contract import Mode, ModeRequest
 from baja_studio.agents.registry import AgentEntry, AgentRegistry
 from baja_studio.core.supervisor import HealthState
 from baja_studio.fakes.in_process import InProcessTransport
+from baja_studio.fakes.simulated_ptz import FakeTracker
 from tests.conftest import FakeClock, eventually_async
-from tests.fake_agents import AGENT_HOST, StartAgent
+from tests.fake_agents import AGENT_HOST, StartAgent, advance_in_steps_async
 
 pytestmark = pytest.mark.anyio
 
@@ -106,4 +108,29 @@ async def test_the_published_view_never_contains_the_token(
     registry.apply([laptop_a(token="very-secret")])
 
     assert "very-secret" not in repr(published.state)
+    await registry.close()
+
+
+async def test_an_event_replayed_on_reconnect_is_recorded_once(
+    start_agent: StartAgent,
+    registry: AgentRegistry,
+    published: Published,
+    fake_clock: FakeClock,
+) -> None:
+    # After a restart that could not restore auto, the agent tells every studio
+    # that connects. A reconnect must not list the same notice twice.
+    runner = start_agent()
+    runner.run(lambda: runner.agent.camera("cam1").set_mode(ModeRequest(mode=Mode.AUTO)))
+    runner.run(lambda: runner.agent.camera("cam1").set_tracker(FakeTracker.NOT_READY))
+    runner.run(runner.agent.restart)
+    registry.apply([laptop_a()])
+    await eventually_async(lambda: len(published.state.get("agents.laptop-a.events", [])) == 1)
+
+    runner.run(runner.agent.drop_websockets)
+    await advance_in_steps_async(fake_clock, 1)
+    await eventually_async(lambda: published.status_of("laptop-a") == "ok")
+    await advance_in_steps_async(fake_clock, 0.5)
+
+    events = published.state["agents.laptop-a.events"]
+    assert [event["detail"]["reason"] for event in events] == ["tracker_not_ready"]
     await registry.close()

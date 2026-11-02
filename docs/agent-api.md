@@ -55,11 +55,15 @@ refused our token"), not `offline`.
 
 ### 2.3 Common conventions
 
-- **Units.** Velocities are normalised `-1..1` (1 = the camera's top speed).
-  Pan and tilt positions are degrees from the device's home position; zoom is
-  normalised `0` (wide) `..1` (tele). Crops are fractions `0..1` of the source
-  frame. Device-specific tables (VISCA speed steps, zoom positions) stay
-  inside the agent.
+- **Units.** Velocities are normalised `-1..1` (1 = the camera's top speed);
+  a positive pan looks right, a positive tilt up, a positive zoom in. For a
+  PTZ, pan and tilt positions are degrees from the device's home position.
+  For a crop camera they are the centre of its window, as fractions `0..1` of
+  the source frame from its top-left corner (the axes of `/crop`, so a
+  positive tilt makes the centre's y smaller). Zoom is normalised `0` (wide)
+  `..1` (tele) for both. Crops are fractions `0..1` of the source frame.
+  Device-specific tables (VISCA speed steps, zoom positions) stay inside the
+  agent.
 - **Timestamps** are ISO 8601 strings in UTC, e.g. `2026-11-01T17:46:24.164976+00:00`.
 - **Errors** are always `{"error": "<snake_case_code>", "detail": "<sentence for an operator>"}`
   with the HTTP status from §9. A malformed body, a value out of range or a
@@ -90,14 +94,19 @@ have no side effects: the subnet scan calls it on every address. Needs no token.
       "supports_auto": true,
       "image_controls": ["exposure", "gain", "white_balance", "focus"],
       "presets": [{"n": 1, "label": "Start gate"}, {"n": 2, "label": "Jump"}],
-      "limits": {"pan_speed_max": 100.0, "tilt_speed_max": 60.0, "zoom_speed_max": 0.5}
+      "limits": {"pan_speed_max": 100.0, "tilt_speed_max": 60.0, "zoom_speed_max": 0.5,
+                 "preset_max": 254}
     }
   ]
 }
 ```
 
 - `kind`: `ptz` (moves), `crop` (a digital window on a fixed sensor), `fixed`.
-- `limits`: top speeds at velocity 1.0, in degrees/s (pan, tilt) and zoom range/s.
+- `limits`: top speeds at velocity 1.0, in degrees/s (pan, tilt) and zoom
+  range/s; for a crop camera, pan and tilt are in frame fractions/s of the
+  window centre. `preset_max` is the highest preset number the camera can
+  store (presets are `0..preset_max`, at most 255), or `null` for a camera
+  without presets.
 - `presets` lists the stored presets. When they change, the agent sends a
   `presets_changed` event and the studio reads `/agent/info` again.
 - `capabilities`: free-form feature flags. `fake_controls` marks the fake agent.
@@ -133,10 +142,17 @@ refused ones; reads (`GET`) need not be.
 | Agent sends the first `state` | as soon as it accepts a WebSocket |
 | `GET /agent/info` answers within | **300 ms** |
 | Studio pings over the WebSocket | every 2 s |
+| Studio marks an agent `degraded` ("state stale") | after **3 s** without a `state` message on an open WebSocket, whatever else arrives |
 | Studio marks an agent `offline` | after **5 s** without receiving anything from it |
 | Velocity `ttl_ms` | default **300**, from 1 to **2000** |
 | Auto resumes after studio motion | `resume_after_ms`, default **3000** |
 | Mode change visible in `state` | within one push cycle |
+
+The two studio rules are independent. An agent that keeps answering pings
+or sending events but has stopped pushing state is `degraded` after 3 s and
+stays so, without ever going `offline`; it is `ok` again with the next
+`state`. An agent that goes completely quiet is `degraded` after 3 s and
+`offline` after 5 s.
 
 ## 5. The state WebSocket: `GET /agent/ws`
 
@@ -158,7 +174,8 @@ The studio opens one WebSocket per agent and keeps it open. Agent → studio:
 - `status`: the device behind the agent, `ok`, `degraded` or `offline`.
 - `mode`: `manual`, `auto`, `auto_paused` or `hold` (§7).
 - `tracker.state`: `idle` (not in an auto mode), `searching`, `tracking` or `lost`.
-- `position`: `null` for cameras without position feedback.
+- `position`: `null` for cameras without position feedback. For a crop
+  camera, the window centre and zoom (§2.3).
 - `moving`: true while any axis is being driven.
 
 ```json
@@ -206,10 +223,17 @@ its configuration answer with what actually happened.
 - All axes 0 is the same as `/stop`.
 - `mode` in the answer is the mode *after* the command (`auto_paused` if the
   camera was in `auto`, §7).
-- Only `kind=ptz` cameras move; others answer `400 not_supported`.
+- `kind=ptz` and `kind=crop` cameras move; `kind=fixed` answers
+  `400 not_supported`.
+- On a crop camera the agent integrates the velocities into the crop window:
+  pan and tilt move its centre, zoom shrinks (positive) or grows (negative)
+  it around its centre, keeping its shape. The window stays inside the frame
+  and within the agent's narrowest and widest windows. `ttl_ms`, the
+  dead-man switch and the mode rules (§7) apply exactly as for a PTZ, and
+  `GET /crop` reads where the motion has taken the window.
 
 **`POST /cameras/{id}/stop`** → `200 {"accepted": true, "mode": "..."}`. Stops
-every axis at once. It is never refused because of the mode; it can still be
+every axis at once (for a crop camera, the window). It is never refused because of the mode; it can still be
 refused for a bad token, an unknown camera or an offline device. Always logged.
 
 ### Presets (`kind=ptz`)
@@ -220,12 +244,15 @@ refused for a bad token, an unknown camera or an offline device. Always logged.
 | `POST /cameras/{id}/presets/{n}/store` | `{"n": 3, "label": "Preset 3"}` (an existing label is kept) |
 | `PUT /cameras/{id}/presets/{n}` `{"label": "Jump"}` | `{"n": 3, "label": "Jump"}`; `404 unknown_preset` if not stored |
 
-`n` is 0–255; labels are 1–60 characters. Store and rename send `presets_changed`.
+`n` is 0 to the camera's `limits.preset_max`; a number above it is
+`400 bad_request`. Labels are 1–60 characters. Store and rename send
+`presets_changed`.
 
 ### Position
 
 `GET /cameras/{id}/position` → `{"pan": 12.5, "tilt": -3.0, "zoom": 0.4}`, or
-`null` when `has_position_feedback` is false.
+`null` when `has_position_feedback` is false. A crop camera has position
+feedback: its window centre and zoom, e.g. `{"pan": 0.5, "tilt": 0.35, "zoom": 0.6}`.
 
 ### Mode
 
@@ -278,7 +305,10 @@ name is `400 unknown_control`, and then nothing is changed.
 `PUT /cameras/{id}/crop` `{"x": 0.25, "y": 0.1, "w": 0.5, "h": 0.5}` → the
 crop applied. All four are fractions of the source frame, `w` and `h` above 0,
 and the crop must lie inside the frame (`x + w ≤ 1`, `y + h ≤ 1`), else
-`400 bad_request`. On another kind of camera: `400 not_supported`.
+`400 bad_request`. On another kind of camera: `400 not_supported`. A window
+narrower than the agent allows is widened, and the answer says so. The
+window jumps there and any `/move` velocity stops. `PUT /crop` is a studio
+motion command (§7).
 
 ### Resync
 
@@ -298,11 +328,11 @@ latency is lowest and which keeps working when the studio link drops.
 | `auto_paused` | the studio; the tracker keeps estimating but does not drive | executed; restarts the countdown | by itself after `resume_after_ms`, or at once on `PUT /mode {auto}` |
 | `hold` | the studio only | executed | only on `PUT /mode {auto}` |
 
-- *Studio motion commands* are `/move` (including all-zero moves), `/stop` and
-  preset recall.
+- *Studio motion commands* are `/move` (including all-zero moves), `/stop`,
+  preset recall and `PUT /crop`, on PTZ and crop cameras alike.
 - The `resume_after_ms` countdown starts when the last studio motion **ends**:
-  when its velocity's `ttl_ms` runs out, or at once for `/stop` and preset
-  recall. A joystick held for ten seconds therefore pauses auto for ten
+  when its velocity's `ttl_ms` runs out, or at once for `/stop`, preset
+  recall and `PUT /crop`. A joystick held for ten seconds therefore pauses auto for ten
   seconds plus `resume_after_ms`.
 - `PUT /mode {manual}` ends auto entirely. `PUT /mode {hold}` does too, and
   in addition the agent MUST NOT resume tracking on any trigger of its own
@@ -330,7 +360,8 @@ latency is lowest and which keeps working when the studio link drops.
 | Situation | Behaviour |
 |---|---|
 | Studio link lost while a joystick is held | Velocities expire after `ttl_ms`; the camera stops. Auto tracking is unaffected. |
-| Agent restarts | The studio reconnects (after 0.5 s, then 1, 2, 4, 4 … s), reads `/agent/info` again (the camera list may have changed) and re-subscribes. It re-applies **nothing**: the agent restores each camera's last mode from its own configuration (`manual` if it does not know). |
+| Agent restarts | The studio reconnects (after 0.5 s, then 1, 2, 4, 4 … s), reads `/agent/info` again (the camera list may have changed) and re-subscribes. It re-applies **nothing**: the agent restores each camera's last mode from its own configuration (`manual` if it does not know; a pause does not survive, so `auto_paused` comes back as `auto`). If the last mode was `auto` and the tracker is not ready, the agent restores `manual` instead and sends `mode_changed` with `{"from": "auto", "to": "manual", "reason": "tracker_not_ready"}`. A restart closes every WebSocket, so the agent sends that event, with the `ts` of the restore, on each WebSocket it accepts right after the first `state`, until the camera's mode next changes or a studio sets it with `PUT /mode`. |
+| No `state` for 3 s | The studio shows the agent `degraded` ("state stale") until state comes again. |
 | Agent silent for 5 s | The studio shows it `offline` (and the home page says which). |
 | Device behind the agent offline | `CameraState.status = "offline"`; commands answer `503 device_offline`; the studio greys the camera out and shows the reason. |
 | Different MAJOR version | The studio shows the agent `degraded` and sends it no commands. |
@@ -339,7 +370,7 @@ latency is lowest and which keeps working when the studio link drops.
 
 | HTTP | `error` | When |
 |---|---|---|
-| 400 | `bad_request` | malformed JSON, missing or out-of-range values, `auto_paused` requested |
+| 400 | `bad_request` | malformed JSON, missing or out-of-range values (including a preset above `preset_max`), `auto_paused` requested |
 | 400 | `not_supported` | the command does not apply to this kind of camera |
 | 400 | `unknown_control` | an image control the camera does not have |
 | 401 | `unauthorized` | missing or wrong `X-Agent-Token` |
@@ -365,13 +396,14 @@ real agent:
 
 - the PTZ under test moves a little: slow, short velocity commands, each
   followed by `/stop`, and the camera is left in `manual`;
-- a preset is stored at the highest free number;
+- a preset is stored at the highest free number ≤ `limits.preset_max`;
 - the mode tests need a running tracker. If the agent answers
   `tracker_not_ready` they are skipped with that reason; start the tracker and
   run them again;
 - checks that need the fake agent's failure switches (an offline device, a
-  tracker that is not ready) are skipped;
-- crop checks run only if the agent has a `kind=crop` camera.
+  tracker that is not ready, a restart) are skipped;
+- crop checks run only if the agent has a `kind=crop` camera. They move its
+  window a little, and put it back afterwards.
 
 The suite runs in real time and takes about ten seconds.
 

@@ -165,7 +165,10 @@ class AgentClient:
         zoom: float = 0.0,
         ttl_ms: int = DEFAULT_TTL_MS,
     ) -> CommandReply:
-        """Move at normalised velocities (-1..1) for `ttl_ms`; resend to keep moving."""
+        """Move at normalised velocities (-1..1) for `ttl_ms`; resend to keep moving.
+
+        Drives a PTZ's head, or a crop camera's window. Pauses auto (contract §7).
+        """
         body = {"pan": pan, "tilt": tilt, "zoom": zoom, "ttl_ms": ttl_ms}
         return CommandReply.model_validate(await self._command(camera_id, "POST", "/move", body))
 
@@ -174,12 +177,12 @@ class AgentClient:
         return CommandReply.model_validate(await self._command(camera_id, "POST", "/stop"))
 
     async def recall_preset(self, camera_id: str, n: int) -> CommandReply:
-        """Go to stored preset `n`."""
+        """Go to stored preset `n` (0 to the camera's `limits.preset_max`)."""
         path = f"/presets/{n}/recall"
         return CommandReply.model_validate(await self._command(camera_id, "POST", path))
 
     async def store_preset(self, camera_id: str, n: int) -> Preset:
-        """Store the current position as preset `n`."""
+        """Store the current position as preset `n` (0 to the camera's `limits.preset_max`)."""
         path = f"/presets/{n}/store"
         return Preset.model_validate(await self._command(camera_id, "POST", path))
 
@@ -189,7 +192,7 @@ class AgentClient:
         return Preset.model_validate(await self._command(camera_id, "PUT", path, {"label": label}))
 
     async def position(self, camera_id: str) -> Position | None:
-        """Current position, or None for cameras without position feedback."""
+        """Current position, or None without position feedback; a crop camera's window centre."""
         answer = await self._command(camera_id, "GET", "/position")
         return None if answer is None else Position.model_validate(answer)
 
@@ -224,7 +227,7 @@ class AgentClient:
         return CropRect.model_validate(await self._command(camera_id, "GET", "/crop"))
 
     async def set_crop(self, camera_id: str, rect: CropRect) -> CropRect:
-        """Set the crop; returns the crop the agent applied."""
+        """Set the crop; returns the crop the agent applied. Pauses auto, like a /move."""
         body = rect.model_dump()
         return CropRect.model_validate(await self._command(camera_id, "PUT", "/crop", body))
 

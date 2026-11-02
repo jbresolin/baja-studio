@@ -65,6 +65,7 @@ def test_a_mode_change_is_an_event_and_in_the_next_state(
                 message.get("type") == "event"
                 and message.get("camera_id") == camera_id
                 and message.get("event") == "mode_changed"
+                and message.get("detail", {}).get("to") == "hold"
             ),
             1.0,
             "mode_changed event",

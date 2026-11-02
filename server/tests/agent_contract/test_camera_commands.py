@@ -91,9 +91,7 @@ def test_stop_is_accepted(agent: AgentUnderTest, ptz: dict[str, Any]) -> None:
 def test_presets_can_be_stored_named_and_recalled(
     agent: AgentUnderTest, ptz: dict[str, Any]
 ) -> None:
-    # Use the highest free preset number, so a real camera's presets are untouched.
-    used = {preset["n"] for preset in ptz["presets"]}
-    number = max(n for n in range(256) if n not in used)
+    number = agent.free_preset_number(ptz)
     path = f"{camera_path(ptz)}/presets/{number}"
 
     assert agent.http.post(f"{path}/recall").json()["error"] == "unknown_preset"
@@ -105,6 +103,19 @@ def test_presets_can_be_stored_named_and_recalled(
     assert named == Preset(n=number, label="Conformance")
     assert recalled.status_code == 200
     assert any(p["n"] == number for p in agent.ptz()["presets"]), "info lists the new preset"
+
+
+def test_a_preset_number_above_preset_max_is_refused(
+    agent: AgentUnderTest, ptz: dict[str, Any]
+) -> None:
+    preset_max = ptz["limits"]["preset_max"]
+    if preset_max is None or preset_max >= 255:
+        pytest.skip("this PTZ can store every preset number the contract allows")
+
+    answer = agent.http.post(f"{camera_path(ptz)}/presets/{preset_max + 1}/store")
+
+    assert answer.status_code == 400
+    assert answer.json()["error"] == "bad_request"
 
 
 def test_position_matches_the_feedback_flag(agent: AgentUnderTest, ptz: dict[str, Any]) -> None:
@@ -171,6 +182,45 @@ def test_a_crop_camera_takes_a_crop_inside_the_frame(agent: AgentUnderTest) -> N
     CropRect.model_validate(applied.json())
     assert outside.status_code == 400
     assert outside.json()["error"] == "bad_request"
+
+
+def test_a_move_drives_a_crop_cameras_window_and_its_ttl_applies(
+    agent: AgentUnderTest, crop: dict[str, Any]
+) -> None:
+    path = camera_path(crop)
+    # Start from a small window in the middle, so it has room to pan right.
+    agent.http.put(f"{path}/crop", json={"x": 0.3, "y": 0.3, "w": 0.4, "h": 0.4})
+    before = Position.model_validate(agent.http.get(f"{path}/position").json())
+
+    with agent.socket() as socket:
+        reply = agent.http.post(f"{path}/move", json={"pan": 0.5, "ttl_ms": 300})
+        assert reply.status_code == 200
+        assert reply.json()["mode"] == "manual"
+        socket.wait_for_camera(
+            crop["id"],
+            lambda state: not state["moving"] and state["position"]["pan"] > before.pan,
+            0.3 + PUSH_INTERVAL_MAX_SECONDS + MARGIN_SECONDS,
+            "the window centre further right, and stopped after the TTL",
+        )
+
+    after = Position.model_validate(agent.http.get(f"{path}/position").json())
+    window = CropRect.model_validate(agent.http.get(f"{path}/crop").json())
+    # The position is the window's centre (and the window did not tilt).
+    assert after.pan == pytest.approx(window.x + window.w / 2, abs=1e-3)
+    assert after.tilt == pytest.approx(before.tilt, abs=1e-3)
+
+
+def test_a_crop_cameras_position_is_its_window_centre(
+    agent: AgentUnderTest, crop: dict[str, Any]
+) -> None:
+    path = camera_path(crop)
+    agent.http.put(f"{path}/crop", json={"x": 0.1, "y": 0.2, "w": 0.4, "h": 0.4})
+
+    position = agent.http.get(f"{path}/position").json()
+
+    assert crop["has_position_feedback"] is True
+    assert (position["pan"], position["tilt"]) == pytest.approx((0.3, 0.4))
+    assert 0.0 <= position["zoom"] <= 1.0
 
 
 def test_resync_is_accepted(agent: AgentUnderTest, ptz: dict[str, Any]) -> None:

@@ -148,6 +148,17 @@ class AgentUnderTest:
                 return dict(camera)
         pytest.skip(f"the agent has no {kind} camera")
 
+    def free_preset_number(self, camera: dict[str, Any]) -> int:
+        """The highest preset number the camera can store and has not, so real presets survive."""
+        preset_max = camera["limits"]["preset_max"]
+        if preset_max is None:
+            pytest.skip(f"{camera['id']} stores no presets (limits.preset_max is null)")
+        used = {preset["n"] for preset in camera["presets"]}
+        free = [n for n in range(preset_max + 1) if n not in used]
+        if not free:
+            pytest.skip(f"every preset 0..{preset_max} of {camera['id']} is in use")
+        return max(free)
+
     def has_fake_controls(self) -> bool:
         return "fake_controls" in self.info().get("capabilities", [])
 

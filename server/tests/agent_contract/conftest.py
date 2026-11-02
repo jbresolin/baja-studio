@@ -62,6 +62,19 @@ def ptz(agent: AgentUnderTest) -> Iterator[dict[str, Any]]:
     agent.http.put(f"{path}/mode", json={"mode": "manual"})
 
 
+@pytest.fixture
+def crop(agent: AgentUnderTest) -> Iterator[dict[str, Any]]:
+    """CameraInfo of the first crop camera, in manual; window, motion and mode put back after."""
+    camera = agent.camera_of_kind("crop")
+    path = f"/cameras/{camera['id']}"
+    agent.http.put(f"{path}/mode", json={"mode": "manual"})
+    original = agent.http.get(f"{path}/crop").json()
+    yield camera
+    agent.http.post(f"{path}/stop")
+    agent.http.put(f"{path}/crop", json=original)
+    agent.http.put(f"{path}/mode", json={"mode": "manual"})
+
+
 def put_in_auto(agent: AgentUnderTest, camera_id: str, resume_after_ms: int) -> None:
     """Switch to auto, or skip the test if this agent's tracker cannot run right now."""
     answer = agent.http.put(

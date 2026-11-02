@@ -52,8 +52,7 @@ def test_a_move_in_auto_pauses_auto_and_auto_resumes_by_itself(
 
 def test_stop_and_preset_recall_also_pause_auto(agent: AgentUnderTest, ptz: dict[str, Any]) -> None:
     camera_id = ptz["id"]
-    used = {preset["n"] for preset in ptz["presets"]}
-    number = max(n for n in range(256) if n not in used)
+    number = agent.free_preset_number(ptz)
     agent.http.post(f"/cameras/{camera_id}/presets/{number}/store")
 
     put_in_auto(agent, camera_id, RESUME_AFTER_MS)
@@ -62,6 +61,20 @@ def test_stop_and_preset_recall_also_pause_auto(agent: AgentUnderTest, ptz: dict
     put_in_auto(agent, camera_id, RESUME_AFTER_MS)
     recall = agent.http.post(f"/cameras/{camera_id}/presets/{number}/recall")
     assert recall.json()["mode"] == "auto_paused"
+
+
+def test_move_and_put_crop_pause_auto_on_a_crop_camera(
+    agent: AgentUnderTest, crop: dict[str, Any]
+) -> None:
+    camera_id = crop["id"]
+
+    put_in_auto(agent, camera_id, 60_000)
+    reply = agent.http.post(f"/cameras/{camera_id}/move", json={"zoom": 0.1, "ttl_ms": 100})
+    assert reply.json()["mode"] == "auto_paused"
+
+    put_in_auto(agent, camera_id, 60_000)
+    agent.http.put(f"/cameras/{camera_id}/crop", json={"x": 0.0, "y": 0.0, "w": 0.5, "h": 0.5})
+    assert agent.http.get(f"/cameras/{camera_id}/mode").json()["mode"] == "auto_paused"
 
 
 def test_put_mode_auto_ends_the_pause_at_once(agent: AgentUnderTest, ptz: dict[str, Any]) -> None:
@@ -101,3 +114,39 @@ def test_auto_is_refused_with_409_when_the_tracker_cannot_run(
     assert answer.status_code == 409
     assert answer.json()["error"] == "tracker_not_ready"
     agent.fake_switch(f"/cameras/{ptz['id']}/tracker", {"tracker": "ready"})
+
+
+def test_after_a_restart_auto_is_restored_if_the_tracker_is_ready(
+    agent: AgentUnderTest, ptz: dict[str, Any]
+) -> None:
+    camera_id = ptz["id"]
+    put_in_auto(agent, camera_id, RESUME_AFTER_MS)
+
+    agent.fake_switch("/restart", {})
+
+    with agent.socket() as socket:
+        socket.wait_for_camera(camera_id, mode_is("auto"), ONE_PUSH, "auto restored")
+
+
+def test_after_a_restart_without_a_tracker_auto_becomes_manual_and_says_why(
+    agent: AgentUnderTest, ptz: dict[str, Any]
+) -> None:
+    camera_id = ptz["id"]
+    put_in_auto(agent, camera_id, RESUME_AFTER_MS)
+    agent.fake_switch(f"/cameras/{camera_id}/tracker", {"tracker": "not_ready"})
+
+    agent.fake_switch("/restart", {})
+
+    # The sockets closed with the restart: a studio connecting afterwards
+    # must still be told why its camera is no longer in auto.
+    with agent.socket() as socket:
+        socket.wait_for_camera(camera_id, mode_is("manual"), ONE_PUSH, "manual after restart")
+        event = socket.receive_until(
+            lambda message: (
+                message.get("event") == "mode_changed" and message.get("camera_id") == camera_id
+            ),
+            ONE_PUSH,
+            "mode_changed event after the restart",
+        )
+    assert event["detail"] == {"from": "auto", "to": "manual", "reason": "tracker_not_ready"}
+    agent.fake_switch(f"/cameras/{camera_id}/tracker", {"tracker": "ready"})

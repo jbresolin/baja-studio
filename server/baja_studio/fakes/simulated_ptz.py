@@ -12,8 +12,10 @@ from typing import Any
 
 from baja_studio.agents.contract import (
     DEFAULT_RESUME_AFTER_MS,
+    RESTORE_REASON_TRACKER_NOT_READY,
     CameraInfo,
     CameraKind,
+    CameraLimits,
     CameraState,
     CommandReply,
     CropRect,
@@ -27,17 +29,25 @@ from baja_studio.agents.contract import (
     MoveRequest,
     Position,
     Preset,
-    SpeedLimits,
     Status,
     TrackerState,
     TrackerStatus,
 )
+from baja_studio.fakes.simulated_crop import CROP_LIMITS, CropWindow
 from baja_studio.fakes.simulated_image import webcam_image_controls
 
 PAN_RANGE = (-170.0, 170.0)
 TILT_RANGE = (-30.0, 90.0)
 ZOOM_RANGE = (0.0, 1.0)
-LIMITS = SpeedLimits(pan_speed_max=100.0, tilt_speed_max=60.0, zoom_speed_max=0.5)
+# Below the wire's 255 on purpose, so tests can tell the two limits apart.
+PRESET_MAX = 127
+PTZ_LIMITS = CameraLimits(
+    pan_speed_max=100.0, tilt_speed_max=60.0, zoom_speed_max=0.5, preset_max=PRESET_MAX
+)
+FIXED_LIMITS = CameraLimits(
+    pan_speed_max=0.0, tilt_speed_max=0.0, zoom_speed_max=0.0, preset_max=None
+)
+MOVABLE_KINDS = (CameraKind.PTZ, CameraKind.CROP)
 MAX_RESUME_AFTER_MS = 600_000
 FAKE_TARGET_ID = "fake-target-1"
 
@@ -89,7 +99,9 @@ class SimulatedCamera:
         self.presets: dict[int, Preset] = {}
         self._stored_positions: dict[int, tuple[float, float, float]] = {}
         self.image = webcam_image_controls() if self.kind != CameraKind.FIXED else {}
-        self.crop_rect = CropRect(x=0.0, y=0.0, w=1.0, h=1.0)
+        self.crop_window = CropWindow()
+        # Set when a restart could not restore auto: (ts, mode_changed detail).
+        self.restore_notice: tuple[str, dict[str, Any]] | None = None
         self._pan, self._tilt, self._zoom = 0.0, 0.0, 0.0
         self._velocity = (0.0, 0.0, 0.0)
         self._velocity_until = 0.0
@@ -102,18 +114,19 @@ class SimulatedCamera:
 
     def info(self) -> CameraInfo:
         """The static description for `/agent/info`."""
-        is_ptz = self.kind == CameraKind.PTZ
+        movable = self.kind in MOVABLE_KINDS
+        limits = {CameraKind.PTZ: PTZ_LIMITS, CameraKind.CROP: CROP_LIMITS}
         return CameraInfo(
             id=self.id,
             label=self.label,
             kind=self.kind,
             driver="simulated",
-            has_position_feedback=is_ptz,
-            has_zoom=is_ptz,
-            supports_auto=self.kind != CameraKind.FIXED,
+            has_position_feedback=movable,
+            has_zoom=movable,
+            supports_auto=movable,
             image_controls=list(self.image),
             presets=[self.presets[n] for n in sorted(self.presets)],
-            limits=LIMITS,
+            limits=limits.get(self.kind, FIXED_LIMITS),
         )
 
     def state(self, now: Moment) -> CameraState:
@@ -124,7 +137,7 @@ class SimulatedCamera:
             status=Status.OK if self.online else Status.OFFLINE,
             mode=self.mode,
             tracker=self._tracker_state(),
-            position=self._position() if self.kind == CameraKind.PTZ else None,
+            position=self._position(),
             moving=moving,
             last_command_source=self._last_command_source,
             last_command_ts=self._last_command_ts,
@@ -141,8 +154,8 @@ class SimulatedCamera:
     # --- motion ----------------------------------------------------------------------
 
     def move(self, now: Moment, request: MoveRequest, source: str) -> CommandReply:
-        """Velocity move for `ttl_ms`; all zeros is a stop."""
-        self._require_ptz()
+        """Velocity move for `ttl_ms` (a PTZ's head, or a crop camera's window); zeros stop."""
+        self._require_movable()
         if request.pan == request.tilt == request.zoom == 0:
             return self.stop(now, source)
         self._integrate(now)
@@ -156,13 +169,13 @@ class SimulatedCamera:
         self._require_online()
         self._integrate(now)
         self._velocity_until = now.seconds
-        if self.kind == CameraKind.PTZ:
+        if self.kind in MOVABLE_KINDS:
             self._studio_motion(now, source, motion_ends_at=now.seconds)
         return CommandReply(accepted=True, mode=self.mode)
 
     def recall_preset(self, now: Moment, n: int, source: str) -> CommandReply:
         """Jump to a stored preset (the fake has no travel time)."""
-        self._require_ptz()
+        self._require_preset_number(n)
         preset_position = self._stored_positions.get(n)
         if preset_position is None:
             raise CameraCommandError(ErrorCode.UNKNOWN_PRESET, f"preset {n} is not stored")
@@ -174,7 +187,7 @@ class SimulatedCamera:
 
     def store_preset(self, now: Moment, n: int) -> Preset:
         """Remember the current position as preset `n`."""
-        self._require_ptz()
+        self._require_preset_number(n)
         self._integrate(now)
         self._stored_positions[n] = (self._pan, self._tilt, self._zoom)
         existing = self.presets.get(n)
@@ -184,7 +197,7 @@ class SimulatedCamera:
 
     def label_preset(self, n: int, label: str) -> Preset:
         """Rename a stored preset."""
-        self._require_ptz()
+        self._require_preset_number(n)
         if n not in self.presets:
             raise CameraCommandError(ErrorCode.UNKNOWN_PRESET, f"preset {n} is not stored")
         self.presets[n] = Preset(n=n, label=label)
@@ -195,7 +208,7 @@ class SimulatedCamera:
         """Where the camera points, or None for kinds without position feedback."""
         self._require_online()
         self._integrate(now)
-        return self._position() if self.kind == CameraKind.PTZ else None
+        return self._position()
 
     # --- mode and tracker ------------------------------------------------------------
 
@@ -216,6 +229,7 @@ class SimulatedCamera:
         if request.profile is not None:
             self.profile = _checked_profile(request.profile)
         was_paused = self.mode == Mode.AUTO_PAUSED
+        self.restore_notice = None  # a studio has chosen the mode: it knows
         self._change_mode(request.mode, "requested by the studio")
         if was_paused and request.mode == Mode.AUTO:
             self._emit(EventName.MANUAL_OVERRIDE_ENDED, {"reason": "auto requested"})
@@ -230,6 +244,30 @@ class SimulatedCamera:
             self._emit(EventName.TRACKER_ACQUIRED, {"target_id": FAKE_TARGET_ID})
         elif was_tracking and not is_tracking:
             self._emit(EventName.TRACKER_LOST, {})
+
+    def restart(self, now: Moment) -> None:
+        """Fake control: the agent restarts. Motion stops and the last mode is restored.
+
+        A pause does not survive a restart, so `auto_paused` comes back as
+        `auto`. If auto cannot run because the tracker is not ready, the camera
+        comes back in `manual` and says why (contract §9). Every socket closes
+        on a restart, so the notice is kept for each studio that connects,
+        until the mode next changes or a studio sets it.
+        """
+        self._integrate(now)
+        self._velocity_until = now.seconds
+        self._resume_at = None
+        self.pending_events.clear()  # a restarted agent has forgotten them
+        last_mode = Mode.AUTO if self.mode == Mode.AUTO_PAUSED else self.mode
+        self.mode = last_mode
+        if last_mode == Mode.AUTO and self.tracker == FakeTracker.NOT_READY:
+            self.mode = Mode.MANUAL
+            detail = {
+                "from": Mode.AUTO,
+                "to": Mode.MANUAL,
+                "reason": RESTORE_REASON_TRACKER_NOT_READY,
+            }
+            self.restore_notice = (now.iso, detail)
 
     def set_online(self, now: Moment, online: bool) -> None:
         """Fake control: unplug or re-plug the device behind the agent."""
@@ -261,17 +299,21 @@ class SimulatedCamera:
             self.image[name].apply(change)
         return self.image_values()
 
-    def crop(self) -> CropRect:
-        """The current crop of a crop camera."""
+    def crop(self, now: Moment) -> CropRect:
+        """The current crop of a crop camera, wherever `/move` has taken it."""
         self._require_kind(CameraKind.CROP)
-        return self.crop_rect
+        self._integrate(now)
+        return self.crop_window.rect()
 
-    def set_crop(self, rect: CropRect) -> CropRect:
-        """Set the crop of a crop camera."""
+    def set_crop(self, now: Moment, rect: CropRect, source: str) -> CropRect:
+        """Jump the window to `rect`: a studio motion command, like a preset recall."""
         self._require_kind(CameraKind.CROP)
         self._require_online()
-        self.crop_rect = rect
-        return self.crop_rect
+        self._integrate(now)
+        self._velocity_until = now.seconds
+        self.crop_window = CropWindow.from_rect(rect)
+        self._studio_motion(now, source, motion_ends_at=now.seconds)
+        return self.crop_window.rect()
 
     def resync(self, now: Moment) -> CommandReply:
         """Re-read the device (the fake's device never drifts, so nothing changes)."""
@@ -296,6 +338,7 @@ class SimulatedCamera:
         if mode == self.mode:
             return
         previous, self.mode = self.mode, mode
+        self.restore_notice = None
         self._emit(EventName.MODE_CHANGED, {"from": previous, "to": mode, "reason": reason})
 
     def _tracker_state(self) -> TrackerState:
@@ -313,15 +356,21 @@ class SimulatedCamera:
         """Move the position on by the velocity, up to when the velocity expires."""
         until = min(now.seconds, self._velocity_until)
         elapsed = until - self._integrated_at
-        if elapsed > 0:
+        if elapsed > 0 and self.kind == CameraKind.CROP:
+            self.crop_window.drive(self._velocity, elapsed)
+        elif elapsed > 0:
             pan, tilt, zoom = self._velocity
-            self._pan = _clamp(self._pan + pan * LIMITS.pan_speed_max * elapsed, PAN_RANGE)
-            self._tilt = _clamp(self._tilt + tilt * LIMITS.tilt_speed_max * elapsed, TILT_RANGE)
-            self._zoom = _clamp(self._zoom + zoom * LIMITS.zoom_speed_max * elapsed, ZOOM_RANGE)
+            self._pan = _clamp(self._pan + pan * PTZ_LIMITS.pan_speed_max * elapsed, PAN_RANGE)
+            self._tilt = _clamp(self._tilt + tilt * PTZ_LIMITS.tilt_speed_max * elapsed, TILT_RANGE)
+            self._zoom = _clamp(self._zoom + zoom * PTZ_LIMITS.zoom_speed_max * elapsed, ZOOM_RANGE)
         self._integrated_at = max(self._integrated_at, now.seconds)
 
-    def _position(self) -> Position:
-        return Position(pan=round(self._pan, 3), tilt=round(self._tilt, 3), zoom=self._zoom)
+    def _position(self) -> Position | None:
+        if self.kind == CameraKind.CROP:
+            return self.crop_window.position()
+        if self.kind == CameraKind.PTZ:
+            return Position(pan=round(self._pan, 3), tilt=round(self._tilt, 3), zoom=self._zoom)
+        return None
 
     def _emit(self, event: EventName, detail: dict[str, Any]) -> None:
         self.pending_events.append((event.value, detail))
@@ -336,9 +385,19 @@ class SimulatedCamera:
                 ErrorCode.NOT_SUPPORTED, f"{self.id} is a {self.kind} camera, not {kind}"
             )
 
-    def _require_ptz(self) -> None:
+    def _require_movable(self) -> None:
+        if self.kind not in MOVABLE_KINDS:
+            raise CameraCommandError(ErrorCode.NOT_SUPPORTED, f"{self.id} is a fixed camera")
+        self._require_online()
+
+    def _require_preset_number(self, n: int) -> None:
+        """Presets are for PTZs, numbered 0 to `PRESET_MAX`."""
         self._require_kind(CameraKind.PTZ)
         self._require_online()
+        if n > PRESET_MAX:
+            raise CameraCommandError(
+                ErrorCode.BAD_REQUEST, f"{self.id} stores presets 0 to {PRESET_MAX}, not {n}"
+            )
 
 
 def _checked_profile(profile: dict[str, Any]) -> dict[str, Any]:
