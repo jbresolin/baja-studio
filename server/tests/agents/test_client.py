@@ -19,7 +19,7 @@ from baja_studio.agents.client import (
 from baja_studio.agents.contract import AgentInfo, CropRect, ImageControlChange, Mode
 from baja_studio.agents.transport import AgentUnreachableError
 from baja_studio.fakes.in_process import InProcessTransport
-from baja_studio.fakes.simulated_ptz import FakeTracker
+from baja_studio.fakes.simulated_common import FakeTracker
 from tests.conftest import FakeClock
 from tests.fake_agents import AGENT_HOST, StartAgent
 

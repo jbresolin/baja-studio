@@ -7,11 +7,15 @@ the direct-fallback delay that camera control (WP2) will use.
 One worker runs an event loop with an `AgentRegistry` on it: a live link to
 every enabled agent, published to `state.agents.agents`. Its health is the
 summary of all agents, so the home page card says when one is away.
+
+The module is also the cameras module's `AgentGateway`: agent-owned camera
+drivers read link state through `link` and send commands through `submit`.
 """
 
 import asyncio
 import socket
 import threading
+from concurrent.futures import Future
 from typing import Any
 
 import httpx2
@@ -29,6 +33,7 @@ from baja_studio.agents.scan import (
     scan_subnet,
 )
 from baja_studio.agents.transport import AgentTransport, NetworkTransport
+from baja_studio.cameras.drivers.agent_gateway import AgentCall, AgentLinkView
 from baja_studio.core.module import CommandError, Module, ModuleContext
 from baja_studio.core.settings import ModuleSettings
 from baja_studio.core.supervisor import WorkerContext, WorkerSpec
@@ -150,6 +155,45 @@ class AgentsModule(Module):
         settings = self.context.current_settings()
         assert isinstance(settings, AgentsSettings)
         return settings
+
+    # --- the cameras module's gateway ---------------------------------------------------
+
+    def link(self, agent_id: str) -> AgentLinkView | None:
+        """The agent's link as published (None if not configured or the module is off)."""
+        if self._context is None:
+            return None
+        view = self.context.state.get(self.name, f"agents.{agent_id}")
+        if not isinstance(view, dict):
+            return None
+        return AgentLinkView(
+            status=str(view.get("status", "")),
+            reason=str(view.get("reason", "")),
+            cameras=dict(view.get("cameras") or {}),
+            info=view.get("info"),
+        )
+
+    def submit(self, agent_id: str, call: AgentCall) -> "Future[Any]":
+        """Run `call(client)` on the links' event loop; fails if the agent is not linked."""
+        with self._lock:
+            loop, registry = self._loop, self._registry
+        if loop is None or registry is None:
+            failed: Future[Any] = Future()
+            failed.set_exception(RuntimeError("the agents module is not running"))
+            return failed
+
+        async def on_the_loop() -> Any:
+            client = registry.client(agent_id)
+            if client is None:
+                raise RuntimeError(f"agent {agent_id!r} is not configured or is disabled")
+            return await call(client)
+
+        return asyncio.run_coroutine_threadsafe(on_the_loop(), loop)
+
+    def direct_fallback_after_s(self) -> float:
+        """The fallback delay from this module's settings."""
+        if self._context is None:
+            return AgentsSettings().direct_fallback_after_s
+        return self._settings().direct_fallback_after_s
 
     # --- commands --------------------------------------------------------------------
 

@@ -8,8 +8,12 @@ sees the same live state.
 Work package WP0 built the shared base that every module builds on. WP1
 added the **agents** module: the studio's link to the camera laptops
 ("agents") at trackside. Their API is the contract in
-[docs/agent-api.md](docs/agent-api.md). There is no real camera driver yet;
-that comes in WP2. Two demo modules remain:
+[docs/agent-api.md](docs/agent-api.md). WP2 added the **cameras** module:
+a registry of cameras, a VISCA-over-IP driver for the SMTAV, a driver for
+cameras owned by an agent (with direct fallback), and the RS485 joystick
+(Pelco-D). There is no camera page yet (WP3): cameras are set up in
+Settings and moved with the joystick or by command; see
+[docs/bench/wp2.md](docs/bench/wp2.md). Two demo modules remain:
 
 - **heartbeat** counts up once per second. You can change the interval in
   Settings, reset it, or make its worker crash once to watch it recover.
@@ -82,7 +86,7 @@ python -m baja_studio
 ```
 
 Open <http://localhost:8888>. The home page shows a card for each module:
-**home**, **camera agents**, **heartbeat** and **echo**. Each card has a
+**home**, **cameras**, **camera agents**, **heartbeat** and **echo**. Each card has a
 health badge, which should be green `ok` after a second or two. Stop the
 service with `Ctrl+C`.
 
@@ -195,8 +199,11 @@ server/baja_studio/
   core/            the shared base: settings, state + WebSocket, supervisor,
                    child processes, command log, logging, HTTP API
   agents/          the agent API: contract models, client, scan, live links
-  fakes/           runnable stand-ins for external systems (fake_agent)
-  modules/         one folder per module (home, agents, heartbeat, echo)
+  cameras/         camera registry, drivers (VISCA/IP, agent), Pelco-D input,
+                   motion arbiter
+  fakes/           runnable stand-ins for external systems (fake_agent,
+                   fake_visca_camera, fake_serial)
+  modules/         one folder per module (home, cameras, agents, heartbeat, echo)
   childprocs/      programs run as child processes (echo_child)
 server/tests/      one test file per source file
   agent_contract/  conformance suite for any agent (--agent-url)

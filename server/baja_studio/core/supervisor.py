@@ -10,144 +10,50 @@ because of a worker.
 A worker that looks after several devices and keeps running while some of
 them are away (the agents module, for one) reports its health itself with
 `WorkerContext.report_health` instead of raising.
+
+A module whose devices come and go with its settings (cameras) starts and
+stops workers one at a time with `start_worker` / `stop_worker`, and may set a
+`HealthSummary` that turns its workers' healths into the one its card shows.
 """
 
 import logging
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from enum import StrEnum
 
 from baja_studio.core.clock import Clock, TimerHandle
+from baja_studio.core.worker import (
+    FIRST_RESTART_DELAY_SECONDS,
+    HEALTH_SEVERITY,
+    MAX_RESTART_DELAY_SECONDS,
+    DeviceOfflineError,
+    Health,
+    HealthState,
+    RestartPolicy,
+    WorkerContext,
+    WorkerFunction,
+    WorkerSpec,
+)
+
+# Re-exported: modules import these from here, as they did before worker.py existed.
+__all__ = [
+    "FIRST_RESTART_DELAY_SECONDS",
+    "MAX_RESTART_DELAY_SECONDS",
+    "DeviceOfflineError",
+    "Health",
+    "HealthState",
+    "HealthSummary",
+    "RestartPolicy",
+    "Supervisor",
+    "WorkerContext",
+    "WorkerFunction",
+    "WorkerSpec",
+]
 
 logger = logging.getLogger(__name__)
 
-FIRST_RESTART_DELAY_SECONDS = 1.0
-MAX_RESTART_DELAY_SECONDS = 30.0
 STABLE_RUN_SECONDS = 10.0
 DEFAULT_JOIN_TIMEOUT_SECONDS = 5.0
-
-
-class HealthState(StrEnum):
-    """How a module is doing, worst last except `stopped`, which is deliberate."""
-
-    OK = "ok"
-    DEGRADED = "degraded"
-    OFFLINE = "offline"
-    STOPPED = "stopped"
-
-
-# Used to pick the most worrying worker state when summarising a module.
-_SEVERITY = {HealthState.OK: 0, HealthState.DEGRADED: 1, HealthState.OFFLINE: 2}
-
-
-@dataclass(frozen=True)
-class Health:
-    """A health state plus the message that explains it (empty when ok)."""
-
-    state: HealthState
-    message: str = ""
-
-
-class DeviceOfflineError(Exception):
-    """Raised by a worker when its device or child process is absent.
-
-    The supervisor reports `offline` instead of `degraded` and keeps retrying.
-    """
-
-
-class WorkerContext:
-    """What a running worker uses to sleep, notice stop requests and report recovery."""
-
-    def __init__(
-        self,
-        module: str,
-        worker_name: str,
-        clock: Clock,
-        on_online: Callable[[], None],
-        on_report: Callable[[Health], None] | None = None,
-    ) -> None:
-        """Created by the supervisor for each worker; workers never build one."""
-        self.module = module
-        self.worker_name = worker_name
-        self.clock = clock
-        self.stop_requested = threading.Event()
-        self._wake_requested = threading.Event()
-        self._on_online = on_online
-        self._on_report = on_report
-
-    @property
-    def should_stop(self) -> bool:
-        """True once the supervisor wants this worker to return."""
-        return self.stop_requested.is_set()
-
-    def sleep(self, seconds: float) -> None:
-        """Pause for `seconds`, returning early if woken or asked to stop."""
-        self.clock.wait(self._wake_requested, seconds)
-        self._wake_requested.clear()
-
-    def wake(self) -> None:
-        """Cut the current `sleep` short, e.g. after a settings change or command."""
-        self._wake_requested.set()
-
-    def request_stop(self) -> None:
-        """Ask the worker to finish; also wakes it so it notices promptly."""
-        self.stop_requested.set()
-        self._wake_requested.set()
-
-    def mark_online(self) -> None:
-        """Report that the device is reachable again, so `offline` turns back to `ok`."""
-        self._on_online()
-
-    def report_health(self, state: HealthState, message: str = "") -> None:
-        """Set this worker's health while it keeps running (e.g. 1 of 3 devices away).
-
-        The reported health stays until the worker reports again or fails; the
-        ten-second "ran stably" rule does not override it.
-        """
-        if self._on_report is not None:
-            self._on_report(Health(state, message))
-
-
-WorkerFunction = Callable[[WorkerContext], None]
-
-
-@dataclass(frozen=True)
-class WorkerSpec:
-    """A worker a module asks the supervisor to run: a name and a function.
-
-    `starts_offline` is for workers that talk to a device or child process:
-    the module shows `offline` until the worker calls `mark_online`, rather
-    than claiming `ok` before the device has answered.
-    """
-
-    name: str
-    run: WorkerFunction
-    starts_offline: bool = False
-
-
-class RestartPolicy:
-    """Exponential backoff between restarts: 1 s, 2 s, 4 s ... capped at 30 s."""
-
-    def __init__(
-        self,
-        first_delay: float = FIRST_RESTART_DELAY_SECONDS,
-        max_delay: float = MAX_RESTART_DELAY_SECONDS,
-    ) -> None:
-        """Start at the shortest delay."""
-        self._first_delay = first_delay
-        self._max_delay = max_delay
-        self._next_delay = first_delay
-
-    def next_delay(self) -> float:
-        """The delay to wait before this restart; each call doubles the next one."""
-        delay = self._next_delay
-        self._next_delay = min(self._next_delay * 2, self._max_delay)
-        return delay
-
-    def reset(self) -> None:
-        """Go back to the shortest delay after a worker has run stably."""
-        self._next_delay = self._first_delay
 
 
 @dataclass
@@ -164,6 +70,8 @@ class _RunningWorker:
 
 
 HealthListener = Callable[[str, Health], None]
+# Turns {worker name: health} into the module's one health; see `set_health_summary`.
+HealthSummary = Callable[[dict[str, Health]], Health]
 
 
 class Supervisor:
@@ -180,6 +88,7 @@ class Supervisor:
         self._stopped_modules: set[str] = set()
         self._last_reported: dict[str, Health] = {}
         self._listeners: list[HealthListener] = []
+        self._summaries: dict[str, HealthSummary | None] = {}
 
     def add_health_listener(self, listener: HealthListener) -> None:
         """Call `listener(module, health)` whenever a module's summary health changes."""
@@ -207,17 +116,48 @@ class Supervisor:
             running = list(self._workers.get(module, {}).values())
             self._workers[module] = {}
             self._stopped_modules.add(module)
-        for worker in running:
-            worker.context.request_stop()
-            if worker.stability_timer is not None:
-                worker.stability_timer.cancel()
-        for worker in running:
-            worker.thread.join(self._join_timeout_seconds)
-            if worker.thread.is_alive():
-                logger.warning(
-                    "worker did not stop in time",
-                    extra={"studio_module": module, "worker": worker.spec.name},
-                )
+        self._stop_and_join(module, running)
+        self._report_if_changed(module)
+
+    def start_worker(self, module: str, spec: WorkerSpec) -> None:
+        """Start one more worker for a running module (e.g. a camera just added).
+
+        A worker of the same name must not be running; stop it first. Does
+        nothing for a stopped module: its workers start with the module.
+        """
+        with self._lock:
+            if module in self._stopped_modules:
+                return
+            if spec.name in self._workers.get(module, {}):
+                raise ValueError(f"worker {module}.{spec.name} is already running")
+            self._start_worker(module, spec)
+        self._report_if_changed(module)
+
+    def stop_worker(self, module: str, worker_name: str) -> None:
+        """Stop one worker and wait for it (a camera removed, a COM port changed).
+
+        Its health no longer counts towards the module's. Unknown names are ignored.
+        """
+        with self._lock:
+            worker = self._workers.get(module, {}).pop(worker_name, None)
+        if worker is not None:
+            self._stop_and_join(module, [worker])
+        self._report_if_changed(module)
+
+    def worker_names(self, module: str) -> list[str]:
+        """Names of the module's running workers, in the order they were started."""
+        with self._lock:
+            return list(self._workers.get(module, {}))
+
+    def set_health_summary(self, module: str, summary: HealthSummary | None) -> None:
+        """Let `summary({worker name: health})` decide the module's health.
+
+        Without one, a module is as healthy as its most worrying worker. A
+        module with one worker per device sets one so that, say, one camera
+        away of three reads `degraded` and names the camera.
+        """
+        with self._lock:
+            self._summaries[module] = summary
         self._report_if_changed(module)
 
     def stop_all(self) -> None:
@@ -239,10 +179,15 @@ class Supervisor:
         with self._lock:
             if module in self._stopped_modules:
                 return Health(HealthState.STOPPED)
-            healths = [worker.health for worker in self._workers.get(module, {}).values()]
+            healths = {
+                name: worker.health for name, worker in self._workers.get(module, {}).items()
+            }
+            summary = self._summaries.get(module)
+        if summary is not None:
+            return summary(healths)
         if not healths:
             return Health(HealthState.OK)
-        return max(healths, key=lambda health: _SEVERITY[health.state])
+        return max(healths.values(), key=lambda health: HEALTH_SEVERITY[health.state])
 
     def all_health(self) -> dict[str, Health]:
         """Summary health of every registered module, for `/api/health`."""
@@ -250,15 +195,33 @@ class Supervisor:
             modules = list(self._workers)
         return {module: self.module_health(module) for module in modules}
 
+    def _stop_and_join(self, module: str, workers: list[_RunningWorker]) -> None:
+        for worker in workers:
+            worker.context.request_stop()
+            if worker.stability_timer is not None:
+                worker.stability_timer.cancel()
+        for worker in workers:
+            worker.thread.join(self._join_timeout_seconds)
+            if worker.thread.is_alive():
+                logger.warning(
+                    "worker did not stop in time",
+                    extra={"studio_module": module, "worker": worker.spec.name},
+                )
+
     def _start_worker(self, module: str, spec: WorkerSpec) -> None:
+        # The callbacks find their worker through this cell, not by name: a worker
+        # stopped with `stop_worker` and started again under the same name is a
+        # new record, and late calls from the old one must not change it.
+        record: list[_RunningWorker] = []
         context = WorkerContext(
             module,
             spec.name,
             self._clock,
-            on_online=lambda: self._worker_came_online(module, spec.name),
-            on_report=lambda health: self._worker_reported(module, spec.name, health),
+            on_online=lambda: self._worker_came_online(module, record[0]),
+            on_report=lambda health: self._worker_reported(module, record[0], health),
         )
         worker = _RunningWorker(spec, context)
+        record.append(worker)
         if spec.starts_offline:
             worker.health = Health(HealthState.OFFLINE, "starting")
         # The thread gets its record directly rather than looking it up, because
@@ -332,19 +295,19 @@ class Supervisor:
             )
         self._set_worker_health(module, worker, Health(HealthState.OK))
 
-    def _worker_came_online(self, module: str, worker_name: str) -> None:
+    def _is_current(self, module: str, worker: _RunningWorker) -> bool:
         with self._lock:
-            worker = self._workers.get(module, {}).get(worker_name)
-        if worker is not None and worker.health.state == HealthState.OFFLINE:
+            return self._workers.get(module, {}).get(worker.spec.name) is worker
+
+    def _worker_came_online(self, module: str, worker: _RunningWorker) -> None:
+        if self._is_current(module, worker) and worker.health.state == HealthState.OFFLINE:
             logger.info(
-                "device back online", extra={"studio_module": module, "worker": worker_name}
+                "device back online", extra={"studio_module": module, "worker": worker.spec.name}
             )
             self._set_worker_health(module, worker, Health(HealthState.OK))
 
-    def _worker_reported(self, module: str, worker_name: str, health: Health) -> None:
-        with self._lock:
-            worker = self._workers.get(module, {}).get(worker_name)
-        if worker is not None and not worker.context.should_stop:
+    def _worker_reported(self, module: str, worker: _RunningWorker, health: Health) -> None:
+        if self._is_current(module, worker) and not worker.context.should_stop:
             self._set_worker_health(module, worker, health, reported=True)
 
     def _set_worker_health(

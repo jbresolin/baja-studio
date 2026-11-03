@@ -42,6 +42,12 @@ reading its tests.
 - A worker that looks after several devices and keeps running while some are
   away reports a summary with `worker.report_health(state, message)` instead
   of raising.
+- A module whose devices come and go with its settings (cameras, one per
+  camera and controller) starts and stops single workers with
+  `context.start_worker(spec)` / `context.stop_worker(name)`, names them after
+  their device (`camera:<id>:visca`, `controller:<id>`), and turns their
+  healths into one with `supervisor.set_health_summary`. Never wait for a
+  worker to stop while holding a lock that worker may take.
 - Secrets inside nested models or lists of models are masked like top-level
   ones; give list items an `id` field so a masked secret sent back stays with
   its item.
@@ -59,6 +65,29 @@ reading its tests.
   inside drivers.
 - Async code waits with `await clock.sleep(...)`, never `asyncio.sleep`, so
   tests can run it on the fake clock.
+- Protocol logic that depends on time (resends, timeouts, dead-man switches)
+  is written as a plain class told `now` on every call (`ViscaLink`, the fake
+  agent's `SimulatedCamera`); a thin worker loop around it does the I/O.
+  Compare float deadlines with a small tolerance: ten 0.1 s steps are not 1.0.
+
+## Camera motion
+
+- Only a camera's `MotionArbiter` calls its driver. Inputs (joystick, web,
+  API) are sources named like command-log sources, and go through the
+  arbiter.
+- One source owns a camera's velocity at a time. Another takes over once
+  the owner is at rest or its TTL has expired.
+- A latched velocity (the joystick's) has no TTL. The input that latched it
+  must release it: on its own stop, a different command, or losing its
+  link. The arbiter keeps re-sending it with a full TTL meanwhile.
+- A stop from the web page or the API is always executed. A stop on behalf
+  of the joystick applies only to a camera the joystick owns, because a
+  controller at rest repeats "stop" and, on agent cameras, every stop
+  pauses auto.
+- Velocity shaping (deadband, inversion, scale, curve) happens in the
+  arbiter. Drivers map normalised values to device steps, and nothing else.
+- Never send a stop just because a connection opened (contract §7). A stop
+  the device did not confirm is repeated until it is.
 
 ## Tests
 
@@ -67,6 +96,8 @@ reading its tests.
 - Test names are sentences: `test_worker_is_restarted_after_exception`.
 - **Test comments assume a complete beginner**: say what is being set up,
   what is being poked, what is expected and why.
+- Warnings are errors (`filterwarnings = ["error"]`): close every file,
+  pipe and socket you open.
 - No network, no hardware, no sleep-based timing. Use the `fake_clock`
   fixture (`advance()`, `wake_up_times()`, `sleeping_count`), the
   `eventually(...)` helper for work done on other threads, and
@@ -79,6 +110,10 @@ reading its tests.
   test fixtures, and live in the package under `baja_studio/fakes/` (e.g.
   `python -m baja_studio.fakes.fake_agent`). Tests reach them in-process,
   without opening ports.
+- Threads on the fake clock: after `advance`, wait for the woken threads to
+  sleep again before checking. If a step can stop a thread, use
+  `fake_clock.all_asleep_or_gone(fake_clock.sleeping_threads())`, not
+  `sleeping_count`; a thread that ended never sleeps again.
 - Async tests are marked `@pytest.mark.anyio`. With the fake clock, let time
   pass with `advance_in_steps` / `advance_in_steps_async`, not one big
   `advance`, so pushes and timeouts interleave as they would for real.

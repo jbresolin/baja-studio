@@ -14,6 +14,7 @@ The loop a child runs lives in `childproc_child.py`, so children do not import
 the host side (or the supervisor) at all.
 """
 
+import contextlib
 import json
 import logging
 import os
@@ -218,9 +219,15 @@ class ChildProcessHost:
         running flag, log, set `exited`, then call the exit listeners. So a
         listener always sees `is_running` False and `exit_code` set.
         """
-        for line in stream:
-            self._handle_line(line)
+        with stream:
+            for line in stream:
+                self._handle_line(line)
         self._exit_code = self._reap(process)
+        # A child that died on its own (killed, crashed) never had its stdin
+        # closed by `stop`; close it here so no pipe is left to the garbage collector.
+        if process.stdin is not None:
+            with contextlib.suppress(OSError):
+                process.stdin.close()
         self._running = False
         logger.info(
             "child process stopped (exit code %s)",
@@ -283,12 +290,13 @@ class ChildProcessHost:
 
     def _forward_stderr(self, stream: IO[str]) -> None:
         """Reader thread: whatever the child prints to stderr goes to the service log."""
-        for line in stream:
-            logger.info(
-                "child: %s",
-                line.rstrip(),
-                extra={"studio_module": self._owner_module, "child": self.python_module},
-            )
+        with stream:
+            for line in stream:
+                logger.info(
+                    "child: %s",
+                    line.rstrip(),
+                    extra={"studio_module": self._owner_module, "child": self.python_module},
+                )
 
 
 def run_child_session(

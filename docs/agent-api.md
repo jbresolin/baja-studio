@@ -246,7 +246,8 @@ refused for a bad token, an unknown camera or an offline device. Always logged.
 
 `n` is 0 to the camera's `limits.preset_max`; a number above it is
 `400 bad_request`. Labels are 1–60 characters. Store and rename send
-`presets_changed`.
+`presets_changed`. On a camera of another kind (`crop`, `fixed`, whose
+`preset_max` is `null`) all three answer `400 not_supported`.
 
 ### Position
 

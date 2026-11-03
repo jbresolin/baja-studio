@@ -131,6 +131,21 @@ class FakeClock:
         with self._condition:
             return len(self._async_sleepers)
 
+    def sleeping_threads(self) -> set[int]:
+        """Ids of the threads blocked in `wait` right now."""
+        with self._condition:
+            return set(self._sleeper_deadlines)
+
+    def all_asleep_or_gone(self, thread_ids: set[int]) -> bool:
+        """True once each of `thread_ids` is blocked in `wait` again, or has ended.
+
+        After `advance`, this says the threads it woke have finished what they
+        do between sleeps; a thread that stopped (a worker shut down) counts as done.
+        """
+        alive = {thread.ident for thread in threading.enumerate()}
+        sleeping = self.sleeping_threads()
+        return all(ident in sleeping or ident not in alive for ident in thread_ids)
+
     def wake_up_times(self) -> list[float]:
         """The fake times at which the currently sleeping threads will wake, earliest first."""
         with self._condition:
