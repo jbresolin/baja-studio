@@ -200,6 +200,32 @@ def test_a_failing_command_is_logged_with_its_error_and_re_raised(parts: dict[st
     assert parts["command_log"].tail()[0]["result"] == "error: bulb blew"
 
 
+class QuietLampModule(LampModule):
+    """A lamp whose "peek" command is a read the command log should not keep."""
+
+    def handle_command(self, command: str, args: dict[str, Any], source: str) -> Any:
+        if command == "peek":
+            return {"on": self.context.state.get("lamp", "on")}
+        return super().handle_command(command, args, source)
+
+    def wants_logged(
+        self, command: str, args: dict[str, Any], source: str, result: Any, failed: bool
+    ) -> bool:
+        return command != "peek"
+
+
+def test_a_module_can_keep_commands_out_of_the_command_log(parts: dict[str, Any]) -> None:
+    # The cameras module does this for a browser's ten-a-second move repeats.
+    parts["registry"].register(QuietLampModule())
+    parts["registry"].start_all()
+
+    parts["registry"].dispatch_command("lamp", "switch", {"on": True}, "web:abc")
+    result = parts["registry"].dispatch_command("lamp", "peek", {}, "web:abc")
+
+    assert result == {"on": True}  # the command still ran...
+    assert [entry["command"] for entry in parts["command_log"].tail()] == ["switch"]  # ...unlogged
+
+
 def test_commands_to_a_stopped_module_are_refused(parts: dict[str, Any]) -> None:
     parts["registry"].register(LampModule())  # registered but never started
 

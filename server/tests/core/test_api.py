@@ -5,6 +5,7 @@ exercise the real routes without a network. Most use the heartbeat module
 because it needs no child process.
 """
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -189,6 +190,55 @@ def test_a_new_websocket_client_receives_a_snapshot_first(light_client: TestClie
     assert first["type"] == "snapshot"
     assert "heartbeat" in first["state"]
     assert first["state"]["home"]["modules"]["heartbeat"]["state"] == "ok"
+
+
+def test_the_snapshot_tells_the_page_its_client_id(light_client: TestClient) -> None:
+    # The page shows its id in the footer, and the command log names it web:<id>.
+    with light_client.websocket_connect("/ws") as socket:
+        first = socket.receive_json()
+
+    assert re.fullmatch(r"[0-9a-f]{8}", first["client_id"])
+
+
+def test_a_page_that_reconnects_gets_the_client_id_it_asks_for(light_client: TestClient) -> None:
+    with light_client.websocket_connect("/ws?client=desk-1") as socket:
+        first = socket.receive_json()
+
+    assert first["client_id"] == "desk-1"
+
+
+def test_a_second_page_asking_for_a_connected_id_gets_a_fresh_one(
+    light_client: TestClient,
+) -> None:
+    # A duplicated browser tab carries the same id; two pages must never share a source.
+    with (
+        light_client.websocket_connect("/ws?client=desk-1") as first_page,
+        light_client.websocket_connect("/ws?client=desk-1") as second_page,
+    ):
+        first = first_page.receive_json()["client_id"]
+        second = second_page.receive_json()["client_id"]
+
+    assert first == "desk-1"
+    assert second != "desk-1"
+
+
+def test_a_malformed_client_id_is_replaced(light_client: TestClient) -> None:
+    with light_client.websocket_connect("/ws?client=web:evil.name") as socket:
+        first = socket.receive_json()
+
+    assert first["client_id"] != "web:evil.name"
+
+
+def test_websocket_commands_are_logged_under_the_pages_client_id(
+    light_client: TestClient,
+) -> None:
+    with light_client.websocket_connect("/ws?client=phone") as socket:
+        socket.receive_json()
+        socket.send_json({"module": "heartbeat", "command": "reset", "request_id": "r1"})
+        receive_until(socket, lambda message: message["type"] == "reply")
+
+    entry = light_client.get("/api/commands?module=heartbeat").json()[0]
+    assert entry["source"] == "web:phone"
 
 
 def test_a_command_over_the_websocket_gets_a_reply_with_its_request_id(

@@ -21,7 +21,7 @@ from collections.abc import Callable
 from concurrent.futures import Future
 from typing import Any
 
-from baja_studio.agents.contract import CameraKind, Mode, ModeReply, Position, Status
+from baja_studio.agents.contract import CameraKind, Mode, ModeReply, Position, Preset, Status
 from baja_studio.cameras.config import DirectFallback
 from baja_studio.cameras.driver import (
     CameraDriver,
@@ -137,14 +137,28 @@ class AgentProxyDriver(ModeCapableDriver):
     def set_mode(self, mode: Mode, profile: dict[str, Any] | None) -> "Future[ModeReply]":
         """Ask the agent for a mode. Refused while driving directly (there is no tracker)."""
         result: Future[ModeReply] = Future()
-        if self._route == ROUTE_FALLBACK:
-            result.set_exception(
-                RuntimeError("the agent is offline; its camera is being driven directly")
-            )
+        if self._refused_in_fallback(result):
             return result
         remote = self._remote_id
         self._forward("set_mode", lambda client: client.set_mode(remote, mode, profile), result)
         return result
+
+    def label_preset(self, n: int, label: str) -> "Future[Preset]":
+        """Rename a preset on the agent. Refused while driving directly (the agent keeps them)."""
+        result: Future[Preset] = Future()
+        if self._refused_in_fallback(result):
+            return result
+        remote = self._remote_id
+        self._forward("label_preset", lambda client: client.label_preset(remote, n, label), result)
+        return result
+
+    def _refused_in_fallback(self, result: "Future[Any]") -> bool:
+        if self._route != ROUTE_FALLBACK:
+            return False
+        result.set_exception(
+            RuntimeError("the agent is offline; its camera is being driven directly")
+        )
+        return True
 
     def mode(self) -> str | None:
         """The camera's mode as the agent last reported it."""
@@ -160,18 +174,25 @@ class AgentProxyDriver(ModeCapableDriver):
         position = None if state is None else state.get("position")
         return None if position is None else Position.model_validate(position)
 
-    def capabilities(self) -> DriverCapabilities:
-        """From the agent's `/agent/info`; a PTZ with no presets until it has been read."""
+    def _info(self) -> dict[str, Any] | None:
+        """This camera's entry in the agent's `/agent/info`, once it has been read."""
         view = self._view
         for camera in (view.info or {}).get("cameras", []) if view else []:
             if camera.get("id") == self._remote_id:
-                return DriverCapabilities(
-                    kind=CameraKind(camera["kind"]),
-                    has_position_feedback=camera["has_position_feedback"],
-                    has_zoom=camera["has_zoom"],
-                    supports_auto=camera["supports_auto"],
-                    preset_max=camera["limits"]["preset_max"],
-                )
+                return dict(camera)
+        return None
+
+    def capabilities(self) -> DriverCapabilities:
+        """From the agent's `/agent/info`; a PTZ with no presets until it has been read."""
+        camera = self._info()
+        if camera is not None:
+            return DriverCapabilities(
+                kind=CameraKind(camera["kind"]),
+                has_position_feedback=camera["has_position_feedback"],
+                has_zoom=camera["has_zoom"],
+                supports_auto=camera["supports_auto"],
+                preset_max=camera["limits"]["preset_max"],
+            )
         return DriverCapabilities(CameraKind.PTZ, False, True, True, None)
 
     def health(self) -> Status:
@@ -275,6 +296,8 @@ class AgentProxyDriver(ModeCapableDriver):
             "status_reason": reason,
             "route": self._route,
             "capabilities": self.capabilities().as_state(),
+            # The agent keeps this camera's preset names; they stay listed in fallback.
+            "presets": (self._info() or {}).get("presets", []),
         }
         target = self._fallback if self._route == ROUTE_FALLBACK else None
         if target is not None:

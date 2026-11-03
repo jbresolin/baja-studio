@@ -12,6 +12,10 @@ export function App() {
           <NavLink to="/" end>
             Home
           </NavLink>
+          <NavLink to="/cameras" end>
+            Cameras
+          </NavLink>
+          <NavLink to="/cameras/config">Camera setup</NavLink>
           <NavLink to="/settings">Settings</NavLink>
           <NavLink to="/logs">Logs</NavLink>
         </nav>

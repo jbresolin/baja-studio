@@ -114,11 +114,19 @@ class StateStore:
             return patches
 
     def add_client(self, client_id: str) -> ClientChannel:
-        """Register a browser and queue its initial snapshot; call on the event loop."""
+        """Register a browser and queue its initial snapshot; call on the event loop.
+
+        Snapshots sent to a client carry its `client_id`, the name its
+        commands are logged under (`web:<client_id>`), so the page can show it.
+        """
         channel = ClientChannel(client_id)
-        channel.queue.put_nowait(self.snapshot())
+        channel.queue.put_nowait({**self.snapshot(), "client_id": client_id})
         self._clients[client_id] = channel
         return channel
+
+    def has_client(self, client_id: str) -> bool:
+        """True while a browser with this id is connected."""
+        return client_id in self._clients
 
     def remove_client(self, client_id: str) -> None:
         """Forget a browser after its WebSocket closes."""
@@ -128,7 +136,7 @@ class StateStore:
         """Queue a fresh snapshot for one client that detected a gap in `seq`."""
         channel = self._clients.get(client_id)
         if channel is not None:
-            channel.queue.put_nowait(self.snapshot())
+            channel.queue.put_nowait({**self.snapshot(), "client_id": client_id})
 
     def flush_now(self) -> None:
         """Send all pending patches to every client immediately; runs on the event loop."""

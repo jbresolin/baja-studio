@@ -17,7 +17,10 @@ arbiter call for the camera whose `controller_address` matches the frame's.
   into a move from the web page, and does not pause an agent's auto mode.
 - Losing the link releases the latch: a port error, the worker stopping, or
   (if `motion.controller_silence_ms` is set) no frame for that long.
-- Call-button presses are published as `controllers.<id>.last_call`.
+- Call-button presses are published as `controllers.<id>.last_call`, and
+  carried out if the controller's `call_bindings` bind them (`call_bindings.py`).
+- Every valid frame goes to the frame monitor (`frame_monitor.py`), published
+  as `controllers.<id>.recent_frames` at most ten times a second.
 """
 
 from collections.abc import Callable
@@ -27,6 +30,8 @@ import serial
 
 from baja_studio.cameras.config import ControllerConfig, MotionSettings
 from baja_studio.cameras.driver import Logger, Velocity
+from baja_studio.cameras.inputs.call_bindings import CallBindings
+from baja_studio.cameras.inputs.frame_monitor import FrameMonitor
 from baja_studio.cameras.inputs.pelco_d import (
     CallButton,
     Frame,
@@ -72,6 +77,7 @@ class PelcoDInput:
         self,
         config: ControllerConfig,
         arbiter_for_address: Callable[[int], MotionArbiter | None],
+        arbiter_for_camera: Callable[[str], MotionArbiter | None],
         motion: Callable[[], MotionSettings],
         publish: Callable[[str, Any], None],
         log_command: Callable[[str, dict[str, Any], str], None],
@@ -79,7 +85,11 @@ class PelcoDInput:
         logger: Logger,
         opener: SerialOpener = open_serial_port,
     ) -> None:
-        """`publish(key, value)` writes `controllers.<id>.<key>`; `log_command` the command log."""
+        """`publish(key, value)` writes `controllers.<id>.<key>`; `log_command` the command log.
+
+        `config` may be replaced while the worker runs, by a settings edit
+        that changes only the Call bindings (the port stays open).
+        """
         self.config = config
         self.source = f"joystick:{config.id}"
         self._arbiter_for_address = arbiter_for_address
@@ -95,6 +105,10 @@ class PelcoDInput:
         # The camera the joystick latched a velocity on, if any (worker thread only).
         self._latched: MotionArbiter | None = None
         self._warned_at: dict[str, float] = {}
+        self._monitor = FrameMonitor()
+        self._calls = CallBindings(
+            self.source, arbiter_for_camera, publish, log_command, clock, logger
+        )
 
     @property
     def worker_name(self) -> str:
@@ -143,7 +157,18 @@ class PelcoDInput:
             if data:
                 for frame in self._parser.feed(data):
                     self.handle(frame)
+            self.publish_recent_frames()
             self.check_silence()
+
+    def publish_recent_frames(self) -> None:
+        """Publish the frame monitor's list if it changed (at most ten times a second)."""
+        frames = self._monitor.due(self._clock.monotonic())
+        if frames is not None:
+            self._publish("recent_frames", frames)
+
+    def raw_frames(self) -> list[str]:
+        """The last hundred valid frames as hex, oldest first (for test fixtures)."""
+        return self._monitor.raw_frames()
 
     def check_silence(self) -> None:
         """Release the latch if the controller has been silent for `controller_silence_ms`."""
@@ -166,6 +191,7 @@ class PelcoDInput:
     def handle(self, frame: Frame) -> None:
         """Carry out one valid frame (called by the worker; tests call it directly)."""
         action = interpret(frame)
+        self._monitor.record(frame, action, self._clock.now_utc().isoformat())
         repeated = frame == self._last_frame
         self._last_frame = frame
         self._last_frame_at = self._clock.monotonic()
@@ -181,12 +207,13 @@ class PelcoDInput:
             self._release("released")
         if isinstance(action, CallButton):
             if not repeated:
-                self._publish("last_call", {"n": action.n, "ts": self._clock.now_utc().isoformat()})
-                self._log_command("call", {"n": action.n}, "ok")
+                self._calls.press(action.n, self.config.call_binding(action.n))
             return
         if isinstance(action, Unknown):
             self._warn_now_and_then(f"frame:{frame.command2}", "unknown frame %s", frame)
             return
+        if arbiter is not None:
+            self._calls.addressed(arbiter.camera_id)
         if arbiter is None:
             self._warn_now_and_then(
                 f"address:{action.address}",

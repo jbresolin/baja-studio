@@ -9,13 +9,15 @@ GET  /api/commands?module=&limit=    command log tail
 POST /api/commands                   run a command from another program
 GET  /api/logs?limit=                recent log entries
 GET  /api/logs/stream                live log entries (Server-Sent Events)
-WS   /ws                             state snapshot + patches; commands in, replies out
+WS   /ws?client=<id>                 state snapshot + patches; commands in, replies out
 """
 
 import asyncio
 import json
 import logging
+import re
 import uuid
+from collections.abc import Callable
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect
@@ -34,6 +36,9 @@ from baja_studio.core.supervisor import HealthState
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# A browser's id, as it appears in command sources (`web:<id>`).
+CLIENT_ID_PATTERN = re.compile(r"^[A-Za-z0-9-]{1,16}$")
 
 
 def services_of(request: Request | WebSocket) -> StudioServices:
@@ -180,7 +185,7 @@ async def state_socket(websocket: WebSocket) -> None:
     """
     services = services_of(websocket)
     await websocket.accept()
-    client_id = uuid.uuid4().hex[:8]
+    client_id = choose_client_id(websocket.query_params.get("client"), services.state.has_client)
     channel = services.state.add_client(client_id)
     command_tasks: set[asyncio.Task[None]] = set()
 
@@ -217,6 +222,22 @@ async def state_socket(websocket: WebSocket) -> None:
         sender.cancel()
         for task in command_tasks:
             task.cancel()
+
+
+def choose_client_id(requested: str | None, in_use: Callable[[str], bool]) -> str:
+    """The id a new WebSocket client gets: the one it asked for, or a fresh one.
+
+    A page asks again for the id it was given when it reconnects, so after a
+    Wi-Fi blip its commands carry on under the same source (and it still owns
+    the camera it was moving). An id that is malformed or already connected
+    (a duplicated browser tab) gets a fresh one, so two pages never share a source.
+    """
+    if requested and CLIENT_ID_PATTERN.match(requested) and not in_use(requested):
+        return requested
+    while True:
+        fresh = uuid.uuid4().hex[:8]
+        if not in_use(fresh):
+            return fresh
 
 
 def handle_socket_command(

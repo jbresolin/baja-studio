@@ -9,7 +9,12 @@ from typing import Any
 import pytest
 from pydantic import ValidationError
 
-from baja_studio.cameras.config import CameraConfig, CamerasSettings, MotionSettings
+from baja_studio.cameras.config import (
+    CameraConfig,
+    CamerasSettings,
+    ControllerConfig,
+    MotionSettings,
+)
 
 
 def direct(**overrides: Any) -> dict[str, Any]:
@@ -136,3 +141,49 @@ def test_the_connection_key_changes_with_the_address_but_not_the_label() -> None
     assert camera.connection_key() == camera.model_copy(update={"label": "x"}).connection_key()
     moved = CameraConfig.model_validate(direct(address={"host": "10.0.0.10"}))
     assert camera.connection_key() != moved.connection_key()
+
+
+def test_a_call_binding_needs_the_target_its_action_names() -> None:
+    with pytest.raises(ValidationError, match="select_camera needs a camera"):
+        ControllerConfig.model_validate(
+            {"id": "desk", "port": "COM8", "call_bindings": [{"n": 1, "action": "select_camera"}]}
+        )
+    with pytest.raises(ValidationError, match="recall_preset needs a preset number"):
+        ControllerConfig.model_validate(
+            {"id": "desk", "port": "COM8", "call_bindings": [{"n": 1, "action": "recall_preset"}]}
+        )
+
+
+def test_a_call_button_cannot_be_bound_twice() -> None:
+    with pytest.raises(ValidationError, match="bound twice"):
+        ControllerConfig.model_validate(
+            {
+                "id": "desk",
+                "port": "COM8",
+                "call_bindings": [{"n": 1, "action": "none"}, {"n": 1, "action": "none"}],
+            }
+        )
+
+
+def test_a_call_binding_must_select_a_camera_in_the_list() -> None:
+    with pytest.raises(ValidationError, match="selects camera 'gone', which is not in the list"):
+        CamerasSettings.model_validate(
+            {
+                "cameras": [direct()],
+                "controllers": [
+                    {
+                        "id": "desk",
+                        "port": "COM8",
+                        "call_bindings": [{"n": 2, "action": "select_camera", "camera": "gone"}],
+                    }
+                ],
+            }
+        )
+
+
+def test_a_call_bound_to_none_counts_as_unbound() -> None:
+    controller = ControllerConfig.model_validate(
+        {"id": "desk", "port": "COM8", "call_bindings": [{"n": 3, "action": "none"}]}
+    )
+
+    assert controller.call_binding(3) is None

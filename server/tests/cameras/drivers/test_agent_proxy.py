@@ -123,6 +123,42 @@ def test_the_cameras_state_is_mirrored_from_the_agent(
     assert position is not None and position.pan == 10.0
 
 
+def test_the_agents_preset_names_are_mirrored_from_its_info(
+    fake_clock: FakeClock, supervisor: Supervisor
+) -> None:
+    # The agent keeps an agent camera's preset names; they come with /agent/info.
+    rig = make_rig(fake_clock, supervisor)
+    info = {
+        "cameras": [
+            {
+                "id": "cam1",
+                "kind": "ptz",
+                "has_position_feedback": True,
+                "has_zoom": True,
+                "supports_auto": True,
+                "limits": {"preset_max": 254},
+                "presets": [{"n": 1, "label": "Start gate"}],
+            }
+        ]
+    }
+
+    rig.gateway.view = AgentLinkView("ok", "", {"cam1": CAMERA_OK}, info)
+    rig.follow_for(0.1)
+
+    assert rig.state["presets"] == [{"n": 1, "label": "Start gate"}]
+    assert rig.state["capabilities"]["preset_max"] == 254
+
+
+def test_renaming_a_preset_is_forwarded_to_the_agent(
+    fake_clock: FakeClock, supervisor: Supervisor
+) -> None:
+    rig = make_rig(fake_clock, supervisor)
+
+    rig.driver.label_preset(1, "Jump")
+
+    assert len(rig.gateway.submitted) == 1
+
+
 @pytest.mark.parametrize(
     ("link_status", "camera_status", "reason_part"),
     [
@@ -265,6 +301,16 @@ def test_in_fallback_set_mode_is_refused_because_there_is_no_tracker(
     rig = in_fallback(fake_clock, supervisor)
 
     refused = rig.driver.set_mode(Mode.AUTO, None)
+
+    assert "driven directly" in str(refused.exception())
+
+
+def test_in_fallback_renaming_a_preset_is_refused_because_the_agent_keeps_them(
+    fake_clock: FakeClock, supervisor: Supervisor
+) -> None:
+    rig = in_fallback(fake_clock, supervisor)
+
+    refused = rig.driver.label_preset(1, "Jump")
 
     assert "driven directly" in str(refused.exception())
 

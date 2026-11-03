@@ -373,3 +373,292 @@ button.danger {
   border-color: var(--offline);
   color: var(--offline);
 }
+
+/* Cameras page: list | control | presets, mode and log. One column on a phone. */
+.cameras-page {
+  display: grid;
+  grid-template-columns: minmax(12rem, 16rem) minmax(16rem, 1fr) minmax(14rem, 20rem);
+  gap: 1rem;
+  align-items: start;
+  padding-bottom: 2.5rem;
+}
+
+.camera-list ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.camera-select {
+  display: none;
+  width: 100%;
+}
+
+.camera-entry {
+  width: 100%;
+  text-align: left;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.camera-entry.selected {
+  border-color: var(--accent);
+  background: var(--surface);
+}
+
+.camera-entry-title {
+  font-weight: 600;
+}
+
+.camera-badges {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  align-items: center;
+  font-size: 0.8rem;
+}
+
+.badge-owner {
+  background: var(--accent);
+}
+
+.badge-mode {
+  background: var(--surface-raised);
+  color: var(--text);
+  border: 1px solid var(--border);
+}
+
+.badge-mode-auto {
+  border-color: var(--ok);
+}
+
+.badge-mode-auto_paused {
+  border-color: var(--degraded);
+}
+
+.follow-controller {
+  display: block;
+  margin-top: 0.6rem;
+}
+
+kbd {
+  font-family: ui-monospace, monospace;
+  font-size: 0.8rem;
+}
+
+.camera-control {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.camera-control .page-header {
+  align-self: stretch;
+  margin-bottom: 0;
+}
+
+.preview-slot {
+  align-self: stretch;
+  aspect-ratio: 16 / 9;
+  max-height: 12rem;
+  border: 1px dashed var(--border);
+  border-radius: 6px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--text-muted);
+}
+
+.joystick-pad {
+  position: relative;
+  width: min(18rem, 100%);
+  aspect-ratio: 1;
+  border-radius: 50%;
+  background: radial-gradient(circle, var(--surface-raised) 0%, var(--surface) 70%);
+  border: 1px solid var(--border);
+  touch-action: none; /* the finger drives the camera, not the page */
+  user-select: none;
+  cursor: grab;
+}
+
+.joystick-pad.disabled {
+  opacity: 0.45;
+}
+
+.joystick-knob {
+  position: absolute;
+  width: 22%;
+  height: 22%;
+  border-radius: 50%;
+  background: var(--accent);
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+
+.zoom-row button {
+  min-width: 5.5rem;
+  min-height: 2.6rem;
+  touch-action: none;
+  user-select: none;
+}
+
+.stop-button {
+  border-color: var(--offline);
+  color: var(--offline);
+  font-weight: 700;
+}
+
+.speed {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+.preset-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+
+.preset {
+  display: flex;
+  gap: 0.3rem;
+}
+
+.preset-button {
+  flex: 1;
+  text-align: left;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.preset-rename {
+  display: flex;
+  gap: 0.3rem;
+}
+
+.preset-rename input {
+  flex: 1;
+  min-width: 0;
+}
+
+.mode-panel .field {
+  margin-bottom: 0.4rem;
+}
+
+.toast {
+  position: fixed;
+  bottom: 3rem;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 0.5rem 0.9rem;
+  border-radius: 4px;
+  background: var(--surface-raised);
+  border-left: 3px solid var(--ok);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 40%);
+  z-index: 10;
+  max-width: 90vw;
+}
+
+.toast-error {
+  border-left-color: var(--degraded);
+}
+
+.key-legend {
+  position: fixed;
+  top: 4rem;
+  right: 1rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.6rem;
+  z-index: 10;
+}
+
+.cameras-footer {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  padding: 0.4rem 1rem;
+  background: var(--surface);
+  border-top: 1px solid var(--border);
+  font-size: 0.85rem;
+}
+
+@media (max-width: 900px) {
+  .cameras-page {
+    grid-template-columns: 1fr;
+  }
+
+  .camera-list ul,
+  .camera-list .follow-controller {
+    display: none;
+  }
+
+  .camera-select {
+    display: block;
+  }
+
+  .joystick-pad {
+    width: 100%;
+    max-width: 24rem;
+  }
+
+  /* Presets become one scrolling row. */
+  .preset-panel {
+    flex-direction: row;
+    overflow-x: auto;
+    padding-bottom: 0.3rem;
+  }
+
+  .preset {
+    flex: 0 0 auto;
+  }
+}
+
+/* Camera configuration page. */
+.config-form {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.6rem 0.8rem;
+  margin: 0.6rem 0;
+}
+
+.config-form h3 {
+  font-size: 0.95rem;
+  margin: 0.8rem 0 0.4rem;
+  color: var(--text-muted);
+}
+
+.form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(14rem, 1fr));
+  gap: 0.6rem 1rem;
+}
+
+.config-list tr.dragging {
+  opacity: 0.5;
+}
+
+.drag-handle {
+  cursor: grab;
+  color: var(--text-muted);
+}
+
+.config-list button + button {
+  margin-left: 0.3rem;
+}
+
+.mono {
+  font-family: ui-monospace, monospace;
+}
+
+.frame-monitor textarea {
+  width: 100%;
+}

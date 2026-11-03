@@ -16,7 +16,7 @@ from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import Any
 
-from baja_studio.agents.contract import CameraKind, Mode, ModeReply, Position, Status
+from baja_studio.agents.contract import CameraKind, Mode, ModeReply, Position, Preset, Status
 from baja_studio.core.clock import Clock
 from baja_studio.core.supervisor import WorkerSpec
 
@@ -144,3 +144,7 @@ class ModeCapableDriver(CameraDriver):
     @abstractmethod
     def set_mode(self, mode: Mode, profile: dict[str, Any] | None) -> "Future[ModeReply]":
         """Ask for a mode; the future fails with the agent's refusal, if any."""
+
+    @abstractmethod
+    def label_preset(self, n: int, label: str) -> "Future[Preset]":
+        """Rename a stored preset on the agent (it keeps agent cameras' preset names)."""
