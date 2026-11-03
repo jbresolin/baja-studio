@@ -169,6 +169,20 @@ def test_crop_is_only_for_crop_cameras(agent: AgentUnderTest, ptz: dict[str, Any
     assert answer.json()["error"] == "not_supported"
 
 
+def test_presets_are_only_for_ptz_cameras(agent: AgentUnderTest, crop: dict[str, Any]) -> None:
+    # A crop camera's preset_max is null: storing, recalling or naming one is refused.
+    path = f"{camera_path(crop)}/presets/0"
+
+    answers = [
+        agent.http.post(f"{path}/store"),
+        agent.http.post(f"{path}/recall"),
+        agent.http.put(path, json={"label": "Nope"}),
+    ]
+
+    assert [answer.status_code for answer in answers] == [400, 400, 400]
+    assert {answer.json()["error"] for answer in answers} == {"not_supported"}
+
+
 def test_a_crop_camera_takes_a_crop_inside_the_frame(agent: AgentUnderTest) -> None:
     crop = agent.camera_of_kind("crop")
     path = f"{camera_path(crop)}/crop"

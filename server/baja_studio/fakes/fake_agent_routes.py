@@ -45,7 +45,8 @@ from baja_studio.agents.contract import (
     Preset,
     PresetLabelRequest,
 )
-from baja_studio.fakes.simulated_ptz import CameraCommandError, FakeTracker, SimulatedCamera
+from baja_studio.fakes.simulated_common import CameraCommandError, FakeTracker
+from baja_studio.fakes.simulated_ptz import SimulatedCamera
 
 if TYPE_CHECKING:
     from baja_studio.fakes.fake_agent import FakeAgent

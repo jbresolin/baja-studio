@@ -17,14 +17,9 @@ from baja_studio.agents.contract import (
     MoveRequest,
     TrackerStatus,
 )
+from baja_studio.fakes.simulated_common import PRESET_MAX, CameraCommandError, FakeTracker, Moment
 from baja_studio.fakes.simulated_crop import CROP_LIMITS
-from baja_studio.fakes.simulated_ptz import (
-    PRESET_MAX,
-    CameraCommandError,
-    FakeTracker,
-    Moment,
-    SimulatedCamera,
-)
+from baja_studio.fakes.simulated_ptz import SimulatedCamera
 
 STUDIO = "studio:test"
 

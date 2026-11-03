@@ -59,6 +59,14 @@ class ModuleContext:
         """Set a value in this module's state subtree; browsers see it within ~30 ms."""
         self.state.update(self.name, path, value)
 
+    def start_worker(self, spec: WorkerSpec) -> None:
+        """Start one more supervised worker while the module runs (a device just added)."""
+        self.supervisor.start_worker(self.name, spec)
+
+    def stop_worker(self, worker_name: str) -> None:
+        """Stop one of this module's workers and wait for it (a device removed or re-addressed)."""
+        self.supervisor.stop_worker(self.name, worker_name)
+
     def new_child_process(
         self, python_module: str, on_event: EventCallback | None = None
     ) -> ChildProcessHost:

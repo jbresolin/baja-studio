@@ -15,6 +15,8 @@ dependencies = [
     "pydantic==2.14.2",
     # The agent client's HTTP side (and Starlette's TestClient in the tests).
     "httpx2==2.16.0",
+    # The RS485 joystick controller (Pelco-D), camera control (WP2).
+    "pyserial==3.5",
 ]
 
 [project.optional-dependencies]
@@ -22,6 +24,7 @@ dev = [
     "pytest==9.2.0",
     "ruff==0.17.3",
     "mypy==2.4.1",
+    "types-pyserial==3.5.0.20261030",
 ]
 
 [project.scripts]
@@ -35,6 +38,8 @@ testpaths = ["tests"]
 addopts = "-ra"
 # A test that hangs is a bug; this turns a hang into a clear failure.
 faulthandler_timeout = 60
+# Warnings are bugs (an unclosed pipe, a deprecated call): fail on them, in CI too.
+filterwarnings = ["error"]
 
 [tool.ruff]
 line-length = 100

@@ -31,14 +31,14 @@ def test_the_default_data_directory_depends_on_the_platform(
     assert default_data_directory().name == expected_ending
 
 
-def test_create_app_registers_home_agents_heartbeat_and_echo_in_that_order(
+def test_create_app_registers_home_cameras_agents_heartbeat_and_echo_in_that_order(
     tmp_path: Path, fake_clock: FakeClock
 ) -> None:
     app = create_app(data_directory=tmp_path, clock=fake_clock, log_to_file=False)
 
     names = [module.name for module in app.state.services.registry.modules()]
 
-    assert names == ["home", "agents", "heartbeat", "echo"]
+    assert names == ["home", "cameras", "agents", "heartbeat", "echo"]
     assert (tmp_path / DATABASE_FILE_NAME).is_file()
 
 

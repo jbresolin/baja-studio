@@ -12,6 +12,7 @@ import pytest
 
 from baja_studio.core.supervisor import (
     DeviceOfflineError,
+    Health,
     HealthState,
     RestartPolicy,
     Supervisor,
@@ -312,3 +313,118 @@ def test_listeners_hear_only_about_real_changes(
     supervisor.start_module("demo", [])  # already ok: no new report expected
 
     assert recorder.states_of("demo") == [HealthState.STOPPED, HealthState.OK]
+
+
+# --- workers added and removed one at a time (devices that come and go) -----------
+
+
+def test_start_worker_adds_a_worker_to_a_running_module(supervisor: Supervisor) -> None:
+    # A module starts with one worker; later (say, a camera was added in
+    # settings) it asks for a second one by name.
+    supervisor.register_module("demo")
+    supervisor.start_module("demo", [WorkerSpec("first", sleep_until_stopped)])
+    started = threading.Event()
+
+    def second(worker: WorkerContext) -> None:
+        started.set()
+        sleep_until_stopped(worker)
+
+    supervisor.start_worker("demo", WorkerSpec("second", second))
+
+    # The new worker really runs, and the supervisor lists both.
+    assert started.wait(5)
+    assert supervisor.worker_names("demo") == ["first", "second"]
+
+
+def test_start_worker_refuses_a_name_that_is_already_running(supervisor: Supervisor) -> None:
+    supervisor.register_module("demo")
+    supervisor.start_module("demo", [WorkerSpec("camera-cam1", sleep_until_stopped)])
+
+    # Two workers with one name would make "stop camera-cam1" ambiguous.
+    with pytest.raises(ValueError, match="already running"):
+        supervisor.start_worker("demo", WorkerSpec("camera-cam1", sleep_until_stopped))
+
+
+def test_start_worker_on_a_stopped_module_does_nothing(supervisor: Supervisor) -> None:
+    # A disabled module must stay quiet even if a settings change asks for a worker.
+    supervisor.register_module("demo")
+
+    supervisor.start_worker("demo", WorkerSpec("late", sleep_until_stopped))
+
+    assert supervisor.worker_names("demo") == []
+    assert supervisor.module_health("demo").state == HealthState.STOPPED
+
+
+def test_stop_worker_stops_only_that_worker_and_its_health_stops_counting(
+    supervisor: Supervisor,
+) -> None:
+    # Two workers: one healthy, one whose device is away (it reports offline).
+    supervisor.register_module("demo")
+
+    def away(worker: WorkerContext) -> None:
+        worker.report_health(HealthState.OFFLINE, "unplugged")
+        sleep_until_stopped(worker)
+
+    supervisor.start_module(
+        "demo", [WorkerSpec("healthy", sleep_until_stopped), WorkerSpec("away", away)]
+    )
+    eventually(lambda: supervisor.module_health("demo").state == HealthState.OFFLINE)
+
+    # Removing the away device's worker: the module is judged on what is left.
+    supervisor.stop_worker("demo", "away")
+
+    assert supervisor.worker_names("demo") == ["healthy"]
+    assert supervisor.module_health("demo").state == HealthState.OK
+
+
+def test_a_worker_restarted_under_the_same_name_ignores_reports_from_the_old_one(
+    supervisor: Supervisor,
+) -> None:
+    # The first worker keeps its context after being stopped, so it could still
+    # call report_health late (a thread that was slow to notice). That late
+    # report must not change the health of the new worker with the same name.
+    supervisor.register_module("demo")
+    old_contexts: list[WorkerContext] = []
+
+    def remembers_context(worker: WorkerContext) -> None:
+        old_contexts.append(worker)
+        sleep_until_stopped(worker)
+
+    supervisor.start_module("demo", [WorkerSpec("cam", remembers_context)])
+    eventually(lambda: len(old_contexts) == 1)
+    supervisor.stop_worker("demo", "cam")
+    supervisor.start_worker("demo", WorkerSpec("cam", sleep_until_stopped))
+
+    old_contexts[0].report_health(HealthState.OFFLINE, "late report from the old worker")
+
+    assert supervisor.module_health("demo").state == HealthState.OK
+
+
+def test_a_health_summary_decides_the_module_health_from_every_worker(
+    supervisor: Supervisor, recorder: HealthRecorder
+) -> None:
+    # Without a summary, one offline worker makes the whole module offline.
+    # This summary says "degraded" when only some workers are away, and names them.
+    def some_away_is_degraded(healths: dict[str, Health]) -> Health:
+        away = sorted(name for name, health in healths.items() if health.state != HealthState.OK)
+        if not away:
+            return Health(HealthState.OK)
+        state = HealthState.OFFLINE if len(away) == len(healths) else HealthState.DEGRADED
+        return Health(state, "away: " + ", ".join(away))
+
+    supervisor.register_module("demo")
+    supervisor.set_health_summary("demo", some_away_is_degraded)
+
+    def away(worker: WorkerContext) -> None:
+        worker.report_health(HealthState.OFFLINE, "unplugged")
+        sleep_until_stopped(worker)
+
+    supervisor.start_module(
+        "demo", [WorkerSpec("cam1", sleep_until_stopped), WorkerSpec("cam2", away)]
+    )
+
+    eventually(
+        lambda: supervisor.module_health("demo") == Health(HealthState.DEGRADED, "away: cam2")
+    )
+    # The listeners (the home page) heard the summarised health, not "offline".
+    assert HealthState.OFFLINE not in recorder.states_of("demo")

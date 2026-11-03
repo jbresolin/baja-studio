@@ -14,7 +14,7 @@ from baja_studio.agents.contract import Mode, ModeRequest
 from baja_studio.agents.registry import AgentEntry, AgentRegistry
 from baja_studio.core.supervisor import HealthState
 from baja_studio.fakes.in_process import InProcessTransport
-from baja_studio.fakes.simulated_ptz import FakeTracker
+from baja_studio.fakes.simulated_common import FakeTracker
 from tests.conftest import FakeClock, eventually_async
 from tests.fake_agents import AGENT_HOST, StartAgent, advance_in_steps_async
 

@@ -37,7 +37,8 @@ from baja_studio.agents.contract import (
 )
 from baja_studio.core.clock import Clock, SystemClock
 from baja_studio.fakes.fake_agent_routes import add_fake_agent_routes
-from baja_studio.fakes.simulated_ptz import CameraCommandError, Moment, SimulatedCamera
+from baja_studio.fakes.simulated_common import CameraCommandError, Moment
+from baja_studio.fakes.simulated_ptz import SimulatedCamera
 
 logger = logging.getLogger(__name__)
 

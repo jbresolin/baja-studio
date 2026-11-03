@@ -242,3 +242,49 @@ def test_auto_paused_by_a_move_returns_to_auto_and_the_page_sees_it_live(
     eventually(lambda: camera_mode() == "auto")
     events = [event["event"] for event in agent_state(services, "laptop-a")["events"]]
     assert "manual_override_ended" in events
+
+
+# --- the cameras module's gateway ------------------------------------------------------------
+
+
+def test_the_gateway_shows_a_linked_agents_status_and_cameras(
+    services: StudioServices, start_agent: StartAgent
+) -> None:
+    start_agent(ptz_cameras=1)
+    run(services, "add", host=AGENT_HOST, id="laptop-a")
+    module = services.registry.get("agents")
+    assert isinstance(module, AgentsModule)
+
+    eventually(lambda: (view := module.link("laptop-a")) is not None and view.status == "ok")
+    view = module.link("laptop-a")
+    assert view is not None
+    eventually(lambda: "cam1" in (module.link("laptop-a") or view).cameras)
+    assert module.link("nobody") is None
+
+
+def test_the_gateway_runs_calls_on_the_agents_link_and_refuses_unknown_agents(
+    services: StudioServices, start_agent: StartAgent
+) -> None:
+    start_agent(ptz_cameras=1)
+    run(services, "add", host=AGENT_HOST, id="laptop-a")
+    module = services.registry.get("agents")
+    assert isinstance(module, AgentsModule)
+    eventually(lambda: status_of(services, "laptop-a") == "ok")
+
+    async def read_mode(client: AgentClient) -> Mode:
+        return (await client.mode("cam1")).mode
+
+    assert module.submit("laptop-a", read_mode).result(5) == Mode.MANUAL
+    with pytest.raises(RuntimeError, match="not configured"):
+        module.submit("laptop-z", read_mode).result(5)
+
+
+def test_the_gateway_reads_the_fallback_delay_from_the_agents_settings(
+    services: StudioServices,
+) -> None:
+    module = services.registry.get("agents")
+    assert isinstance(module, AgentsModule)
+
+    services.settings.update("agents", {"direct_fallback_after_s": 25})
+
+    assert module.direct_fallback_after_s() == 25
