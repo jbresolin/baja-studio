@@ -85,10 +85,19 @@ class Rig:
         return driver
 
     def follow_for(self, seconds: float) -> None:
-        """Let fake time pass in 0.1 s steps; the follow worker looks once per step."""
+        """Let fake time pass in 0.1 s steps; the follow worker looks once per step.
+
+        Each step first waits for the worker to be asleep: it publishes its
+        state just *before* sleeping, so a test that saw that state may get
+        here while the worker is still on its way to `sleep`. Time moved in
+        that gap would wake nobody, and the step would be lost. After moving
+        time, the step waits for the worker to finish its look and sleep again.
+        """
         for _ in range(round(seconds / 0.1)):
-            self.clock.advance(0.1)
             eventually(lambda: self.clock.sleeping_count >= 1)
+            worker_threads = self.clock.sleeping_threads()
+            self.clock.advance(0.1)
+            eventually(lambda: self.clock.all_asleep_or_gone(worker_threads))  # noqa: B023
 
 
 @pytest.fixture

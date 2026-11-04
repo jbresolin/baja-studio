@@ -24,10 +24,20 @@ STEP_SECONDS = 0.05
 
 
 def advance_in_steps(fake_clock: FakeClock, seconds: float) -> None:
-    """Let `seconds` pass in 50 ms steps, waiting each time until the worker sleeps again."""
+    """Let `seconds` pass in 50 ms steps, waiting each time until the worker sleeps again.
+
+    Each step first waits for the worker to be asleep, so the step wakes it
+    (time moved while it is still on its way to `sleep` would be lost), then
+    waits for the threads it woke to finish and sleep again.
+    """
     for _ in range(round(seconds / STEP_SECONDS)):
-        fake_clock.advance(STEP_SECONDS)
         eventually(lambda: fake_clock.sleeping_count >= 1, "the driver's worker did not sleep")
+        worker_threads = fake_clock.sleeping_threads()
+        fake_clock.advance(STEP_SECONDS)
+        eventually(
+            lambda: fake_clock.all_asleep_or_gone(worker_threads),  # noqa: B023
+            "the driver's worker did not sleep again",
+        )
 
 
 class Bench:
