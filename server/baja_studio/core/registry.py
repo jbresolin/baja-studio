@@ -7,12 +7,14 @@ setting changes.
 
 import logging
 import threading
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
 
 from baja_studio.core.clock import Clock
 from baja_studio.core.commandlog import CommandLog
+from baja_studio.core.database import Database
 from baja_studio.core.module import CommandError, Module, ModuleContext, ModuleLogger
 from baja_studio.core.settings import ModuleSettings, SettingsStore
 from baja_studio.core.state import StateStore
@@ -35,8 +37,12 @@ class ModuleRegistry:
         command_log: CommandLog,
         supervisor: Supervisor,
         clock: Clock,
+        database: Database,
+        data_directory: Path,
     ) -> None:
         """Create an empty registry over the shared services."""
+        self._database = database
+        self._data_directory = data_directory
         self._settings = settings
         self._state = state
         self._command_log = command_log
@@ -100,6 +106,8 @@ class ModuleRegistry:
                 logger=ModuleLogger(
                     logging.getLogger(f"baja_studio.modules.{name}"), {"studio_module": name}
                 ),
+                database=self._database,
+                data_directory=self._data_directory,
             )
             try:
                 module.start(context)

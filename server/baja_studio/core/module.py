@@ -8,6 +8,7 @@ routes; the registry wires it to the shared services through a `ModuleContext`.
 import logging
 from collections.abc import MutableMapping
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, ClassVar
 
 from fastapi import APIRouter
@@ -16,6 +17,7 @@ from pydantic import BaseModel
 from baja_studio.core.childproc import ChildProcessHost, EventCallback
 from baja_studio.core.clock import Clock
 from baja_studio.core.commandlog import CommandLog
+from baja_studio.core.database import Database
 from baja_studio.core.settings import ModuleSettings, SettingsStore
 from baja_studio.core.state import StateStore
 from baja_studio.core.supervisor import Supervisor, WorkerSpec
@@ -50,6 +52,10 @@ class ModuleContext:
     supervisor: Supervisor
     clock: Clock
     logger: ModuleLogger
+    # The shared SQLite file, for modules that keep their own tables (playout).
+    database: Database
+    # The service's data folder, for caches that must not live in synced folders.
+    data_directory: Path
 
     def current_settings(self) -> BaseModel:
         """This module's settings as they are right now."""
