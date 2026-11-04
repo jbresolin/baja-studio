@@ -29,8 +29,9 @@ from baja_studio.core.registry import ModuleRegistry
 from baja_studio.core.supervisor import Health, HealthState
 from baja_studio.main import build_module_list, create_app
 
-# Fixtures for tests that need fake camera-laptop agents (tests/fake_agents.py).
-pytest_plugins = ["tests.fake_agents"]
+# Fixtures for tests that need fake camera-laptop agents (tests/fake_agents.py),
+# and the running cameras module with its fakes (tests/modules/camera_studio.py).
+pytest_plugins = ["tests.fake_agents", "tests.modules.camera_studio"]
 
 # How long (in real seconds) a helper waits before declaring the test failed.
 # It is a safety net against hangs, not a timing assumption: in a passing run

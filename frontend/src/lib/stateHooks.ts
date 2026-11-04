@@ -49,3 +49,12 @@ export function useSendCommand(): (
     [socket],
   );
 }
+
+/** The id the server logs this page's commands under (`web:<id>`), or null before the first snapshot. */
+export function useClientId(): string | null {
+  const socket = useStateSocket();
+  return useSyncExternalStore(
+    (listener) => socket.subscribe(listener),
+    () => socket.getClientId(),
+  );
+}

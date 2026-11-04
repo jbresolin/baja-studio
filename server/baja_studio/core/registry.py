@@ -126,7 +126,7 @@ class ModuleRegistry:
     def dispatch_command(
         self, module_name: str, command: str, args: dict[str, Any], source: str
     ) -> Any:
-        """Run a command on a module and record it in the command log.
+        """Run a command on a module and record it in the command log (if the module wants).
 
         Raises `UnknownModuleError`, `CommandError` (also when the module is
         stopped), or whatever unexpected error the module raised.
@@ -137,9 +137,11 @@ class ModuleRegistry:
                 raise CommandError(f"module {module_name!r} is stopped")
             result = module.handle_command(command, args, source)
         except Exception as error:
-            self._command_log.append(module_name, source, command, args, f"error: {error}")
+            if module.wants_logged(command, args, source, None, failed=True):
+                self._command_log.append(module_name, source, command, args, f"error: {error}")
             raise
-        self._command_log.append(module_name, source, command, args, "ok")
+        if module.wants_logged(command, args, source, result, failed=False):
+            self._command_log.append(module_name, source, command, args, "ok")
         return result
 
     def _is_enabled(self, module: Module) -> bool:

@@ -1,16 +1,19 @@
 # WP2 bench session: SMTAV and RS485 joystick
 
 The checklist is §8 of the WP2 brief (Plane page "05 — WP2 brief"). This
-page gives the settings and commands for each step, because there is no
-camera page yet (WP3). Record the results as a comment on LIVESTACK-13.
+page gives the settings and commands for each step; it was written before
+the camera pages (WP3), which now do most of it. The WP2 steps are run as
+part of the WP3 bench ([wp3.md](wp3.md)); record the results as a comment
+on LIVESTACK-15 (and LIVESTACK-13).
 
 Start the service as usual (`python -m baja_studio`). The examples use
 `localhost:8888`; on Windows PowerShell, use `curl.exe`.
 
 ## 1. Configure
 
-In **Settings → Cameras**, the `cameras` and `controllers` boxes take JSON.
-Paste these, adjusting the IP and COM port, then Save:
+Since WP3, cameras and controllers are added on **Camera setup**
+(`/cameras/config`); see [wp3.md](wp3.md). For reference, the equivalent
+settings are:
 
 ```json
 [{"id": "smtav", "label": "SMTAV", "owner": "studio", "driver": "visca_ip",

@@ -5,7 +5,13 @@ gets a driver (VISCA/IP or agent-proxied) and a `MotionArbiter`; one whose
 connection (driver, address, fallback) changed gets a new driver; a removed
 one is disconnected and leaves the state. Controllers likewise, by port and
 baud. Everything else (limits, curves, labels, controller addresses) is read
-on every command, so it needs nothing rebuilt.
+on every command, so it needs nothing rebuilt. A controller whose port, baud
+and protocol are unchanged keeps its worker (and open port) when only its Call
+bindings change.
+
+It also publishes `order` (the enabled cameras' ids in settings order: the
+Cameras page's order and its Alt+1-9 keys) and `motion` (the motion
+settings the page needs, e.g. the deadband for its on-screen joystick).
 """
 
 import threading
@@ -90,7 +96,19 @@ class CameraRegistry:
                 else:
                     self._add_camera(camera)
             self._apply_controllers(settings.controllers)
+            self._context.update_state("order", list(wanted))
+            self._context.update_state("motion", settings.motion.model_dump(mode="json"))
         self._wake_motion()
+
+    def controller(self, controller_id: str) -> PelcoDInput | None:
+        """The running input of an enabled controller."""
+        with self._lock:
+            return self._controllers.get(controller_id)
+
+    def arbiter_for_camera(self, camera_id: str) -> MotionArbiter | None:
+        """The arbiter of an enabled camera."""
+        with self._lock:
+            return self._arbiters.get(camera_id)
 
     def _add_camera(self, camera: CameraConfig) -> None:
         self._context.update_state(f"cameras.{camera.id}", _initial_camera_state(camera))
@@ -182,11 +200,13 @@ class CameraRegistry:
     def _apply_controllers(self, controllers: list[ControllerConfig]) -> None:
         wanted = {controller.id: controller for controller in controllers if controller.enabled}
         with self._lock:
-            leaving = [
-                controller_input
-                for controller_id, controller_input in self._controllers.items()
-                if wanted.get(controller_id) != controller_input.config
-            ]
+            leaving = []
+            for controller_id, controller_input in self._controllers.items():
+                new = wanted.get(controller_id)
+                if new is None or _port_key(new) != _port_key(controller_input.config):
+                    leaving.append(controller_input)
+                else:
+                    controller_input.config = new  # Call bindings are read on every press
             for controller_input in leaving:
                 del self._controllers[controller_input.config.id]
         for controller_input in leaving:
@@ -203,6 +223,7 @@ class CameraRegistry:
         controller_input = PelcoDInput(
             controller,
             arbiter_for_address=self.arbiter_for_address,
+            arbiter_for_camera=self.arbiter_for_camera,
             motion=lambda: self._settings().motion,
             publish=self._controller_publisher(controller.id),
             log_command=self._joystick_logger(controller.id),
@@ -218,6 +239,8 @@ class CameraRegistry:
                 "status": "offline",
                 "status_reason": "starting",
                 "last_call": None,
+                "selected_camera": None,
+                "recent_frames": [],
             },
         )
         with self._lock:
@@ -250,21 +273,31 @@ class CameraRegistry:
         return settings
 
 
+def _port_key(controller: ControllerConfig) -> tuple[object, ...]:
+    """What a controller's worker opens; a change here means a new worker."""
+    return (controller.port, controller.baud, controller.protocol)
+
+
 def _camera_details(camera: CameraConfig) -> dict[str, Any]:
-    return {
+    details: dict[str, Any] = {
         "label": camera.label or camera.id,
         "owner": camera.owner.value,
         "driver": camera.driver.value,
         "controller_address": camera.controller_address,
         "obs_source": camera.obs_source,
-        "presets": [preset.model_dump() for preset in camera.presets],
     }
+    # An agent camera's presets are the agent's (its driver mirrors them from
+    # /agent/info); a direct camera's names live in the registry.
+    if camera.driver != DriverKind.AGENT:
+        details["presets"] = [preset.model_dump() for preset in camera.presets]
+    return details
 
 
 def _initial_camera_state(camera: CameraConfig) -> dict[str, Any]:
     """The contract's CameraState fields, before the driver has heard anything."""
     direct = camera.driver != DriverKind.AGENT
     return {
+        "presets": [],
         **_camera_details(camera),
         "status": "offline",
         "status_reason": "starting",

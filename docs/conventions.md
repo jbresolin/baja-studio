@@ -89,6 +89,22 @@ reading its tests.
 - Never send a stop just because a connection opened (contract §7). A stop
   the device did not confirm is repeated until it is.
 
+## Browser input
+
+- The browser is one more input source, `web:<client id>`, through the
+  arbiter; it never talks to drivers. The client id comes in every snapshot
+  and is asked for again on reconnect (`/ws?client=`), so it is stable per tab.
+- Hold-to-move: while a control is held, send `move` every 100 ms with
+  `ttl_ms` 300; key auto-repeat changes nothing. On release send one
+  `stop {camera, release: true}` (applies only to a camera this page moves).
+  The Stop button sends a plain `stop`, always obeyed.
+- Never send a blanket stop: not on page load, focus, reconnect or camera
+  switch. A camera switch, hidden tab or lost focus *while held* is a release.
+- Every command carries the client id (the server adds it as the source);
+  the page shows its own id so operators can tell their actions apart.
+- A module that receives steady command repeats keeps them out of the
+  command log with `Module.wants_logged`.
+
 ## Tests
 
 - pytest, one test file per source file, mirroring the source tree under

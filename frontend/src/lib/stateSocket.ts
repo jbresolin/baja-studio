@@ -5,6 +5,11 @@
  * `{module, path, value, seq}`. If a patch number is skipped we ask for a new
  * snapshot. Commands go out as `{module, command, args, request_id}` and the
  * matching reply resolves the promise returned by `sendCommand`.
+ *
+ * Each snapshot carries this page's `client_id`: the server logs the page's
+ * commands as `web:<client id>`. On reconnect the page asks for the same id
+ * again (`?client=`), so it stays the same source (and keeps owning the camera
+ * it was moving) across a Wi-Fi blip.
  */
 
 export type StateTree = Record<string, unknown>;
@@ -14,6 +19,7 @@ interface SnapshotMessage {
   type: "snapshot";
   seq: number;
   state: StateTree;
+  client_id?: string;
 }
 
 interface PatchMessage {
@@ -49,6 +55,10 @@ export interface StateSocketOptions {
   createSocket?: (url: string) => SocketLike;
   firstRetryDelayMs?: number;
   maxRetryDelayMs?: number;
+  /** The id this page had before a reload, to ask for again. */
+  clientId?: string;
+  /** Called when the server gives the page its id, so it can be kept across reloads. */
+  onClientId?: (clientId: string) => void;
 }
 
 const SOCKET_OPEN = 1;
@@ -103,6 +113,8 @@ export class StateSocket {
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   private stopped = true;
   private nextRequestNumber = 1;
+  private clientId: string | null;
+  private readonly onClientId: (clientId: string) => void;
   private readonly listeners = new Set<() => void>();
   private readonly pendingCommands = new Map<
     string,
@@ -115,6 +127,8 @@ export class StateSocket {
     this.firstRetryDelayMs = options.firstRetryDelayMs ?? 500;
     this.maxRetryDelayMs = options.maxRetryDelayMs ?? 10_000;
     this.nextRetryDelayMs = this.firstRetryDelayMs;
+    this.clientId = options.clientId ?? null;
+    this.onClientId = options.onClientId ?? (() => undefined);
   }
 
   /** Open the connection (and keep reopening it) until `close` is called. */
@@ -143,6 +157,11 @@ export class StateSocket {
     return this.status;
   }
 
+  /** The id the server logs this page's commands under (`web:<id>`), once known. */
+  getClientId(): string | null {
+    return this.clientId;
+  }
+
   /** Call `listener` after every state or status change; returns an unsubscribe function. */
   subscribe(listener: () => void): () => void {
     this.listeners.add(listener);
@@ -168,7 +187,10 @@ export class StateSocket {
 
   private openSocket(): void {
     this.setStatus("connecting");
-    const socket = this.createSocket(this.url);
+    const url = this.clientId
+      ? `${this.url}?client=${encodeURIComponent(this.clientId)}`
+      : this.url;
+    const socket = this.createSocket(url);
     this.socket = socket;
     socket.onopen = () => {
       this.nextRetryDelayMs = this.firstRetryDelayMs;
@@ -197,6 +219,10 @@ export class StateSocket {
   private handleMessage(message: ServerMessage): void {
     switch (message.type) {
       case "snapshot":
+        if (message.client_id && message.client_id !== this.clientId) {
+          this.clientId = message.client_id;
+          this.onClientId(message.client_id);
+        }
         this.state = message.state;
         this.lastSeq = message.seq;
         this.waitingForSnapshot = false;

@@ -201,4 +201,39 @@ describe("StateSocket", () => {
 
     await expect(client.sendCommand("echo", "say")).rejects.toThrow("not connected");
   });
+
+  it("learns its client id from the snapshot and asks for it again when it reconnects", () => {
+    // So after a Wi-Fi blip the page is still the same command source (web:<id>).
+    const remembered: string[] = [];
+    const sockets = fakeSocketFactory();
+    const client = new StateSocket({
+      url: "ws://studio/ws",
+      createSocket: sockets.create,
+      onClientId: (id) => remembered.push(id),
+    });
+    client.connect();
+    sockets.latest().open();
+    expect(sockets.latest().url).toBe("ws://studio/ws");
+
+    sockets.latest().receive({ type: "snapshot", seq: 1, state: {}, client_id: "3fa1c2d4" });
+    sockets.latest().drop();
+    vi.advanceTimersByTime(500);
+
+    expect(client.getClientId()).toBe("3fa1c2d4");
+    expect(remembered).toEqual(["3fa1c2d4"]);
+    expect(sockets.latest().url).toBe("ws://studio/ws?client=3fa1c2d4");
+  });
+
+  it("asks for the id it had before a page reload", () => {
+    const sockets = fakeSocketFactory();
+    const client = new StateSocket({
+      url: "ws://studio/ws",
+      createSocket: sockets.create,
+      clientId: "desk-pc",
+    });
+
+    client.connect();
+
+    expect(sockets.latest().url).toBe("ws://studio/ws?client=desk-pc");
+  });
 });

@@ -31,7 +31,7 @@ from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import Any
 
-from baja_studio.agents.contract import MAX_TTL_MS, Mode, ModeReply
+from baja_studio.agents.contract import MAX_TTL_MS, Mode, ModeReply, Preset
 from baja_studio.cameras.config import CameraConfig, MotionSettings
 from baja_studio.cameras.driver import CameraDriver, Logger, ModeCapableDriver, Velocity
 from baja_studio.cameras.motion.shaping import shape
@@ -156,7 +156,7 @@ class MotionArbiter:
 
     def recall_preset(self, source: str, n: int) -> dict[str, Any]:
         """Go to preset `n`; it ends any velocity, like a stop, so it obeys the same holder rule."""
-        self._check_preset_number(n)
+        self.check_preset_number(n)
         with self._lock:
             self._refuse_if_held_by_another(source, self._clock.monotonic())
             self._hold = None
@@ -166,7 +166,7 @@ class MotionArbiter:
 
     def store_preset(self, source: str, n: int) -> None:
         """Store the current position as preset `n` (no motion, so any source may)."""
-        self._check_preset_number(n)
+        self.check_preset_number(n)
         with self._lock:
             self._driver.store_preset(n)
             self._publish_control(source, f"store_preset {n}")
@@ -180,6 +180,19 @@ class MotionArbiter:
         with self._lock:
             self._publish_control(source, f"set_mode {mode.value}")
             return self._driver.set_mode(mode, profile)
+
+    def label_preset(self, source: str, n: int, label: str) -> "Future[Preset]":
+        """Rename preset `n` on an agent-owned camera (the agent keeps its preset names).
+
+        A direct camera's names live in the registry's settings, so the cameras
+        module renames those itself; this is refused for them.
+        """
+        if not isinstance(self._driver, ModeCapableDriver):
+            raise MotionRefusedError("a direct camera's preset names are kept in its settings")
+        self.check_preset_number(n)
+        with self._lock:
+            self._publish_control(source, f"rename_preset {n}")
+            return self._driver.label_preset(n, label)
 
     # --- the motion worker's tick -------------------------------------------------------
 
@@ -246,7 +259,8 @@ class MotionArbiter:
             },
         )
 
-    def _check_preset_number(self, n: int) -> None:
+    def check_preset_number(self, n: int) -> None:
+        """Raise `MotionRefusedError` unless `n` is a preset number this camera has."""
         preset_max = self._driver.capabilities().preset_max
         if preset_max is None:
             raise MotionRefusedError(f"camera {self._config().id} has no presets")

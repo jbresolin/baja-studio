@@ -11,7 +11,14 @@ from typing import Any
 
 import pytest
 
-from baja_studio.cameras.config import CameraAddress, CameraConfig, ControllerConfig, MotionSettings
+from baja_studio.cameras.config import (
+    CallAction,
+    CallBinding,
+    CameraAddress,
+    CameraConfig,
+    ControllerConfig,
+    MotionSettings,
+)
 from baja_studio.cameras.driver import Velocity
 from baja_studio.cameras.inputs import pelco_d
 from baja_studio.cameras.inputs.pelco_d import FrameParser, build_frame
@@ -43,6 +50,7 @@ class Rig:
         self.input = PelcoDInput(
             ControllerConfig(id="ctl1", port="COM8"),
             arbiter_for_address=arbiters.get,
+            arbiter_for_camera={"cam1": self.arbiter, "cam2": self.arbiter2}.get,
             motion=lambda: self.motion,
             publish=self.published.__setitem__,
             log_command=lambda command, args, result: self.logged.append((command, args, result)),
@@ -243,6 +251,32 @@ def test_the_command_log_gets_the_start_of_a_move_and_the_stop_not_every_speed_c
 
     assert [entry[0] for entry in rig.logged] == ["move", "stop"]
     assert rig.logged[0][1]["camera"] == "cam1"
+
+
+def test_every_frame_goes_to_the_frame_monitor_and_its_list_is_published(rig: Rig) -> None:
+    rig.press("pan_right_full", "stop")
+
+    rig.input.publish_recent_frames()
+
+    assert [frame["action"] for frame in rig.published["recent_frames"]] == ["stop", "move"]
+    assert rig.input.raw_frames() == [
+        SNIFFED_FRAMES["pan_right_full"].hex(" ").upper(),
+        SNIFFED_FRAMES["stop"].hex(" ").upper(),
+    ]
+
+
+def test_call_bindings_are_read_from_the_newest_settings_on_every_press(rig: Rig) -> None:
+    # The settings edit replaces the controller's config while the worker runs.
+    rig.press("pan_left_full", "stop")  # address 1: camera cam1
+    rig.input.config = ControllerConfig(
+        id="ctl1",
+        port="COM8",
+        call_bindings=[CallBinding(n=2, action=CallAction.RECALL_PRESET, preset=6)],
+    )
+
+    rig.press("call_2")
+
+    assert rig.driver.calls[-1] == ("recall_preset", 6)
 
 
 # --- the worker and the serial port --------------------------------------------------------

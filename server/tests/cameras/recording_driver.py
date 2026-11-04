@@ -3,7 +3,7 @@
 from concurrent.futures import Future
 from typing import Any
 
-from baja_studio.agents.contract import CameraKind, Mode, ModeReply, Position, Status
+from baja_studio.agents.contract import CameraKind, Mode, ModeReply, Position, Preset, Status
 from baja_studio.cameras.driver import (
     CameraDriver,
     DriverCapabilities,
@@ -70,4 +70,10 @@ class RecordingModeDriver(RecordingDriver, ModeCapableDriver):
         self.calls.append(("set_mode", mode, profile))
         result: Future[ModeReply] = Future()
         result.set_result(ModeReply(mode=mode, profile=profile or {}))
+        return result
+
+    def label_preset(self, n: int, label: str) -> "Future[Preset]":
+        self.calls.append(("label_preset", n, label))
+        result: Future[Preset] = Future()
+        result.set_result(Preset(n=n, label=label))
         return result

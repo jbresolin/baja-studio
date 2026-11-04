@@ -15,6 +15,7 @@ from baja_studio.core.settings import ModuleSettings
 
 VISCA_IP_PORT = 52381
 PELCO_D_DEFAULT_BAUD = 2400
+MAX_CALL_BUTTON = 9
 # No dots: ids become parts of dotted state paths (state.cameras.cameras.<id>.status).
 ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$"
 
@@ -145,6 +146,35 @@ class ControllerProtocol(StrEnum):
     PELCO_D = "pelco_d"
 
 
+class CallAction(StrEnum):
+    """What a Call button press does."""
+
+    NONE = "none"
+    # Sets the controller's camera selection, which a Cameras page can follow.
+    SELECT_CAMERA = "select_camera"
+    # Recalls a preset on the controller's selected camera.
+    RECALL_PRESET = "recall_preset"
+
+
+class CallBinding(StrictModel):
+    """What the controller's Call button `n` does."""
+
+    n: int = Field(ge=1, le=MAX_CALL_BUTTON)
+    action: CallAction = CallAction.NONE
+    camera: str | None = Field(default=None, description="For select_camera: the camera id.")
+    preset: int | None = Field(
+        default=None, ge=0, le=MAX_PRESET_NUMBER, description="For recall_preset (0-based)."
+    )
+
+    @model_validator(mode="after")
+    def _target_for_the_action(self) -> Self:
+        if self.action == CallAction.SELECT_CAMERA and not self.camera:
+            raise ValueError(f"Call {self.n}: select_camera needs a camera")
+        if self.action == CallAction.RECALL_PRESET and self.preset is None:
+            raise ValueError(f"Call {self.n}: recall_preset needs a preset number")
+        return self
+
+
 class ControllerConfig(StrictModel):
     """One serial joystick controller."""
 
@@ -153,6 +183,21 @@ class ControllerConfig(StrictModel):
     baud: int = Field(default=PELCO_D_DEFAULT_BAUD, ge=300, le=115200)
     protocol: ControllerProtocol = ControllerProtocol.PELCO_D
     enabled: bool = True
+    call_bindings: list[CallBinding] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _one_binding_per_button(self) -> Self:
+        numbers = [binding.n for binding in self.call_bindings]
+        if len(set(numbers)) != len(numbers):
+            raise ValueError("a Call button is bound twice")
+        return self
+
+    def call_binding(self, n: int) -> CallBinding | None:
+        """The binding of Call button `n`, or None when it does nothing."""
+        for binding in self.call_bindings:
+            if binding.n == n and binding.action != CallAction.NONE:
+                return binding
+        return None
 
 
 class MotionSettings(StrictModel):
@@ -197,16 +242,17 @@ class MotionSettings(StrictModel):
 class CamerasSettings(ModuleSettings):
     """Settings of the cameras module."""
 
+    # Edited on the Camera configuration page (/cameras/config), so the generic
+    # Settings form leaves them out. The list order is the Cameras page's order.
     cameras: list[CameraConfig] = Field(
         default_factory=list,
-        description=(
-            "The camera registry, as JSON until the camera pages arrive (WP3), e.g. "
-            '[{"id": "smtav", "address": {"host": "192.168.1.188"}, "controller_address": 1}].'
-        ),
+        description="The camera registry, in display order.",
+        json_schema_extra={"managed_elsewhere": True},
     )
     controllers: list[ControllerConfig] = Field(
         default_factory=list,
-        description='Serial joystick controllers, e.g. [{"id": "desk", "port": "COM8"}].',
+        description="Serial joystick controllers.",
+        json_schema_extra={"managed_elsewhere": True},
     )
     motion: MotionSettings = Field(
         default_factory=MotionSettings,
@@ -233,4 +279,11 @@ class CamerasSettings(ModuleSettings):
         ports = [controller.port for controller in self.controllers if controller.enabled]
         if len(set(ports)) != len(ports):
             raise ValueError("two enabled controllers use the same serial port")
+        for controller in self.controllers:
+            for binding in controller.call_bindings:
+                if binding.action == CallAction.SELECT_CAMERA and binding.camera not in camera_ids:
+                    raise ValueError(
+                        f"controller {controller.id}: Call {binding.n} selects camera "
+                        f"{binding.camera!r}, which is not in the list"
+                    )
         return self

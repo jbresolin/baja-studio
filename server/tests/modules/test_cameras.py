@@ -1,128 +1,22 @@
 """Tests for the cameras module (modules/cameras and cameras/registry.py), end to end.
 
 Each test runs the service with the agents and cameras modules on the fake
-clock. Nothing real is opened: VISCA cameras are `FakeViscaCamera`s on a
-pretend network, the joystick is a `FakeSerialPort`, and agents are fake
-agents reached through the in-process transport. Settings are changed the
-way the Settings page changes them, and the checks read the module's state
-(what the browser sees), the fakes, and the command log.
+clock (the `studio` fixture, tests/modules/camera_studio.py). Settings are
+changed the way the configuration page changes them, and the checks read the
+module's state (what the browser sees), the fakes, and the command log. The
+commands added for the camera pages are tested in test_cameras_commands.py.
 """
 
-from collections.abc import Callable, Iterator
-from dataclasses import dataclass
-from typing import Any
-
 import pytest
-from fastapi.testclient import TestClient
 
 from baja_studio.agents.contract import Mode
 from baja_studio.core.module import CommandError
-from baja_studio.core.services import StudioServices
 from baja_studio.core.supervisor import HealthState
-from baja_studio.fakes.fake_serial import SNIFFED_FRAMES, FakeSerialPorts
+from baja_studio.fakes.fake_serial import SNIFFED_FRAMES
 from baja_studio.fakes.in_process import InProcessTransport
-from baja_studio.modules.agents import AgentsModule
-from baja_studio.modules.cameras import CamerasModule
-from tests.cameras.visca_network import FakeViscaNetwork
-from tests.conftest import AppFactory, FakeClock, eventually
+from tests.conftest import eventually
 from tests.fake_agents import AGENT_HOST, DELIVERY_SLACK_SECONDS, StartAgent, advance_in_steps
-
-SMTAV_HOST = "10.0.0.9"
-
-
-@dataclass
-class Studio:
-    """The running service plus the fakes around it."""
-
-    services: StudioServices
-    network: FakeViscaNetwork
-    ports: FakeSerialPorts
-    clock: FakeClock
-
-    def command(self, command: str, source: str = "api:test", **args: Any) -> Any:
-        return self.services.registry.dispatch_command("cameras", command, args, source)
-
-    def configure(self, **values: Any) -> None:
-        self.services.settings.update("cameras", values)
-
-    def camera(self, camera_id: str) -> Any:
-        return self.services.state.get("cameras", f"cameras.{camera_id}")
-
-    def status(self, camera_id: str) -> Any:
-        camera = self.camera(camera_id)
-        return camera and camera["status"]
-
-    def health(self) -> Any:
-        return self.services.supervisor.module_health("cameras")
-
-    def soon(self, condition: Callable[[], bool], within_seconds: float = 3.0) -> None:
-        """Let fake time pass in 0.1 s steps until `condition()` holds.
-
-        Agent cameras look at their agent ten times a (fake) second, so their
-        state only changes as fake time passes; `eventually` alone would wait
-        for a tick that never comes.
-        """
-        for _ in range(round(within_seconds / 0.1)):
-            if condition():
-                return
-            sleeping_before = self.clock.sleeping_threads()
-            self.clock.advance(0.1)
-            # Wait until every woken worker is asleep again (or has ended: a
-            # step may stop one), so each step gives every camera worker its look.
-            eventually(lambda: self.clock.all_asleep_or_gone(sleeping_before))  # noqa: B023
-        eventually(condition)
-
-    def log(self, source_prefix: str) -> list[tuple[str, str, dict[str, Any]]]:
-        """(command, result, args) of the cameras log entries from a source, newest first."""
-        return [
-            (entry["command"], entry["result"], entry["args"])
-            for entry in self.services.command_log.tail("cameras", 200)
-            if entry["source"].startswith(source_prefix)
-        ]
-
-
-@pytest.fixture
-def studio(
-    make_app: AppFactory,
-    transport: InProcessTransport,
-    start_agent: StartAgent,
-    fake_clock: FakeClock,
-) -> Iterator[Studio]:
-    network, ports = FakeViscaNetwork(fake_clock), FakeSerialPorts()
-
-    def modules(registry: Any) -> list[Any]:
-        agents = AgentsModule(transport, studio_id="test-studio")
-        return [CamerasModule(agents, network.open, ports.open), agents]
-
-    app = make_app(modules)
-    with TestClient(app):
-        yield Studio(app.state.services, network, ports, fake_clock)
-
-
-def smtav(**overrides: Any) -> dict[str, Any]:
-    """A direct VISCA/IP camera entry, as the Settings page would save it."""
-    return {"id": "smtav", "address": {"host": SMTAV_HOST}, "controller_address": 1, **overrides}
-
-
-def agent_camera(**overrides: Any) -> dict[str, Any]:
-    return {
-        "id": "trackside",
-        "owner": "agent",
-        "driver": "agent",
-        "address": {"agent_id": "laptop-a", "remote_camera_id": "cam1"},
-        **overrides,
-    }
-
-
-def add_agent(studio: Studio) -> None:
-    """Configure the fake agent and wait until the agents module's link to it is up.
-
-    The link connects in real time (on the agents module's event loop); letting
-    fake time run ahead of it would only send it into reconnect backoff.
-    """
-    studio.services.settings.update("agents", {"agents": [{"id": "laptop-a", "host": AGENT_HOST}]})
-    eventually(lambda: studio.services.state.get("agents", "agents.laptop-a.status") == "ok")
-
+from tests.modules.camera_studio import SMTAV_HOST, Studio, add_agent, agent_camera, smtav
 
 # --- direct cameras -------------------------------------------------------------------------
 
@@ -259,6 +153,127 @@ def test_changing_the_controllers_port_moves_its_worker_to_the_new_port(studio: 
     studio.configure(controllers=[{"id": "desk", "port": "COM9"}])
 
     eventually(lambda: second.is_open and not first.is_open)
+
+
+def test_editing_only_the_call_bindings_keeps_the_controllers_port_open(
+    studio: Studio,
+) -> None:
+    # Reopening the port would release the joystick's latch and stop its camera.
+    port = studio.ports.add("COM8")
+    studio.configure(controllers=[{"id": "desk", "port": "COM8"}])
+    eventually(lambda: port.is_open)
+
+    studio.configure(
+        controllers=[
+            {
+                "id": "desk",
+                "port": "COM8",
+                "call_bindings": [{"n": 2, "action": "recall_preset", "preset": 4}],
+            }
+        ]
+    )
+
+    assert port.open_count == 1
+
+
+def test_the_cameras_page_order_follows_the_settings_list_and_skips_disabled_cameras(
+    studio: Studio,
+) -> None:
+    studio.configure(
+        cameras=[
+            smtav(id="wide", controller_address=None),
+            smtav(id="spare", enabled=False, controller_address=None),
+            smtav(id="finish", controller_address=None),
+        ]
+    )
+    eventually(lambda: studio.services.state.get("cameras", "order") == ["wide", "finish"])
+
+    # Dragging "finish" to the top on the configuration page saves the new order.
+    studio.configure(
+        cameras=[
+            smtav(id="finish", controller_address=None),
+            smtav(id="wide", controller_address=None),
+        ]
+    )
+
+    eventually(lambda: studio.services.state.get("cameras", "order") == ["finish", "wide"])
+
+
+def test_the_motion_settings_the_page_needs_are_in_the_state(studio: Studio) -> None:
+    # The on-screen joystick uses the same deadband as the real one.
+    studio.configure(motion={"joystick_deadband": 0.1})
+
+    eventually(
+        lambda: (
+            (studio.services.state.get("cameras", "motion") or {}).get("joystick_deadband") == 0.1
+        )
+    )
+
+
+def test_a_call_button_bound_to_a_camera_sets_the_controllers_selection(studio: Studio) -> None:
+    port = studio.ports.add("COM8")
+    studio.configure(
+        cameras=[smtav()],
+        controllers=[
+            {
+                "id": "desk",
+                "port": "COM8",
+                "call_bindings": [{"n": 2, "action": "select_camera", "camera": "smtav"}],
+            }
+        ],
+    )
+    eventually(lambda: port.is_open)
+
+    port.feed(SNIFFED_FRAMES["call_2"])
+
+    def selection() -> object:
+        selected = studio.services.state.get("cameras", "controllers.desk.selected_camera")
+        return selected and selected["camera"]
+
+    eventually(lambda: selection() == "smtav")
+    assert ("call", "ok", {"n": 2, "select_camera": "smtav"}) in studio.log("joystick:desk")
+
+
+def test_a_call_button_bound_to_a_preset_recalls_it_on_the_controllers_camera(
+    studio: Studio,
+) -> None:
+    camera = studio.network.add(SMTAV_HOST)
+    port = studio.ports.add("COM8")
+    studio.configure(
+        cameras=[smtav()],
+        controllers=[
+            {
+                "id": "desk",
+                "port": "COM8",
+                "call_bindings": [{"n": 2, "action": "recall_preset", "preset": 4}],
+            }
+        ],
+    )
+    eventually(lambda: studio.status("smtav") == "ok" and port.is_open)
+    camera.pan.position = 500
+    studio.command("store_preset", camera="smtav", n=4)
+    eventually(lambda: 4 in camera.presets)
+    camera.pan.position = 0
+
+    # A frame addresses the SMTAV (the operator selected it on the controller), then Call 2.
+    port.feed(SNIFFED_FRAMES["stop"] + SNIFFED_FRAMES["call_2"])
+
+    eventually(lambda: camera.pan.position == 500)
+
+
+def test_the_controllers_recent_frames_reach_the_state(studio: Studio) -> None:
+    port = studio.ports.add("COM8")
+    studio.configure(cameras=[smtav()], controllers=[{"id": "desk", "port": "COM8"}])
+    eventually(lambda: port.is_open)
+
+    port.feed(SNIFFED_FRAMES["pan_right_full"])
+
+    def frames() -> list[dict[str, object]]:
+        return studio.services.state.get("cameras", "controllers.desk.recent_frames") or []
+
+    eventually(lambda: len(frames()) == 1)
+    assert frames()[0]["action"] == "move"
+    assert frames()[0]["pan"] == 1.0
 
 
 def test_motion_settings_are_read_live(studio: Studio) -> None:

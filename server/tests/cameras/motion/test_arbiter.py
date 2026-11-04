@@ -232,6 +232,33 @@ def test_another_source_at_rest_does_not_stop_the_holder(setup: Setup) -> None:
     assert setup.driver.calls == []
 
 
+def test_a_web_source_takes_over_a_camera_once_the_joystick_lets_go(setup: Setup) -> None:
+    # Owner handover, joystick → web: the stick is released, then the page moves.
+    setup.arbiter.move(JOYSTICK, Velocity(pan=1.0), latched=True)
+    with pytest.raises(MotionRefusedError):
+        setup.arbiter.move(WEB, Velocity(tilt=0.5), ttl_ms=300)
+
+    setup.arbiter.stop(JOYSTICK, only_if_owner=True)
+    setup.arbiter.move(WEB, Velocity(tilt=0.5), ttl_ms=300)
+
+    assert setup.published["control"]["velocity_owner"] == WEB
+
+
+def test_the_joystick_takes_over_once_a_web_source_lets_go_or_its_ttl_runs_out(
+    setup: Setup,
+) -> None:
+    # Owner handover, web → joystick: the page's hold lapses (a closed tab
+    # sends nothing more), so the next stick movement is obeyed.
+    setup.arbiter.move(WEB, Velocity(tilt=0.5), ttl_ms=300)
+    with pytest.raises(MotionRefusedError):
+        setup.arbiter.move(JOYSTICK, Velocity(pan=1.0), latched=True)
+
+    setup.later(0.3)
+    setup.arbiter.move(JOYSTICK, Velocity(pan=1.0), latched=True)
+
+    assert setup.published["control"]["velocity_owner"] == JOYSTICK
+
+
 # --- latched velocities (the joystick) -------------------------------------------------------
 
 
@@ -346,6 +373,21 @@ def test_set_mode_is_passed_to_a_driver_with_modes(fake_clock: FakeClock) -> Non
 
     assert reply.mode == Mode.HOLD
     assert setup.driver.calls == [("set_mode", Mode.HOLD, {"resume_after_ms": 1000})]
+
+
+def test_renaming_a_preset_is_refused_for_a_direct_camera(setup: Setup) -> None:
+    # A direct camera's preset names live in the registry; the module renames those.
+    with pytest.raises(MotionRefusedError, match="kept in its settings"):
+        setup.arbiter.label_preset(WEB, 1, "Jump")
+
+
+def test_renaming_a_preset_is_passed_to_a_driver_with_modes(fake_clock: FakeClock) -> None:
+    setup = Setup(fake_clock, RecordingModeDriver())
+
+    reply = setup.arbiter.label_preset(WEB, 1, "Jump").result()
+
+    assert reply.label == "Jump"
+    assert setup.driver.calls == [("label_preset", 1, "Jump")]
 
 
 def test_every_command_records_its_source_in_the_cameras_control_state(setup: Setup) -> None:

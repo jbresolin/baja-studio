@@ -113,6 +113,17 @@ class Module:
         """
         raise CommandError(f"module {self.name!r} has no command {command!r}")
 
+    def wants_logged(
+        self, command: str, args: dict[str, Any], source: str, result: Any, failed: bool
+    ) -> bool:
+        """Whether the command log keeps this command; called after every one.
+
+        Every command is kept, unless a module that receives a steady stream of
+        repeats (a browser holding a control) says otherwise. `result` is None
+        when `failed`.
+        """
+        return True
+
     def workers(self) -> list[WorkerSpec]:
         """Long-running loops the supervisor should keep alive for this module."""
         return []
