@@ -150,21 +150,19 @@ class PlayoutController:
             return {"status": "on_air", "clip": on_air.clip}
 
     def skip(self) -> None:
-        """End the clip on air now, as if it had finished: post-clip applies (return/hold/fade).
+        """End the clip on air now, exactly as if it had finished.
 
-        The source is paused first, so "hold" freezes the frame and a fade
-        fades from a still picture. Auto-play next does not apply: a skip
-        means "get me out of this clip", not "play the next one".
+        It takes the same path as a natural end: with auto-play next on (and
+        something to play) the next clip goes to air, otherwise post-clip
+        applies. The source is paused first, so "hold" freezes the frame
+        and a fade fades from a still picture.
         """
         with self.lock:
             program = self.switcher.program
             if program is None:
                 raise SwitchError("nothing is on air to skip")
             self.switcher.pause_slot(program.slot)
-            self.switcher.end_program()
-            self._end_airing(program)
-            self._apply_post_clip()
-            self._save_session()
+            self._program_finished(program)
 
     def drop_next(self) -> dict[str, Any] | None:
         """Drop the next clip (the cued one, else the head of the queue) and cue the one after."""
@@ -243,17 +241,7 @@ class PlayoutController:
             program = self.switcher.program
             if program is None or self.switcher.slot(program.slot).source != input_name:
                 return
-            self.switcher.end_program()
-            self._end_airing(program)
-            if self.publisher.auto_play_next and (self.switcher.cued or self.queue.entries()):
-                self._disarm_take()
-                if self.switcher.cued is None:
-                    self.cue_next()
-                on_air, _ = self.switcher.take()
-                self._start_airing(on_air)
-            else:
-                self._apply_post_clip()
-            self._save_session()
+            self._program_finished(program)
 
     def on_scene_changed(self, scene_name: str) -> None:
         """Program changed in OBS; if someone cut away from the clip on air, it left the air."""
@@ -302,10 +290,22 @@ class PlayoutController:
             self._settings().hooks.on_air_webhook_url, on_air_body(clip, on_air.started_at)
         )
 
-    def _apply_post_clip(self) -> None:
-        post_clip = self._settings().obs.post_clip
-        if post_clip != "hold" and not self.switcher.go_to_return_scene(post_clip == "fade"):
-            self._logger.warning("clip ended but no return scene is set; holding")
+    def _program_finished(self, program: OnAir) -> None:
+        """The clip on air is over (it ended or was skipped): auto-play next, else post-clip."""
+        self.switcher.end_program()
+        self._end_airing(program)
+        if self.publisher.auto_play_next and (self.switcher.cued or self.queue.entries()):
+            self._disarm_take()
+            if self.switcher.cued is None:
+                self.cue_next()
+            on_air, _ = self.switcher.take()
+            self._start_airing(on_air)
+            self.switcher.stop_slot(program.slot)  # off air now, like after any take
+        else:
+            post_clip = self._settings().obs.post_clip
+            if post_clip != "hold" and not self.switcher.go_to_return_scene(post_clip == "fade"):
+                self._logger.warning("clip ended but no return scene is set; holding")
+        self._save_session()
 
     def _end_airing(self, ended: OnAir) -> None:
         ended_at = self._clock.now_utc().isoformat()

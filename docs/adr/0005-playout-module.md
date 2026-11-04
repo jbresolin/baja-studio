@@ -85,13 +85,14 @@ instruction); the brief's shortcut list and OBS behaviour were used instead.
     - `cue_next` takes the head of the queue *out* of the queue into the
       preview. With a clip already cued it is refused ("take it or drop it").
     - `take {cue_if_needed}`: Space sends it with `cue_if_needed: true`.
-    - **`skip` (→) ends the clip on air now** and applies `post_clip`
-      (return/hold/fade), as if the clip had reached its end: "this clip is
-      dragging, get me out", the reflex operators carry from the 2026 tool.
-      The source is paused first, so `hold` freezes the frame and a fade
-      starts from a still picture. Auto-play next does not apply. Refused
-      when nothing is on air. (Reviewed by João: the first version of
-      `skip` dropped the next clip instead.)
+    - **`skip` (→) ends the clip on air now, exactly as if it had
+      finished**: "this clip is dragging, get me out", the reflex operators
+      carry from the 2026 tool. It takes the natural end's path: with
+      auto-play next on (and something to play) the next clip goes to air,
+      otherwise `post_clip` (return/hold/fade) applies. The source is
+      paused first, so `hold` freezes the frame and a fade starts from a
+      still picture. Refused when nothing is on air. (Reviewed by João: the
+      first version of `skip` dropped the next clip instead.)
     - **`drop_next` (Shift+→ or Backspace) drops the next clip** (the cued
       one, else the head of the queue) and cues the one after; it never
       changes program.

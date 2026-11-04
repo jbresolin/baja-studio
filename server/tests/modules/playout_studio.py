@@ -10,7 +10,6 @@ the scanner walks real folders.
 """
 
 import json
-import threading
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -27,7 +26,14 @@ from baja_studio.fakes.fake_orchestrator import FakeOrchestrator
 from baja_studio.modules.playout import PlayoutModule
 from baja_studio.playout.config import ToolsSettings
 from baja_studio.playout.probe import ProbeError, Prober
-from tests.conftest import AppFactory, FakeClock, eventually
+from tests.conftest import (
+    AppFactory,
+    FakeClock,
+    eventually,
+    module_worker_threads,
+    step_fake_time,
+    step_fake_time_until,
+)
 
 OBS_HOST = "obs.test"
 OBS_PORT = 4455
@@ -36,6 +42,8 @@ ORCHESTRATOR_TOKEN = "studio-token"
 HOOK_URL = "http://overlay.test/hook"
 # The fake OBS plays every file for this long (the fake prober agrees).
 CLIP_SECONDS = 10.0
+# All five playout workers sleep only on the fake clock.
+PLAYOUT_WORKERS = module_worker_threads("playout")
 
 
 @dataclass
@@ -129,31 +137,11 @@ class PlayoutStudio:
         The workers sleep on the fake clock (the scanner 5 s, the OBS poll
         0.2 s), so many things only happen as fake time passes.
         """
-        for _ in range(round(within_seconds / 0.1)):
-            # Settle first, so the condition never sees a worker halfway through a publish.
-            self.settle()
-            if condition():
-                return
-            self.clock.advance(0.1)
-        self.settle()
-        eventually(condition)
+        step_fake_time_until(self.clock, condition, within_seconds, PLAYOUT_WORKERS)
 
     def pass_time(self, seconds: float) -> None:
         """Let `seconds` of fake time pass in 0.1 s steps, letting the workers run each step."""
-        for _ in range(round(seconds / 0.1)):
-            self.settle()
-            self.clock.advance(0.1)
-        self.settle()
-
-    def settle(self) -> None:
-        """Wait until every playout worker is asleep on the fake clock (or has ended).
-
-        A worker woken by a settings change or a command is busy on its own
-        thread; moving fake time before it sleeps again would let seconds
-        pass that it never sees (the scanner would then sleep its 5 s from
-        a later time than the test expects).
-        """
-        eventually(lambda: self.clock.all_asleep_or_gone(playout_worker_threads()))
+        step_fake_time(self.clock, seconds, PLAYOUT_WORKERS)
 
     def log(self) -> list[tuple[str, str, str]]:
         """(source, command, result) of the playout log, newest first."""
@@ -161,15 +149,6 @@ class PlayoutStudio:
             (entry["source"], entry["command"], entry["result"])
             for entry in self.services.command_log.tail("playout", 200)
         ]
-
-
-def playout_worker_threads() -> set[int]:
-    """Ids of the playout module's worker threads (the supervisor names them `playout.<worker>`)."""
-    return {
-        thread.ident
-        for thread in threading.enumerate()
-        if thread.name.startswith("playout.") and thread.ident is not None
-    }
 
 
 @pytest.fixture

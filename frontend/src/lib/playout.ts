@@ -205,7 +205,7 @@ export type PlayoutKeyAction =
 /** The keyboard legend, in the order shown. Same keys as the 2026 tool where it had them. */
 export const PLAYOUT_KEY_LEGEND: [string, string][] = [
   ["Space", "Take (cues the next clip first if nothing is cued)"],
-  ["→", "Skip: end the clip on air now (post-clip applies)"],
+  ["→", "Skip: end the clip on air now, as if it had finished"],
   ["Shift+→ / Backspace", "Drop the next clip (the cued one, else the head of the queue)"],
   ["R", "Return to the return scene"],
   ["L", "Replay last clip"],

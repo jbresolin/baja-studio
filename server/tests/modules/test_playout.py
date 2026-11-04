@@ -221,20 +221,31 @@ def test_skip_ends_the_clip_on_air_now_and_applies_the_post_clip_setting(
     assert aired["ended_at"] is not None
 
 
-def test_skip_does_not_start_the_next_clip_even_with_auto_play_next_on(
-    playout: PlayoutStudio,
-) -> None:
-    first, second, _ = ready_studio(playout)
+def test_with_auto_play_next_on_skip_puts_the_next_clip_on_air(playout: PlayoutStudio) -> None:
+    # Skip is "as if the clip had finished", and a finished clip with
+    # auto-play on is followed by the next one: skipping a dull pass brings
+    # the next pass, not the return scene.
+    first, second, third = ready_studio(playout)
     playout.command("set_auto_play_next", enabled=True)
-    playout.command("queue_add", clip_ids=[first, second])
+    playout.command("queue_add", clip_ids=[first, second, third])
     playout.command("take", cue_if_needed=True)
     playout.command("cue_next")
 
     playout.command("skip")
 
-    # Skip means "get me out", so post-clip applies; the cued clip waits.
+    assert playout.state("program")["clip"]["id"] == second
+    assert playout.obs.program_scene == "Playback B"
+    # The skipped clip's source is off air now, so it is stopped like after any take.
+    assert playout.obs.media_of("baja_program_a").state == MediaState.STOPPED
+
+    # With nothing cued, the head of the queue is cued and played the same way.
+    playout.command("skip")
+    assert playout.state("program")["clip"]["id"] == third
+
+    # And with nothing left to play, post-clip applies.
+    playout.command("skip")
+    assert playout.state("program") is None
     assert playout.obs.program_scene == "Main"
-    assert playout.state("preview")["clip"]["id"] == second
 
 
 def test_skip_with_nothing_on_air_is_refused(playout: PlayoutStudio) -> None:
