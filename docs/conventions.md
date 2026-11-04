@@ -126,10 +126,13 @@ reading its tests.
   test fixtures, and live in the package under `baja_studio/fakes/` (e.g.
   `python -m baja_studio.fakes.fake_agent`). Tests reach them in-process,
   without opening ports.
-- Threads on the fake clock: after `advance`, wait for the woken threads to
-  sleep again before checking. If a step can stop a thread, use
-  `fake_clock.all_asleep_or_gone(fake_clock.sleeping_threads())`, not
-  `sleeping_count`; a thread that ended never sleeps again.
+- Threads on the fake clock: move time with `step_fake_time` /
+  `step_fake_time_until` from `tests/conftest.py`, never a bare loop of
+  `advance`. They wait for the workers (`module_worker_threads(module)`) to
+  be asleep *before* each step as well as after: a worker that just
+  published may not be asleep yet, and time moved then wakes nobody. Leave
+  out workers that block on something other than the clock (`skip=`, e.g.
+  a controller's serial read).
 - Async tests are marked `@pytest.mark.anyio`. With the fake clock, let time
   pass with `advance_in_steps` / `advance_in_steps_async`, not one big
   `advance`, so pushes and timeouts interleave as they would for real.

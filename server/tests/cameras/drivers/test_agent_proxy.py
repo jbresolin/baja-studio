@@ -22,7 +22,7 @@ from baja_studio.cameras.drivers.agent_gateway import AgentCall, AgentLinkView
 from baja_studio.cameras.drivers.agent_proxy import AgentProxyDriver
 from baja_studio.core.supervisor import Supervisor
 from tests.cameras.recording_driver import RecordingDriver
-from tests.conftest import FakeClock, eventually
+from tests.conftest import FakeClock, eventually, module_worker_threads, step_fake_time
 
 CAMERA_OK = {
     "status": "ok",
@@ -34,6 +34,8 @@ CAMERA_OK = {
     "last_command_ts": None,
 }
 FALLBACK = DirectFallback(address=CameraAddress(host="10.0.0.9"))
+# The driver's follow worker (and nothing else) runs under the "cameras" module.
+CAMERA_WORKERS = module_worker_threads("cameras")
 
 
 class ScriptedGateway:
@@ -85,19 +87,8 @@ class Rig:
         return driver
 
     def follow_for(self, seconds: float) -> None:
-        """Let fake time pass in 0.1 s steps; the follow worker looks once per step.
-
-        Each step first waits for the worker to be asleep: it publishes its
-        state just *before* sleeping, so a test that saw that state may get
-        here while the worker is still on its way to `sleep`. Time moved in
-        that gap would wake nobody, and the step would be lost. After moving
-        time, the step waits for the worker to finish its look and sleep again.
-        """
-        for _ in range(round(seconds / 0.1)):
-            eventually(lambda: self.clock.sleeping_count >= 1)
-            worker_threads = self.clock.sleeping_threads()
-            self.clock.advance(0.1)
-            eventually(lambda: self.clock.all_asleep_or_gone(worker_threads))  # noqa: B023
+        """Let fake time pass in 0.1 s steps; the follow worker looks once per step."""
+        step_fake_time(self.clock, seconds, CAMERA_WORKERS)
 
 
 @pytest.fixture

@@ -207,6 +207,81 @@ def eventually(condition: Callable[[], bool], message: str = "condition never be
         pause.wait(0.005)
 
 
+WorkerThreads = Callable[[], set[int]]
+
+
+def module_worker_threads(module: str, skip: tuple[str, ...] = ()) -> WorkerThreads:
+    """The ids of a module's live worker threads, worked out afresh on every call.
+
+    The supervisor names worker threads `<module>.<worker>`. `skip` lists
+    worker-name prefixes to leave out: workers that block on something other
+    than the fake clock (a serial-port read, an asyncio loop) never "sleep",
+    so waiting for them to would never end.
+    """
+    prefix = f"{module}."
+    skipped = tuple(prefix + name for name in skip)
+
+    def threads() -> set[int]:
+        return {
+            thread.ident
+            for thread in threading.enumerate()
+            if thread.ident is not None
+            and thread.name.startswith(prefix)
+            and not thread.name.startswith(skipped)
+        }
+
+    return threads
+
+
+def wait_until_workers_sleep(fake_clock: FakeClock, workers: WorkerThreads) -> None:
+    """Wait until every thread `workers()` names is asleep on the fake clock, or has ended.
+
+    A worker that has just published something, or been woken by a settings
+    change or a command, may still be on its way back to `sleep`. Fake time
+    moved in that gap wakes nobody: the worker then sleeps from a later time
+    than the test expects, and the step is lost. Tests that move time call
+    this before every step, and before checking what the workers did.
+    """
+    eventually(
+        lambda: fake_clock.all_asleep_or_gone(workers()),
+        "a worker never went back to sleep on the fake clock",
+    )
+
+
+def step_fake_time(
+    fake_clock: FakeClock, seconds: float, workers: WorkerThreads, step: float = 0.1
+) -> None:
+    """Let `seconds` of fake time pass in `step`s, the workers asleep before each step and after.
+
+    So each step wakes every worker that is due, and the test sees what they did.
+    """
+    for _ in range(round(seconds / step)):
+        wait_until_workers_sleep(fake_clock, workers)
+        fake_clock.advance(step)
+    wait_until_workers_sleep(fake_clock, workers)
+
+
+def step_fake_time_until(
+    fake_clock: FakeClock,
+    condition: Callable[[], bool],
+    within_seconds: float,
+    workers: WorkerThreads,
+    step: float = 0.1,
+) -> None:
+    """Let fake time pass in `step`s until `condition()` holds (checked with the workers asleep).
+
+    Checking only while the workers sleep means the condition never sees one
+    halfway through publishing (a new position next to an old remaining time).
+    """
+    for _ in range(round(within_seconds / step)):
+        wait_until_workers_sleep(fake_clock, workers)
+        if condition():
+            return
+        fake_clock.advance(step)
+    wait_until_workers_sleep(fake_clock, workers)
+    eventually(condition)
+
+
 async def eventually_async(
     condition: Callable[[], bool], message: str = "condition never became true"
 ) -> None:

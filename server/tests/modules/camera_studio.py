@@ -22,10 +22,19 @@ from baja_studio.fakes.in_process import InProcessTransport
 from baja_studio.modules.agents import AgentsModule
 from baja_studio.modules.cameras import CamerasModule
 from tests.cameras.visca_network import FakeViscaNetwork
-from tests.conftest import AppFactory, FakeClock, eventually
+from tests.conftest import (
+    AppFactory,
+    FakeClock,
+    eventually,
+    module_worker_threads,
+    step_fake_time_until,
+)
 from tests.fake_agents import AGENT_HOST, StartAgent
 
 SMTAV_HOST = "10.0.0.9"
+# The cameras workers that sleep on the fake clock. Controllers block in a
+# (real-time) serial read instead, so waiting for them to sleep would never end.
+CAMERA_CLOCK_WORKERS = module_worker_threads("cameras", skip=("controller:",))
 
 
 @dataclass
@@ -62,15 +71,7 @@ class Studio:
         state only changes as fake time passes; `eventually` alone would wait
         for a tick that never comes.
         """
-        for _ in range(round(within_seconds / 0.1)):
-            if condition():
-                return
-            sleeping_before = self.clock.sleeping_threads()
-            self.clock.advance(0.1)
-            # Wait until every woken worker is asleep again (or has ended: a
-            # step may stop one), so each step gives every camera worker its look.
-            eventually(lambda: self.clock.all_asleep_or_gone(sleeping_before))  # noqa: B023
-        eventually(condition)
+        step_fake_time_until(self.clock, condition, within_seconds, CAMERA_CLOCK_WORKERS)
 
     def log(self, source_prefix: str) -> list[tuple[str, str, dict[str, Any]]]:
         """(command, result, args) of the cameras log entries from a source, newest first."""
