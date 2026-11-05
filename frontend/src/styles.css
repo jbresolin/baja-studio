@@ -662,3 +662,269 @@ kbd {
 .frame-monitor textarea {
   width: 100%;
 }
+
+/* Playout page (WP5): library | queue | program, tabs at phone width. */
+
+.playout-page {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.program-strip {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  padding: 0.5rem 0.8rem;
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  position: sticky;
+  top: 0;
+  z-index: 5;
+}
+
+.program-strip .on-air {
+  background: var(--offline);
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.75rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+}
+
+.program-title {
+  font-weight: 600;
+  flex: 1;
+}
+
+.countdown {
+  font-size: 1.6rem;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+}
+
+.countdown-white {
+  color: #fff;
+}
+
+.countdown-amber {
+  color: var(--degraded);
+}
+
+.countdown-red {
+  color: var(--offline);
+}
+
+.playout-status {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  font-size: 0.9rem;
+}
+
+.take-confirm {
+  padding: 0.5rem 0.8rem;
+  border: 1px solid var(--degraded);
+  color: var(--degraded);
+  border-radius: 4px;
+  font-weight: 600;
+}
+
+.playout-tabs {
+  display: none;
+  gap: 0.3rem;
+}
+
+.playout-tabs button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.playout-columns {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1fr);
+  gap: 1rem;
+  align-items: start;
+}
+
+.playout-column {
+  min-width: 0;
+}
+
+.playout-toolbar {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  margin-bottom: 0.5rem;
+}
+
+.playout-toolbar input[type="search"] {
+  flex: 1;
+  min-width: 0;
+}
+
+.clip-group-header {
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  font-weight: 600;
+  padding: 0.3rem 0;
+}
+
+.clip-list,
+.queue-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.clip {
+  border-bottom: 1px solid var(--border);
+}
+
+.clip.missing .clip-title {
+  color: var(--text-muted);
+  text-decoration: line-through;
+}
+
+.clip-row {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.25rem 0;
+}
+
+.clip-thumb {
+  width: 64px;
+  height: 36px;
+  object-fit: cover;
+  background: var(--surface-raised);
+  border-radius: 3px;
+  flex: none;
+}
+
+.clip-title {
+  flex: 1;
+  text-align: left;
+  background: none;
+  border: none;
+  padding: 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clip-meta {
+  display: flex;
+  gap: 0.3rem;
+  align-items: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.clip-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.3rem 0 0.6rem 1.6rem;
+}
+
+.clip-editor label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+}
+
+label.inline {
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.queue-entry {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.3rem;
+  border-bottom: 1px solid var(--border);
+  cursor: grab;
+}
+
+.queue-entry.selected {
+  background: var(--surface-raised);
+}
+
+.queue-entry.dragging {
+  opacity: 0.4;
+}
+
+.queue-entry.drop-target {
+  border-top: 2px solid var(--accent);
+}
+
+.queue-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.queue-title.missing {
+  color: var(--offline);
+}
+
+.queue-buttons {
+  display: flex;
+  gap: 0.2rem;
+}
+
+.badge-cue {
+  background: var(--accent);
+  color: #000;
+}
+
+.preview-card h2 {
+  margin-top: 0;
+}
+
+.preview-video {
+  width: 100%;
+  max-height: 240px;
+  background: #000;
+  border-radius: 4px;
+  margin-top: 0.3rem;
+}
+
+.transport {
+  margin: 0.6rem 0;
+}
+
+.take-button {
+  border-color: var(--offline);
+  font-weight: 700;
+}
+
+.aired-export textarea {
+  width: 100%;
+  font-family: ui-monospace, monospace;
+}
+
+@media (max-width: 900px) {
+  .playout-columns {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .playout-tabs {
+    display: flex;
+  }
+
+  .phone-hidden {
+    display: none;
+  }
+}

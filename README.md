@@ -11,9 +11,11 @@ added the **agents** module: the studio's link to the camera laptops
 [docs/agent-api.md](docs/agent-api.md). WP2 added the **cameras** module:
 a registry of cameras, a VISCA-over-IP driver for the SMTAV, a driver for
 cameras owned by an agent (with direct fallback), and the RS485 joystick
-(Pelco-D). There is no camera page yet (WP3): cameras are set up in
-Settings and moved with the joystick or by command; see
-[docs/bench/wp2.md](docs/bench/wp2.md). Two demo modules remain:
+(Pelco-D). WP3 added the camera pages. WP5 added the **playout** module:
+a clip library from the pipeline orchestrator and local folders, a queue,
+and flash-free switching of clips in OBS; see
+[docs/bench/wp5.md](docs/bench/wp5.md) for setting up OBS. Two demo modules
+remain:
 
 - **heartbeat** counts up once per second. You can change the interval in
   Settings, reset it, or make its worker crash once to watch it recover.
@@ -86,7 +88,8 @@ python -m baja_studio
 ```
 
 Open <http://localhost:8888>. The home page shows a card for each module:
-**home**, **cameras**, **camera agents**, **heartbeat** and **echo**. Each card has a
+**home**, **cameras**, **playout**, **camera agents**, **heartbeat** and
+**echo**. Playout shows `offline` until OBS is configured. Each card has a
 health badge, which should be green `ok` after a second or two. Stop the
 service with `Ctrl+C`.
 
@@ -135,6 +138,25 @@ It speaks the full agent API, with two simulated PTZs. Options:
 | Lose it | Stop the fake agent with `Ctrl+C` | About five seconds later the agent turns red `offline` and the home card says so. Start it again (try `--cameras 3`): it comes back `ok` with the new camera list. |
 | Manual wins over auto | `curl -X PUT localhost:8890/cameras/cam1/mode -H 'Content-Type: application/json' -d '{"mode":"auto","profile":{"resume_after_ms":3000}}'`, then `curl -X POST localhost:8890/cameras/cam1/move -H 'Content-Type: application/json' -d '{"pan":0.3}'` | On the Agents page cam1 goes `auto` → `auto_paused` → `auto` again about three seconds later, on its own. |
 | Break it on purpose | `curl -X POST localhost:8890/_fake/silence -H 'Content-Type: application/json' -d '{"silent":true}'` | The agent hangs: no more state. It shows `degraded` ("state stale") after three seconds, then `offline` after five. The other switches are listed in `server/baja_studio/fakes/fake_agent_routes.py`. |
+
+## Playout without OBS or the VPS
+
+In two more terminals, start a fake OBS (already set up with the playback
+scenes) and a fake orchestrator:
+
+```
+python -m baja_studio.fakes.fake_obs --port 4455
+python -m baja_studio.fakes.fake_orchestrator --port 8000 --token T --from-folder <clips folder>
+```
+
+In **Settings → Playout**, set `obs` to `{"host": "127.0.0.1", "port": 4455,
+"return_scene": "Main"}` and `sources` to a local folder plus the
+orchestrator (`http://127.0.0.1:8000`, token `T`), as shown in
+[docs/bench/wp5.md](docs/bench/wp5.md). Then open **Playout**: drop video
+files in the folder, queue them, Cue and Take. The fake plays every clip for
+10 seconds (`--duration` changes it). Clips laid out as
+`<prova>/<car>/<passagem>.mp4` get their prova, car and team from the fake
+orchestrator.
 
 ## Running the tests
 
@@ -201,15 +223,20 @@ server/baja_studio/
   agents/          the agent API: contract models, client, scan, live links
   cameras/         camera registry, drivers (VISCA/IP, agent), Pelco-D input,
                    motion arbiter
+  adapters/        clients shared by modules (obs-websocket v5)
+  playout/         clip library, queue, OBS switching, orchestrator sync,
+                   ffprobe, webhook, aired-log export
   fakes/           runnable stand-ins for external systems (fake_agent,
-                   fake_visca_camera, fake_serial)
-  modules/         one folder per module (home, cameras, agents, heartbeat, echo)
+                   fake_visca_camera, fake_serial, fake_obs, fake_orchestrator)
+  modules/         one folder per module (home, cameras, playout, agents,
+                   heartbeat, echo)
   childprocs/      programs run as child processes (echo_child)
 server/tests/      one test file per source file
   agent_contract/  conformance suite for any agent (--agent-url)
 frontend/src/
   lib/             WebSocket state client, React hooks, typed API helpers
-  pages/           Home, AgentsPage, ModulePage, Settings, Logs
+  pages/           Home, AgentsPage, CamerasPage, PlayoutPage, ModulePage,
+                   Settings, Logs
   components/      shared UI pieces (badges, the schema-driven form)
 frontend/tests/    Vitest tests
 ```
@@ -227,4 +254,6 @@ To add a module, see "Modules" in [docs/conventions.md](docs/conventions.md).
 | `GET /api/commands?module=&limit=` | command log, newest first |
 | `POST /api/commands` | run `{module, command, args, caller}` |
 | `GET /api/logs`, `GET /api/logs/stream` | recent log entries, live tail (SSE) |
+| `GET /api/playout/clips/{id}/media` | a clip's video file (range requests) |
+| `GET /api/playout/clips/{id}/thumbnail` | a clip's cached thumbnail |
 | `WS /ws` | live state (snapshot + patches), commands and replies |

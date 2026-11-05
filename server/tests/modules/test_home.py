@@ -19,7 +19,7 @@ def test_home_lists_every_module_with_title_and_health(make_app: AppFactory) -> 
         eventually(lambda: services.state.get("home", "modules.echo.state") == "ok")
         modules = services.state.get("home", "modules")
 
-    assert set(modules) == {"home", "cameras", "agents", "heartbeat", "echo"}
+    assert set(modules) == {"home", "cameras", "playout", "agents", "heartbeat", "echo"}
     assert modules["heartbeat"] == {"title": "Heartbeat (demo)", "state": "ok", "message": ""}
 
 

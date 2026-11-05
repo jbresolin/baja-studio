@@ -32,6 +32,7 @@ from baja_studio.modules.cameras import CamerasModule
 from baja_studio.modules.echo import EchoModule
 from baja_studio.modules.heartbeat import HeartbeatModule
 from baja_studio.modules.home import HomeModule
+from baja_studio.modules.playout import PlayoutModule
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +51,7 @@ def build_module_list(registry: ModuleRegistry) -> list[Module]:
     return [
         HomeModule(registry),
         CamerasModule(agents),
+        PlayoutModule(),
         agents,
         HeartbeatModule(),
         EchoModule(),
@@ -107,7 +109,9 @@ def create_app(
     )
     state = StateStore(coalesce_seconds)
     supervisor = Supervisor(clock)
-    registry = ModuleRegistry(settings, state, command_log, supervisor, clock)
+    registry = ModuleRegistry(
+        settings, state, command_log, supervisor, clock, database, data_directory
+    )
     services = StudioServices(
         data_directory, clock, database, settings, state, supervisor, command_log, log_hub, registry
     )

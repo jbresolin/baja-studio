@@ -35,6 +35,8 @@ def context(tmp_path: Path, fake_clock: FakeClock) -> ModuleContext:
         supervisor=Supervisor(fake_clock),
         clock=fake_clock,
         logger=ModuleLogger(logging.getLogger("test.bare"), {"studio_module": "bare"}),
+        database=database,
+        data_directory=tmp_path,
     )
 
 

@@ -55,6 +55,18 @@ reading its tests.
   plain logger, pass `extra={"studio_module": name}` — `module` is reserved
   by Python's `LogRecord`.
 
+## Adapters
+
+- Adapters are shared, modules own policy. A client for an external system
+  that several modules use (OBS: playout now, crop filters in WP6) lives in
+  `baja_studio/adapters/` and speaks the protocol only: connect, requests,
+  events, timeouts, reconnect backoff. Which scene to cut to, and when, is
+  decided in the module.
+- An adapter never opens its socket directly; it takes a transport factory,
+  so tests plug in the fake's in-process transport and open no port.
+- Adapter event listeners run on the adapter's reader thread: they queue the
+  event and wake a worker, and never make requests or take module locks.
+
 ## Network clients and units
 
 - Any network client has explicit connect/read timeouts and a documented

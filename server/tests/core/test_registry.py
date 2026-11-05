@@ -84,7 +84,9 @@ def parts(tmp_path: Path, fake_clock: FakeClock) -> Iterator[dict[str, Any]]:
     settings = SettingsStore(database, fake_clock)
     command_log = CommandLog(database, fake_clock)
     state = StateStore()
-    registry = ModuleRegistry(settings, state, command_log, supervisor, fake_clock)
+    registry = ModuleRegistry(
+        settings, state, command_log, supervisor, fake_clock, database, tmp_path
+    )
     yield {
         "registry": registry,
         "settings": settings,
