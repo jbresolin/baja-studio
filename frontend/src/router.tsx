@@ -2,6 +2,8 @@ import { createBrowserRouter } from "react-router-dom";
 
 import { App } from "./App";
 import { AgentsPage } from "./pages/AgentsPage";
+import { AudioConfigPage } from "./pages/AudioConfigPage";
+import { AudioPage } from "./pages/AudioPage";
 import { CameraConfigPage } from "./pages/CameraConfigPage";
 import { CamerasPage } from "./pages/CamerasPage";
 import { Home } from "./pages/Home";
@@ -20,9 +22,12 @@ export const routes = [
       { path: "cameras", element: <CamerasPage /> },
       { path: "cameras/config", element: <CameraConfigPage /> },
       { path: "playout", element: <PlayoutPage /> },
+      { path: "audio", element: <AudioPage /> },
+      { path: "audio/config", element: <AudioConfigPage /> },
       // A module with its own page is listed before the generic one.
       { path: "modules/agents", element: <AgentsPage /> },
       { path: "modules/playout", element: <PlayoutPage /> },
+      { path: "modules/audio", element: <AudioPage /> },
       { path: "modules/:name", element: <ModulePage /> },
       { path: "settings", element: <Settings /> },
       { path: "settings/:section", element: <Settings /> },

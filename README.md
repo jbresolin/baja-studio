@@ -14,8 +14,11 @@ cameras owned by an agent (with direct fallback), and the RS485 joystick
 (Pelco-D). WP3 added the camera pages. WP5 added the **playout** module:
 a clip library from the pipeline orchestrator and local folders, a queue,
 and flash-free switching of clips in OBS; see
-[docs/bench/wp5.md](docs/bench/wp5.md) for setting up OBS. Two demo modules
-remain:
+[docs/bench/wp5.md](docs/bench/wp5.md) for setting up OBS. WP4 added the
+**audio** module: the Behringer XR18 over OSC, the M-VAVE SMC-Mixer over
+MIDI, the Ulanzi D200 decks' HTTP actions (the 2026 URLs, at the service
+root), link matrix, macros and scenes; see [docs/bench/wp4.md](docs/bench/wp4.md)
+and [docs/d200/](docs/d200/). Two demo modules remain:
 
 - **heartbeat** counts up once per second. You can change the interval in
   Settings, reset it, or make its worker crash once to watch it recover.
@@ -88,8 +91,9 @@ python -m baja_studio
 ```
 
 Open <http://localhost:8888>. The home page shows a card for each module:
-**home**, **cameras**, **playout**, **camera agents**, **heartbeat** and
-**echo**. Playout shows `offline` until OBS is configured. Each card has a
+**home**, **cameras**, **playout**, **audio**, **camera agents**,
+**heartbeat** and **echo**. Playout shows `offline` until OBS is configured,
+audio until the XR18's address is set. Each card has a
 health badge, which should be green `ok` after a second or two. Stop the
 service with `Ctrl+C`.
 
@@ -158,6 +162,26 @@ files in the folder, queue them, Cue and Take. The fake plays every clip for
 `<prova>/<car>/<passagem>.mp4` get their prova, car and team from the fake
 orchestrator.
 
+## Audio without the XR18 or the M-VAVE
+
+Start a fake XR18 (real OSC over UDP) in another terminal, and start the
+service with the fake MIDI device:
+
+```
+python -m baja_studio.fakes.fake_xr18 --port 10024
+BAJA_STUDIO_MIDI_BACKEND=fake python -m baja_studio      # Linux / macOS
+$env:BAJA_STUDIO_MIDI_BACKEND="fake"; python -m baja_studio   # PowerShell
+```
+
+In **Audio setup → Mixer & devices** set the mixer address to `127.0.0.1`,
+**Save**, and open **Audio**. Type `set /ch/01/mix/fader 0.5` in the fake
+XR18's terminal (a change "made in Mixing Station"): the HOST 1 fader moves
+on the page. `drop on` makes the mixer go silent (the page shows `offline`
+after 5 s); `drop off` brings it back. Press M-VAVE buttons with
+`curl -X POST localhost:8888/api/commands -H 'Content-Type: application/json'
+-d '{"module":"audio","command":"simulate_midi","args":{"messages":[[144,16,127]]}}'`
+(M on strip 1), and try the D200 URLs: `curl localhost:8888/action/mute/1`.
+
 ## Running the tests
 
 With the virtual environment active:
@@ -223,19 +247,23 @@ server/baja_studio/
   agents/          the agent API: contract models, client, scan, live links
   cameras/         camera registry, drivers (VISCA/IP, agent), Pelco-D input,
                    motion arbiter
-  adapters/        clients shared by modules (obs-websocket v5)
+  adapters/        clients shared by modules (obs-websocket v5, OSC and the
+                   XR18's addresses and timing, the M-VAVE's MIDI map)
   playout/         clip library, queue, OBS switching, orchestrator sync,
                    ffprobe, webhook, aired-log export
+  audio/           audio settings, macros, stored levels and link states
   fakes/           runnable stand-ins for external systems (fake_agent,
-                   fake_visca_camera, fake_serial, fake_obs, fake_orchestrator)
-  modules/         one folder per module (home, cameras, playout, agents,
-                   heartbeat, echo)
-  childprocs/      programs run as child processes (echo_child)
+                   fake_visca_camera, fake_serial, fake_obs, fake_orchestrator,
+                   fake_xr18, fake_midi)
+  modules/         one folder per module (home, cameras, playout, audio,
+                   agents, heartbeat, echo)
+  childprocs/      programs run as child processes (echo_child, midi_child)
 server/tests/      one test file per source file
   agent_contract/  conformance suite for any agent (--agent-url)
 frontend/src/
   lib/             WebSocket state client, React hooks, typed API helpers
-  pages/           Home, AgentsPage, CamerasPage, PlayoutPage, ModulePage,
+  pages/           Home, AgentsPage, CamerasPage, PlayoutPage, AudioPage,
+                   AudioConfigPage, ModulePage,
                    Settings, Logs
   components/      shared UI pieces (badges, the schema-driven form)
 frontend/tests/    Vitest tests
@@ -256,4 +284,5 @@ To add a module, see "Modules" in [docs/conventions.md](docs/conventions.md).
 | `GET /api/logs`, `GET /api/logs/stream` | recent log entries, live tail (SSE) |
 | `GET /api/playout/clips/{id}/media` | a clip's video file (range requests) |
 | `GET /api/playout/clips/{id}/thumbnail` | a clip's cached thumbnail |
+| `GET/POST /action/...` | the Ulanzi D200's audio actions (2026 contract; see docs/d200) |
 | `WS /ws` | live state (snapshot + patches), commands and replies |

@@ -1,0 +1,33 @@
+{
+  "about": "What the 2026 xr18-control server.js answered to the D200, worked out by hand from its code (Express res.json, JavaScript number formatting), not captured from a running 2026 server. Only cases where the 2026 dB approximation and the real XR18 law agree (unity, off) carry levels; nudges that move a level are checked for shape in test_audio_d200_routes.py. The mixer starts as the fake XR18 does: faders at unity (0.75), nothing muted, sends off. Cases run in order against one mixer.",
+  "cases": [
+    {"method": "GET", "path": "/action/state/1", "status": 200, "body": "{\"channel\":\"1\",\"muted\":false,\"fader\":0.75,\"db\":\"0.0 dB\"}"},
+    {"method": "GET", "path": "/action/state/17", "status": 200, "body": "{\"channel\":\"17\",\"muted\":false,\"fader\":0.75,\"db\":\"0.0 dB\"}"},
+    {"method": "GET", "path": "/action/mute/1", "status": 200, "body": "{\"ok\":true,\"channel\":\"1\",\"muted\":true}"},
+    {"method": "GET", "path": "/action/state/1", "status": 200, "body": "{\"channel\":\"1\",\"muted\":true,\"fader\":0.75,\"db\":\"0.0 dB\"}"},
+    {"method": "POST", "path": "/action/mute/1", "status": 200, "body": "{\"ok\":true,\"channel\":\"1\",\"muted\":false}"},
+    {"method": "POST", "path": "/action/mute/2/on", "status": 200, "body": "{\"ok\":true,\"channel\":\"2\",\"muted\":true}"},
+    {"method": "GET", "path": "/action/mute/2/off", "status": 200, "body": "{\"ok\":true,\"channel\":\"2\",\"muted\":false}"},
+    {"method": "GET", "path": "/action/mute/2/whatever", "status": 200, "body": "{\"ok\":true,\"channel\":\"2\",\"muted\":true}"},
+    {"method": "GET", "path": "/action/nudge/3/0", "status": 200, "body": "{\"ok\":true,\"channel\":\"3\",\"fader\":0.75,\"db\":\"0.0 dB\"}"},
+    {"method": "GET", "path": "/action/nudge-aux/17/bus1/0", "status": 200, "body": "{\"ok\":true,\"channel\":\"17\",\"bus\":\"bus1\",\"fader\":0,\"db\":\"-inf\"}"},
+    {"method": "GET", "path": "/action/fader/4/0.75", "status": 200, "body": "{\"ok\":true}"},
+    {"method": "POST", "path": "/action/fader/4/0", "status": 200, "body": "{\"ok\":true}"},
+    {"method": "GET", "path": "/action/state/4", "status": 200, "body": "{\"channel\":\"4\",\"muted\":false,\"fader\":0,\"db\":\"-inf\"}"},
+    {"method": "GET", "path": "/action/scene/3", "status": 200, "body": "{\"ok\":true}"},
+    {"method": "GET", "path": "/action/macro-state/host1-talk-prod", "status": 200, "body": "{\"macro\":\"host1-talk-prod\",\"active\":false}"},
+    {"method": "GET", "path": "/action/macro/host1-talk-prod", "status": 200, "body": "{\"ok\":true,\"macro\":\"host1-talk-prod\",\"active\":true}"},
+    {"method": "GET", "path": "/action/macro-state/host1-talk-prod", "status": 200, "body": "{\"macro\":\"host1-talk-prod\",\"active\":true}"},
+    {"method": "POST", "path": "/action/macro/host1-talk-prod", "status": 200, "body": "{\"ok\":true,\"macro\":\"host1-talk-prod\",\"active\":false}"},
+    {"method": "GET", "path": "/action/macro-state/no-such-macro", "status": 200, "body": "{\"macro\":\"no-such-macro\",\"active\":false}"},
+    {"method": "GET", "path": "/action/macro/no-such-macro", "status": 404, "body": "{\"ok\":false,\"error\":\"not found\"}"},
+    {"method": "GET", "path": "/action/state/99", "status": 400, "body": "{\"error\":\"Unknown channel: 99\"}"},
+    {"method": "GET", "path": "/action/mute/lr2", "status": 400, "body": "{\"error\":\"Unknown channel: lr2\"}"},
+    {"method": "GET", "path": "/action/nudge/1/abc", "status": 400, "body": "{\"error\":\"delta must be a number\"}"},
+    {"method": "GET", "path": "/action/nudge-aux/1/bus1/abc", "status": 400, "body": "{\"error\":\"delta must be a number\"}"},
+    {"method": "GET", "path": "/action/nudge-aux/1/bus9/3", "status": 400, "body": "{\"error\":\"bus must be bus1–bus6\"}"},
+    {"method": "GET", "path": "/action/fader/1/loud", "status": 400, "body": "{\"error\":\"value must be 0.0-1.0\"}"},
+    {"method": "GET", "path": "/action/scene/0", "status": 400, "body": "{\"error\":\"index 1-64\"}"},
+    {"method": "POST", "path": "/action/scene/65", "status": 400, "body": "{\"error\":\"index 1-64\"}"}
+  ]
+}

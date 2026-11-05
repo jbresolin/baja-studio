@@ -35,6 +35,7 @@ pytest_plugins = [
     "tests.fake_agents",
     "tests.modules.camera_studio",
     "tests.modules.playout_studio",
+    "tests.modules.audio_studio",
 ]
 
 # How long (in real seconds) a helper waits before declaring the test failed.

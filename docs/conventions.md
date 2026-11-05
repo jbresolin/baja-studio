@@ -39,6 +39,12 @@ reading its tests.
   `baja_studio/childprocs/`, and drive it from a worker with
   `childproc.run_child_session`. The child side imports only
   `core/childproc_child.py`, never the host side.
+- A child that must tell the service something unprompted (a MIDI message
+  arrived, a port went away) creates a `ChildChannel`, sends events with
+  `channel.send_event(...)` from any thread, and passes the same channel to
+  `run_child(handler, channel=channel)` so replies and events never
+  interleave. A device library that cannot even start in the child (no MIDI
+  system) is reported through the child's answers, not by crashing it.
 - A worker that looks after several devices and keeps running while some are
   away reports a summary with `worker.report_health(state, message)` instead
   of raising.
@@ -66,6 +72,31 @@ reading its tests.
   so tests plug in the fake's in-process transport and open no port.
 - Adapter event listeners run on the adapter's reader thread: they queue the
   event and wake a worker, and never make requests or take module locks.
+
+- HTTP routes go under `/api/<module>` (`Module.routes`). Only a contract
+  fixed by a device that cannot change goes at the root
+  (`Module.root_routes`, e.g. the D200's `/action/...`); `/api` and `/ws`
+  are refused there.
+
+## Device protocols
+
+- **Write protection.** After the studio sets a value on a device that
+  echoes or pushes changes, ignore that address's incoming values while the
+  write is queued and for a short window after it is sent (300 ms for the
+  XR18), so a late echo cannot overwrite what was just set. After the
+  window the device is the truth again: changes made elsewhere must show.
+  Check the window and apply the value under the same lock the writes take,
+  or a write on another thread can slip in between.
+- **No bulk polling.** Never poll a device's whole parameter space (the
+  XR18 hung under ~113 packets per 500 ms in 2026). Subscribe to its pushes
+  where it has them; read once on connect only what something depends on;
+  read more on demand; spend every packet (writes, reads, keep-alives) from
+  one rate budget, latest value per address winning. Tests count packets.
+- The first reading after connecting is not a change: do not react to it
+  (mirror, notify) as if someone had moved something.
+- State a module derives from a device (is this macro active, is this LED
+  lit) is computed from the device's current values, never remembered, so
+  restarts and changes made elsewhere cannot leave it wrong.
 
 ## Network clients and units
 

@@ -28,6 +28,7 @@ from baja_studio.core.settings import SettingsStore
 from baja_studio.core.state import DEFAULT_COALESCE_SECONDS, StateStore
 from baja_studio.core.supervisor import Supervisor
 from baja_studio.modules.agents import AgentsModule
+from baja_studio.modules.audio import AudioModule
 from baja_studio.modules.cameras import CamerasModule
 from baja_studio.modules.echo import EchoModule
 from baja_studio.modules.heartbeat import HeartbeatModule
@@ -54,6 +55,7 @@ def build_module_list(registry: ModuleRegistry) -> list[Module]:
         HomeModule(registry),
         CamerasModule(agents),
         PlayoutModule(),
+        AudioModule(),
         agents,
         HeartbeatModule(),
         EchoModule(),
