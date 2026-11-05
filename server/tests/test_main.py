@@ -4,14 +4,18 @@ import sys
 from pathlib import Path
 
 import pytest
+from fastapi import APIRouter
+from fastapi.testclient import TestClient
 
+from baja_studio.core.module import Module
 from baja_studio.main import (
     DATA_DIRECTORY_ENVIRONMENT_VARIABLE,
     DATABASE_FILE_NAME,
     create_app,
     default_data_directory,
 )
-from tests.conftest import FakeClock
+from baja_studio.modules.home import HomeModule
+from tests.conftest import AppFactory, FakeClock
 
 
 def test_the_data_directory_can_be_set_by_environment_variable(
@@ -55,3 +59,42 @@ def test_the_system_retention_setting_reaches_the_command_log(
     services.command_log.prune()
 
     assert services.command_log.tail() == []
+
+
+class _DeviceContractModule(Module):
+    """A module that, like audio's D200 contract, serves a URL outside `/api`."""
+
+    name = "contract"
+    title = "Contract"
+
+    def __init__(self, path: str = "/action/ping") -> None:
+        super().__init__()
+        self._path = path
+
+    def root_routes(self) -> APIRouter:
+        router = APIRouter()
+
+        @router.get(self._path)
+        def answer() -> dict[str, bool]:
+            return {"ok": True}
+
+        return router
+
+
+def test_root_routes_are_served_at_the_root_ahead_of_the_frontend_pages(
+    make_app: AppFactory, frontend_directory: Path
+) -> None:
+    # A built frontend answers every unknown path with index.html (client-side
+    # routes). The module's /action/ping must win over that catch-all.
+    (frontend_directory / "index.html").write_text("<html>page</html>")
+    app = make_app(lambda registry: [HomeModule(registry), _DeviceContractModule()])
+
+    with TestClient(app) as client:
+        assert client.get("/action/ping").json() == {"ok": True}
+        assert "page" in client.get("/action/other").text
+
+
+def test_a_root_route_may_not_shadow_the_shared_api(make_app: AppFactory) -> None:
+    # /api and /ws belong to the core; a module claiming them is a programming error.
+    with pytest.raises(ValueError, match="/api/health"):
+        make_app(lambda registry: [_DeviceContractModule("/api/health")])
