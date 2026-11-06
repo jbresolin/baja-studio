@@ -12,7 +12,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel
 
@@ -41,6 +41,8 @@ DATA_DIRECTORY_ENVIRONMENT_VARIABLE = "BAJA_STUDIO_DATA"
 FRONTEND_DIRECTORY_ENVIRONMENT_VARIABLE = "BAJA_STUDIO_FRONTEND"
 DATABASE_FILE_NAME = "baja-studio.sqlite3"
 LOG_DIRECTORY_NAME = "logs"
+# Root paths owned by the core; a module's `root_routes` may not use them.
+RESERVED_ROOTS = ("/api", "/ws")
 
 ModuleListBuilder = Callable[[ModuleRegistry], list[Module]]
 
@@ -141,8 +143,25 @@ def create_app(
         module_router = module.routes()
         if module_router is not None:
             app.include_router(module_router, prefix=f"/api/{module.name}")
+        root_router = module.root_routes()
+        if root_router is not None:
+            _check_root_paths(module.name, root_router)
+            app.include_router(root_router)
+    # Last, so that API and root routes are matched before the catch-all page route.
     _serve_frontend(app, frontend_directory)
     return app
+
+
+def _check_root_paths(module_name: str, router: APIRouter) -> None:
+    """Refuse root routes that would shadow the shared API or the WebSocket.
+
+    Matched by whole path segment: `/api` and `/api/...` are reserved,
+    `/apiary` is not.
+    """
+    for route in router.routes:
+        path = getattr(route, "path", "")
+        if any(path == prefix or path.startswith(prefix + "/") for prefix in RESERVED_ROOTS):
+            raise ValueError(f"module {module_name!r} cannot mount {path!r} at the root")
 
 
 def _apply_system_settings(command_log: CommandLog, values: BaseModel) -> None:

@@ -137,3 +137,12 @@ class Module:
     def routes(self) -> APIRouter | None:
         """Optional extra HTTP routes, mounted under `/api/<name>`."""
         return None
+
+    def root_routes(self) -> APIRouter | None:
+        """Optional HTTP routes mounted at the service root, outside `/api`.
+
+        Only for contracts fixed by a device that cannot be changed, such as
+        the Ulanzi D200 profile's `/action/...` URLs (audio). Paths must not
+        start with `/api` or `/ws`; they win over the frontend's pages.
+        """
+        return None

@@ -8,7 +8,7 @@ import io
 import json
 from typing import Any
 
-from baja_studio.core.childproc_child import run_child
+from baja_studio.core.childproc_child import ChildChannel, run_child
 
 
 def test_run_child_answers_pings_and_passes_other_requests_to_the_handler() -> None:
@@ -50,3 +50,24 @@ def test_run_child_skips_blank_and_non_json_lines() -> None:
     run_child(lambda method, params: None, stdin=requests, stdout=replies)
 
     assert json.loads(replies.getvalue()) == {"id": 1, "result": "pong"}
+
+
+def test_events_sent_through_the_channel_share_the_output_with_replies() -> None:
+    # A MIDI child sends events (a fader moved) between replies. We give the
+    # child one channel, send an event through it, then run the loop with a
+    # request: both lines must reach the same output, each whole.
+    replies = io.StringIO()
+    channel = ChildChannel(replies)
+    channel.send_event("midi", {"bytes": [0x90, 0x10, 0x7F]})
+
+    run_child(
+        lambda method, params: "ok",
+        stdin=io.StringIO('{"id": 3, "method": "x"}\n'),
+        channel=channel,
+    )
+
+    lines = [json.loads(line) for line in replies.getvalue().splitlines()]
+    assert lines == [
+        {"event": "midi", "data": {"bytes": [0x90, 0x10, 0x7F]}},
+        {"id": 3, "result": "ok"},
+    ]
