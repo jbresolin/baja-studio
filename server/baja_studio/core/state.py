@@ -39,6 +39,11 @@ class StateStore:
     def __init__(self, coalesce_seconds: float = DEFAULT_COALESCE_SECONDS) -> None:
         """Create an empty tree; `attach_loop` must be called before clients connect."""
         self._coalesce_seconds = coalesce_seconds
+        # Guards the tree, the pending changes and `seq` as one unit: a snapshot's
+        # `seq` must match its tree, and a change must not land in `_pending` after
+        # a drain has taken it. Removing the lock passes the tests today only because
+        # the GIL makes each dict operation atomic (test_main's concurrent root-route
+        # test does not catch it); free-threaded Python would not, so keep it.
         self._lock = threading.Lock()
         self._tree: dict[str, Any] = {}
         self._pending: dict[tuple[str, str], Any] = {}

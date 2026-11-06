@@ -98,12 +98,23 @@ def test_root_routes_are_served_at_the_root_ahead_of_the_frontend_pages(
         assert "page" in client.get("/action/other").text
 
 
-@pytest.mark.parametrize("path", ["/api/health", "/api/contract/x", "/ws", "/ws/extra"])
+@pytest.mark.parametrize("path", ["/api", "/api/health", "/api/contract/x", "/ws", "/ws/extra"])
 def test_a_root_route_may_not_claim_a_reserved_prefix(make_app: AppFactory, path: str) -> None:
     # /api and /ws belong to the core; a module claiming them is a programming error,
     # caught when the app is built rather than when a request happens to collide.
     with pytest.raises(ValueError, match=f"cannot mount '{path}' at the root"):
         make_app(lambda registry: [_DeviceContractModule(path)])
+
+
+@pytest.mark.parametrize("path", ["/apiary", "/wsx", "/action/api"])
+def test_a_root_route_that_only_shares_letters_with_a_reserved_prefix_is_served(
+    make_app: AppFactory, path: str
+) -> None:
+    # Reserved by whole path segment, so /apiary is a different path from /api.
+    app = make_app(lambda registry: [HomeModule(registry), _DeviceContractModule(path)])
+
+    with TestClient(app) as client:
+        assert client.get(path).json() == {"ok": True}
 
 
 WRITERS = 4

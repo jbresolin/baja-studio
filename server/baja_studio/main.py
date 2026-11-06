@@ -40,6 +40,8 @@ DATA_DIRECTORY_ENVIRONMENT_VARIABLE = "BAJA_STUDIO_DATA"
 FRONTEND_DIRECTORY_ENVIRONMENT_VARIABLE = "BAJA_STUDIO_FRONTEND"
 DATABASE_FILE_NAME = "baja-studio.sqlite3"
 LOG_DIRECTORY_NAME = "logs"
+# Root paths owned by the core; a module's `root_routes` may not use them.
+RESERVED_ROOTS = ("/api", "/ws")
 
 ModuleListBuilder = Callable[[ModuleRegistry], list[Module]]
 
@@ -147,10 +149,14 @@ def create_app(
 
 
 def _check_root_paths(module_name: str, router: APIRouter) -> None:
-    """Refuse root routes that would shadow the shared API or the WebSocket."""
+    """Refuse root routes that would shadow the shared API or the WebSocket.
+
+    Matched by whole path segment: `/api` and `/api/...` are reserved,
+    `/apiary` is not.
+    """
     for route in router.routes:
         path = getattr(route, "path", "")
-        if path.startswith(("/api", "/ws")):
+        if any(path == prefix or path.startswith(prefix + "/") for prefix in RESERVED_ROOTS):
             raise ValueError(f"module {module_name!r} cannot mount {path!r} at the root")
 
 
