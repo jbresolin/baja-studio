@@ -75,7 +75,8 @@ def open_bundle(path: Path) -> dict[str, str]:
 def write_log(data_directory: Path, name: str, text: str) -> None:
     folder = data_directory / "logs"
     folder.mkdir(parents=True, exist_ok=True)
-    (folder / name).write_text(text, encoding="utf-8")
+    # Exact bytes: on Windows `write_text` would turn each "\n" into "\r\n".
+    (folder / name).write_bytes(text.encode("utf-8"))
 
 
 def test_the_bundle_holds_logs_settings_health_state_commands_versions_and_services(
@@ -181,6 +182,6 @@ def test_scrubbing_replaces_a_longer_secret_before_one_it_contains() -> None:
 
 def test_a_short_file_is_read_whole(tmp_path: Path) -> None:
     path = tmp_path / "small.log"
-    path.write_text("one\ntwo\n", encoding="utf-8")
+    path.write_bytes(b"one\ntwo\n")
 
     assert read_tail(path, 1000) == "one\ntwo\n"
