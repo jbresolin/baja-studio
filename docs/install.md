@@ -117,3 +117,8 @@ days; Caddy renews it whenever the PC is online).
   service's own log), `service-*.log` and `caddy-*.log` (what each service
   printed, rotated at 5 MB).
 - The services can be restarted from Windows' *Services* app like any other.
+- **Gateway offline, `caddy-stderr.log` says "listening on :80 … forbidden"**
+  (or "address already in use"): another program holds port 80, usually IIS
+  (*World Wide Web Publishing Service*) or Skype/Teams-era software. Stop and
+  disable it (Services app), then start *Baja Studio gateway*. If NSSM shows
+  the gateway as *Paused*, it gave up after quick failures: *Start* it again.

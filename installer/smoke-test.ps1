@@ -60,6 +60,23 @@ function Save-ServiceEvidence {
 
 trap { Save-ServiceEvidence; break }
 
+Write-Host '--- port 80 must be free for Caddy'
+# GitHub's Windows images run IIS (W3SVC), which holds port 80 through HTTP.sys.
+foreach ($web in 'W3SVC', 'WAS') {
+    $service = Get-Service $web -ErrorAction SilentlyContinue
+    if ($service -and $service.Status -eq 'Running') {
+        Write-Host "stopping $web, which holds port 80"
+        Stop-Service $web -Force
+    }
+}
+$listeners = Get-NetTCPConnection -LocalPort 80 -State Listen -ErrorAction SilentlyContinue
+if ($listeners) {
+    $owners = $listeners | ForEach-Object { (Get-Process -Id $_.OwningProcess).ProcessName } | Sort-Object -Unique
+    netsh http show servicestate view=requestq | Out-Host
+    throw "port 80 is still taken by: $($owners -join ', ')"
+}
+netsh int ipv4 show excludedportrange protocol=tcp | Out-Host
+
 Write-Host "--- install $Installer"
 $install = Start-Process $Installer -Wait -PassThru -ArgumentList @(
     '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$(Join-Path $output 'install.log')")
