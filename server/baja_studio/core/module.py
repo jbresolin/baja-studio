@@ -18,6 +18,7 @@ from baja_studio.core.childproc import ChildProcessHost, EventCallback
 from baja_studio.core.clock import Clock
 from baja_studio.core.commandlog import CommandLog
 from baja_studio.core.database import Database
+from baja_studio.core.readiness import ReadinessCheck
 from baja_studio.core.settings import ModuleSettings, SettingsStore
 from baja_studio.core.state import StateStore
 from baja_studio.core.supervisor import Supervisor, WorkerSpec
@@ -132,6 +133,14 @@ class Module:
 
     def workers(self) -> list[WorkerSpec]:
         """Long-running loops the supervisor should keep alive for this module."""
+        return []
+
+    def readiness_checks(self) -> list[ReadinessCheck]:
+        """The pre-event checks this module owns; asked for at every readiness run.
+
+        Only called while the module runs. Checks look and never change
+        anything (see `core/readiness.py`); a module with none returns nothing.
+        """
         return []
 
     def routes(self) -> APIRouter | None:

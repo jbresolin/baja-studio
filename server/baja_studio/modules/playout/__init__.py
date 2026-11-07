@@ -9,8 +9,12 @@ every 5 s), `probe` (ffprobe/thumbnails), `sync` (orchestrator manifest)
 and `hooks` (webhook POSTs). The module is as healthy as its most worrying
 worker: OBS away makes it `offline`, an unreadable folder or an unreachable
 orchestrator `degraded`; library and queue work regardless.
+
+Readiness checks: `readiness.py`.
 """
 
+from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 import httpx2
@@ -20,12 +24,15 @@ from pydantic import BaseModel
 from baja_studio.adapters.obs_transport import TransportFactory, open_websocket_transport
 from baja_studio.adapters.obs_websocket import ObsWebsocketClient
 from baja_studio.core.module import CommandError, Module, ModuleContext
+from baja_studio.core.readiness import ReadinessCheck
 from baja_studio.core.supervisor import WorkerSpec
+from baja_studio.core.system_probes import free_disk_bytes as real_free_disk_bytes
 from baja_studio.modules.playout.commands import run_command
 from baja_studio.modules.playout.controller import PlayoutController
 from baja_studio.modules.playout.library_workers import LibraryWorkers, ProberFactory
 from baja_studio.modules.playout.obs_worker import ObsConnectionWorker
 from baja_studio.modules.playout.publisher import PlayoutPublisher, initial_playout_state
+from baja_studio.modules.playout.readiness import playout_checks
 from baja_studio.modules.playout.routes import playout_routes
 from baja_studio.playout.config import PlayoutSettings, ToolsSettings
 from baja_studio.playout.hooks import WebhookNotifier
@@ -54,9 +61,12 @@ class PlayoutModule(Module):
         orchestrator_transport: httpx2.BaseTransport | None = None,
         prober_factory: ProberFactory = real_prober,
         hook_transport: httpx2.BaseTransport | None = None,
+        free_disk_bytes: Callable[[Path], int] = real_free_disk_bytes,
     ) -> None:
-        """The defaults are the real network and tools; tests pass fakes."""
+        """The defaults are the real network, tools and disks; tests pass fakes."""
         super().__init__()
+        self._free_disk_bytes = free_disk_bytes
+        self._obs_client: ObsWebsocketClient | None = None
         self._obs_transport_factory = obs_transport_factory
         self._orchestrator_transport = orchestrator_transport
         self._prober_factory = prober_factory
@@ -93,6 +103,7 @@ class PlayoutModule(Module):
         queue = QueueStore(context.database, context.clock)
         publisher = PlayoutPublisher(context.update_state, library, queue)
         client = ObsWebsocketClient(context.clock, self._obs_transport_factory)
+        self._obs_client = client
         switcher = ProgramSwitcher(client, lambda: self.settings().obs, context.clock)
         self._notifier = WebhookNotifier(
             context.clock,
@@ -148,6 +159,17 @@ class PlayoutModule(Module):
     def handle_command(self, command: str, args: dict[str, Any], source: str) -> Any:
         """See `modules/playout/commands.py` for the list."""
         return run_command(self.controller, self.context.settings, self.name, command, args, source)
+
+    def readiness_checks(self) -> list[ReadinessCheck]:
+        """OBS, its scenes, folders, tools, orchestrator and queue (see `readiness.py`)."""
+        assert self._obs_client is not None
+        return playout_checks(
+            self.settings(),
+            self._obs_client,
+            self.controller,
+            self.context.state.get(self.name) or {},
+            self._free_disk_bytes,
+        )
 
     def routes(self) -> APIRouter:
         """Clip media and thumbnails."""

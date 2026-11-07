@@ -23,7 +23,10 @@ Caddy (HTTPS on `live.bajasaebrasil.net`, other apps under paths of the same
 name), a diagnostics bundle on the home page, and the Windows installer built
 and tested by the release workflow; see [docs/install.md](docs/install.md)
 for installing on the streaming PC and [installer/](installer/) for building
-it. Two demo modules remain:
+it. WP8 added the **readiness** page (`/readiness`: every module's pre-event
+checks in one green/amber/red list, with the fix for each problem) and
+settings **export/import** (Settings → Export / import); see
+[docs/install.md](docs/install.md), *Before an event*. Two demo modules remain:
 
 - **heartbeat** counts up once per second. You can change the interval in
   Settings, reset it, or make its worker crash once to watch it recover.

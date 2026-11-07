@@ -42,6 +42,7 @@ from baja_studio.core.api import services_of
 from baja_studio.core.commandlog import device_source
 from baja_studio.core.module import CommandError
 from baja_studio.core.registry import UnknownModuleError
+from baja_studio.core.state import StateStore
 
 D200_SOURCE = device_source("d200")
 # Worded with an en dash, exactly as the 2026 tool answered.
@@ -257,17 +258,7 @@ def d200_routes() -> APIRouter:
         target = channel_or_error(channel)
         if isinstance(target, Response):
             return target
-        view = services_of(request).state.get(MODULE, f"channels.{target}") or {}
-        level = view.get("fader")
-        level = 0 if level is None else level
-        return respond(
-            {
-                "channel": channel,
-                "muted": view.get("muted") is True,
-                "fader": level,
-                "db": format_db(level),
-            }
-        )
+        return respond(channel_state_body(services_of(request).state, channel, target))
 
     for path, handler in (
         ("/action/mute/{channel}", mute),
@@ -282,6 +273,22 @@ def d200_routes() -> APIRouter:
     ):
         router.add_api_route(path, handler, methods=["GET", "POST"], include_in_schema=False)
     return router
+
+
+def channel_state_body(state: StateStore, channel: str, target: str) -> dict[str, Any]:
+    """The body of `/action/state/:ch` for `channel` (as asked) and `target` (normalised).
+
+    Also the readiness self-test's subject: it builds this body and checks its shape.
+    """
+    view = state.get(MODULE, f"channels.{target}") or {}
+    level = view.get("fader")
+    level = 0 if level is None else level
+    return {
+        "channel": channel,
+        "muted": view.get("muted") is True,
+        "fader": level,
+        "db": format_db(level),
+    }
 
 
 def _note_d200_seen(request: Request) -> None:

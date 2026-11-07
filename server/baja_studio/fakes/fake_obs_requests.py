@@ -52,6 +52,7 @@ class FakeObsRequests:
     scenes: dict[str, list[FakeSceneItem]]
     inputs: dict[str, FakeInput]
     program_scene: str
+    transitions: list[str]
     transition_overrides: dict[str, tuple[str | None, int | None]]
 
     def now(self) -> float:
@@ -80,6 +81,15 @@ class FakeObsRequests:
             "currentProgramSceneName": self.program_scene,
             "currentPreviewSceneName": None,
             "scenes": [{"sceneName": name, "sceneIndex": i} for i, name in enumerate(names)],
+        }
+
+    def _request_GetSceneTransitionList(self, data: dict[str, Any]) -> dict[str, Any]:  # noqa: N802
+        return {
+            "currentSceneTransitionName": self.transitions[0] if self.transitions else None,
+            "transitions": [
+                {"transitionName": name, "transitionKind": "fake", "transitionFixed": False}
+                for name in self.transitions
+            ],
         }
 
     def _request_GetCurrentProgramScene(self, data: dict[str, Any]) -> dict[str, Any]:  # noqa: N802

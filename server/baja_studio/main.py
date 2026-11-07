@@ -33,6 +33,7 @@ from baja_studio.core.services import SYSTEM_SETTINGS_SECTION, StudioServices, S
 from baja_studio.core.settings import SettingsStore
 from baja_studio.core.state import DEFAULT_COALESCE_SECONDS, StateStore
 from baja_studio.core.supervisor import Supervisor
+from baja_studio.core.system_probes import SystemProbes
 from baja_studio.core.system_services import InstallLayout, ServiceControl, service_control_for
 from baja_studio.modules.agents import AgentsModule
 from baja_studio.modules.audio import AudioModule
@@ -42,6 +43,7 @@ from baja_studio.modules.gateway import GatewayModule, GatewaySystem, installed_
 from baja_studio.modules.heartbeat import HeartbeatModule
 from baja_studio.modules.home import HomeModule
 from baja_studio.modules.playout import PlayoutModule
+from baja_studio.modules.readiness import ReadinessModule
 
 logger = logging.getLogger(__name__)
 
@@ -59,22 +61,26 @@ def build_module_list(
     registry: ModuleRegistry,
     service_control: ServiceControl | None = None,
     gateway_system: GatewaySystem | None = None,
+    system_probes: SystemProbes | None = None,
 ) -> list[Module]:
     """The modules this service runs, in the order they appear on the home page.
 
     The services and Caddy are found through the folder the installer
-    announced; tests pass fakes for both.
+    announced; tests pass fakes for both, and for the PC probes the
+    readiness checks use (disk, clock, load).
     """
     layout = InstallLayout.from_environment()
     if service_control is None:
         service_control = service_control_for(layout)
     if gateway_system is None:
         gateway_system = GatewaySystem(caddy_version=installed_caddy_version(layout))
+    probes = system_probes or SystemProbes()
     agents = AgentsModule()
     return [
-        HomeModule(registry, service_control),
+        HomeModule(registry, service_control, probes),
+        ReadinessModule(registry),
         CamerasModule(agents),
-        PlayoutModule(),
+        PlayoutModule(free_disk_bytes=probes.free_disk_bytes),
         AudioModule(),
         GatewayModule(service_control, gateway_system),
         agents,

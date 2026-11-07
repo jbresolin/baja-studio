@@ -55,6 +55,11 @@ class ObsRequestsMixin:
         names = [str(scene["sceneName"]) for scene in reversed(data.get("scenes", []))]
         return SceneList(str(data.get("currentProgramSceneName", "")), names)
 
+    def get_transition_names(self) -> list[str]:
+        """The names of the scene transitions OBS has (localised: "Corte", "Desvanecer")."""
+        data = self.request("GetSceneTransitionList")
+        return [str(item["transitionName"]) for item in data.get("transitions", [])]
+
     def get_current_program_scene(self) -> str:
         """Name of the scene on program right now."""
         return str(self.request("GetCurrentProgramScene").get("currentProgramSceneName", ""))

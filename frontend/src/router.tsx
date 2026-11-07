@@ -10,6 +10,7 @@ import { Home } from "./pages/Home";
 import { Logs } from "./pages/Logs";
 import { ModulePage } from "./pages/ModulePage";
 import { PlayoutPage } from "./pages/PlayoutPage";
+import { ReadinessPage } from "./pages/ReadinessPage";
 import { Settings } from "./pages/Settings";
 
 /** Every page of the app. Later work packages add their module pages here. */
@@ -24,10 +25,12 @@ export const routes = [
       { path: "playout", element: <PlayoutPage /> },
       { path: "audio", element: <AudioPage /> },
       { path: "audio/config", element: <AudioConfigPage /> },
+      { path: "readiness", element: <ReadinessPage /> },
       // A module with its own page is listed before the generic one.
       { path: "modules/agents", element: <AgentsPage /> },
       { path: "modules/playout", element: <PlayoutPage /> },
       { path: "modules/audio", element: <AudioPage /> },
+      { path: "modules/readiness", element: <ReadinessPage /> },
       { path: "modules/:name", element: <ModulePage /> },
       { path: "settings", element: <Settings /> },
       { path: "settings/:section", element: <Settings /> },

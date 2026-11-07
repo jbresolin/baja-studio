@@ -87,6 +87,8 @@ class FakeObs(FakeObsRequests):
         self.scenes: dict[str, list[FakeSceneItem]] = {}
         self.inputs: dict[str, FakeInput] = {}
         self.program_scene = ""
+        # OBS's two default transitions, with their English names.
+        self.transitions = ["Cut", "Fade"]
         self.transition_overrides: dict[str, tuple[str | None, int | None]] = {}
         self.requests: list[RequestRecord] = []
         self.program_history: list[str] = []
