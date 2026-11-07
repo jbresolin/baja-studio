@@ -1,0 +1,13 @@
+{
+  "caddy_version": "v2.11.8",
+  "modules": [
+    {
+      "module": "github.com/caddy-dns/cloudflare",
+      "version": "v0.2.4",
+      "caddy_module_id": "dns.providers.cloudflare"
+    }
+  ],
+  "go_version": "1.26.10",
+  "xcaddy_version": "v0.4.7",
+  "sha256": ""
+}

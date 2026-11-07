@@ -1,11 +1,31 @@
-"""The home module: the landing page's list of modules and their health."""
+"""The home module: the landing page's list of modules and their health.
+
+It also builds the diagnostics bundle (`diagnostics_bundle`), served for
+download at `GET /api/home/diagnostics/<file name>`, and publishes the
+service version the page shows.
+"""
 
 import threading
 from typing import Any
 
-from baja_studio.core.module import Module, ModuleContext
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import FileResponse
+
+from baja_studio import __version__
+from baja_studio.core.diagnostics import (
+    BUNDLE_NAME_PATTERN,
+    DiagnosticsSources,
+    build_bundle,
+    diagnostics_directory,
+)
+from baja_studio.core.logging import LOG_DIRECTORY_NAME
+from baja_studio.core.module import CommandError, Module, ModuleContext
 from baja_studio.core.registry import ModuleRegistry
 from baja_studio.core.supervisor import Health
+from baja_studio.core.system_services import NotInstalledServiceControl, ServiceControl
+from baja_studio.modules.gateway.caddyfile import caddyfile_path
+
+DIAGNOSTICS_URL_PREFIX = "/api/home/diagnostics/"
 
 
 class HomeModule(Module):
@@ -19,15 +39,18 @@ class HomeModule(Module):
     title = "Home"
     can_be_disabled = False
 
-    def __init__(self, registry: ModuleRegistry) -> None:
-        """`registry` is where the list of modules (and their titles) comes from."""
+    def __init__(
+        self, registry: ModuleRegistry, service_control: ServiceControl | None = None
+    ) -> None:
+        """`registry` lists the modules; `service_control` reports the services in bundles."""
         super().__init__()
         self._registry = registry
+        self._service_control = service_control or NotInstalledServiceControl()
         self._listening = threading.Event()
 
     def initial_state(self) -> dict[str, Any]:
-        """No modules known until `start`."""
-        return {"modules": {}}
+        """No modules known until `start`; the version is known at once."""
+        return {"modules": {}, "version": __version__}
 
     def start(self, context: ModuleContext) -> None:
         """Publish the current health of every module, then follow changes."""
@@ -38,6 +61,42 @@ class HomeModule(Module):
         if not self._listening.is_set():
             self._listening.set()
             context.supervisor.add_health_listener(self._publish)
+
+    def handle_command(self, command: str, args: dict[str, Any], source: str) -> Any:
+        """`diagnostics_bundle`: build a zip and return where to download it."""
+        if command != "diagnostics_bundle":
+            raise CommandError(f"home has no command {command!r}; try 'diagnostics_bundle'")
+        path = build_bundle(self._diagnostics_sources())
+        return {"file_name": path.name, "url": DIAGNOSTICS_URL_PREFIX + path.name}
+
+    def routes(self) -> APIRouter:
+        """`GET /diagnostics/<name>`: a bundle built earlier, as a download."""
+        router = APIRouter()
+
+        @router.get("/diagnostics/{file_name}")
+        def download_bundle(file_name: str) -> FileResponse:
+            # Only names this module writes: never a path into the rest of the data folder.
+            path = diagnostics_directory(self.context.data_directory) / file_name
+            if not BUNDLE_NAME_PATTERN.match(file_name) or not path.is_file():
+                raise HTTPException(404, "no such diagnostics bundle")
+            return FileResponse(path, media_type="application/zip", filename=file_name)
+
+        return router
+
+    def _diagnostics_sources(self) -> DiagnosticsSources:
+        context = self.context
+        return DiagnosticsSources(
+            data_directory=context.data_directory,
+            log_directory=context.data_directory / LOG_DIRECTORY_NAME,
+            caddyfile=caddyfile_path(context.data_directory),
+            clock=context.clock,
+            settings=context.settings,
+            state=context.state,
+            command_log=context.command_log,
+            module_names=lambda: [module.name for module in self._registry.modules()],
+            health=self._registry.health_report,
+            service_control=self._service_control,
+        )
 
     def _publish(self, module_name: str, health: Health) -> None:
         """Health listener: write one module's entry into the home state."""

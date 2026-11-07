@@ -17,7 +17,7 @@ interface QuickCommand {
   args?: Record<string, unknown>;
 }
 
-/** One-click commands for modules that have them (the WP0 demo modules). */
+/** One-click commands for modules that have them (the demo modules, the gateway). */
 const QUICK_COMMANDS: Record<string, QuickCommand[]> = {
   heartbeat: [
     { label: "Reset count", command: "reset" },
@@ -26,6 +26,11 @@ const QUICK_COMMANDS: Record<string, QuickCommand[]> = {
   echo: [
     { label: "Say hello", command: "say", args: { text: "hello" } },
     { label: "Kill child process", command: "kill_child" },
+  ],
+  gateway: [
+    { label: "Apply config", command: "apply" },
+    { label: "Test DNS", command: "test_dns" },
+    { label: "Test TLS", command: "test_tls" },
   ],
 };
 

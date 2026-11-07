@@ -1,6 +1,6 @@
 """HTTP and WebSocket endpoints shared by every module.
 
-GET  /api/health                     health of every module
+GET  /api/health                     health of every module, and the version
 GET  /api/settings                   list of settings sections
 GET  /api/settings/{section}         values (secrets masked) + version
 PUT  /api/settings/{section}         save {version, values}; 409 on a stale version
@@ -31,7 +31,6 @@ from baja_studio.core.module import CommandError
 from baja_studio.core.registry import UnknownModuleError
 from baja_studio.core.services import SYSTEM_SETTINGS_SECTION, StudioServices
 from baja_studio.core.settings import SettingsConflictError, UnknownSettingsSectionError
-from baja_studio.core.supervisor import HealthState
 
 logger = logging.getLogger(__name__)
 
@@ -67,21 +66,8 @@ class CommandRequest(BaseModel):
 
 @router.get("/api/health")
 def get_health(request: Request) -> dict[str, Any]:
-    """Each module's health; `status` is "ok" only if no running module has a problem."""
-    services = services_of(request)
-    modules = []
-    for module in services.registry.modules():
-        health = services.supervisor.module_health(module.name)
-        modules.append(
-            {
-                "name": module.name,
-                "title": module.title,
-                "state": health.state.value,
-                "message": health.message,
-            }
-        )
-    problems = [m for m in modules if m["state"] in (HealthState.DEGRADED, HealthState.OFFLINE)]
-    return {"status": "ok" if not problems else "degraded", "modules": modules}
+    """Each module's health and the version; `status` is "ok" only if no module has a problem."""
+    return services_of(request).registry.health_report()
 
 
 @router.get("/api/settings")

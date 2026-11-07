@@ -2,7 +2,8 @@
  * A form generated from a settings JSON Schema.
  *
  * Booleans become checkboxes, numbers number inputs, enums dropdowns, fields
- * marked `secret` password inputs, and anything more complex a JSON text box.
+ * marked `secret` password inputs, a nested model (the gateway's `tls`) a group
+ * of those, and anything more complex (lists) a JSON text box.
  * Fields marked `managed_elsewhere` are left out: their module's page edits them.
  * Later work packages can add field kinds here and every Settings page gains them.
  */
@@ -46,6 +47,7 @@ export function SchemaForm({ schema, values, fieldErrors, onChange }: SchemaForm
               <label htmlFor={inputId}>{property.title ?? field}</label>
               <FieldInput
                 id={inputId}
+                schema={schema}
                 property={property}
                 value={values[field]}
                 onChange={(value) => onChange(field, value)}
@@ -61,12 +63,13 @@ export function SchemaForm({ schema, values, fieldErrors, onChange }: SchemaForm
 
 interface FieldInputProps {
   id: string;
+  schema: SettingsSchema;
   property: JsonSchemaProperty;
   value: unknown;
   onChange: (value: unknown) => void;
 }
 
-function FieldInput({ id, property, value, onChange }: FieldInputProps) {
+function FieldInput({ id, schema, property, value, onChange }: FieldInputProps) {
   if (property.enum) {
     return (
       <select
@@ -120,12 +123,51 @@ function FieldInput({ id, property, value, onChange }: FieldInputProps) {
           onChange={(event) => onChange(event.target.value)}
         />
       );
+    case "object":
+      if (property.properties) {
+        return (
+          <NestedFields
+            id={id}
+            schema={schema}
+            property={property}
+            value={value}
+            onChange={onChange}
+          />
+        );
+      }
+      return <JsonFieldInput id={id} value={value} onChange={onChange} />;
     default:
       return <JsonFieldInput id={id} value={value} onChange={onChange} />;
   }
 }
 
-function JsonFieldInput({ id, value, onChange }: Omit<FieldInputProps, "property">) {
+/** A nested model's fields, each changing one key of the model's value. */
+function NestedFields({ id, schema, property, value, onChange }: FieldInputProps) {
+  const current = (value ?? {}) as Record<string, unknown>;
+  return (
+    <fieldset className="nested-fields" id={id}>
+      {Object.entries(property.properties ?? {}).map(([key, rawChild]) => {
+        const child = resolveProperty(schema, rawChild);
+        const childId = `${id}-${key}`;
+        return (
+          <div className="field" key={key}>
+            <label htmlFor={childId}>{child.title ?? key}</label>
+            <FieldInput
+              id={childId}
+              schema={schema}
+              property={child}
+              value={current[key]}
+              onChange={(childValue) => onChange({ ...current, [key]: childValue })}
+            />
+            {child.description && <div className="field-help">{child.description}</div>}
+          </div>
+        );
+      })}
+    </fieldset>
+  );
+}
+
+function JsonFieldInput({ id, value, onChange }: Omit<FieldInputProps, "property" | "schema">) {
   return (
     <textarea
       id={id}

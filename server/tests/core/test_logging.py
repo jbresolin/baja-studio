@@ -14,6 +14,7 @@ from baja_studio.core.logging import (
     ConsoleFormatter,
     LogHub,
     configure_logging,
+    prune_rotated_logs,
     record_to_entry,
     stream_log_events,
 )
@@ -145,3 +146,23 @@ def test_configuring_twice_does_not_duplicate_handlers(
 
     # Console + file + hub: three handlers, not six.
     assert len(logging.getLogger(ROOT_LOGGER_NAME).handlers) == 3
+
+
+def test_only_the_newest_files_nssm_rotated_out_are_kept(tmp_path: Path) -> None:
+    # NSSM renames a full log with a timestamp and never deletes old ones.
+    for minute in range(7):
+        (tmp_path / f"service-stdout-20261106T22{minute:02}00.000.log").write_text("x")
+    (tmp_path / "caddy-stderr-20261106T220000.000.log").write_text("x")
+    (tmp_path / "service-stdout.log").write_text("current")
+
+    deleted = prune_rotated_logs(tmp_path, keep=5)
+
+    assert sorted(path.name for path in deleted) == [
+        "service-stdout-20261106T220000.000.log",
+        "service-stdout-20261106T220100.000.log",
+    ]
+    # Each log keeps its own five; the file being written is never touched.
+    remaining = sorted(path.name for path in tmp_path.iterdir())
+    assert "caddy-stderr-20261106T220000.000.log" in remaining
+    assert "service-stdout.log" in remaining
+    assert len(remaining) == 7

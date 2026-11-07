@@ -16,21 +16,29 @@ from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel
 
+from baja_studio import __version__
 from baja_studio.core.api import router as core_router
 from baja_studio.core.clock import Clock, SystemClock
 from baja_studio.core.commandlog import CommandLog
 from baja_studio.core.database import Database
-from baja_studio.core.logging import LogHub, configure_logging
+from baja_studio.core.logging import (
+    LOG_DIRECTORY_NAME,
+    LogHub,
+    configure_logging,
+    prune_rotated_logs,
+)
 from baja_studio.core.module import Module
 from baja_studio.core.registry import ModuleRegistry
 from baja_studio.core.services import SYSTEM_SETTINGS_SECTION, StudioServices, SystemSettings
 from baja_studio.core.settings import SettingsStore
 from baja_studio.core.state import DEFAULT_COALESCE_SECONDS, StateStore
 from baja_studio.core.supervisor import Supervisor
+from baja_studio.core.system_services import InstallLayout, ServiceControl, service_control_for
 from baja_studio.modules.agents import AgentsModule
 from baja_studio.modules.audio import AudioModule
 from baja_studio.modules.cameras import CamerasModule
 from baja_studio.modules.echo import EchoModule
+from baja_studio.modules.gateway import GatewayModule, GatewaySystem, installed_caddy_version
 from baja_studio.modules.heartbeat import HeartbeatModule
 from baja_studio.modules.home import HomeModule
 from baja_studio.modules.playout import PlayoutModule
@@ -41,21 +49,34 @@ DEFAULT_PORT = 8888
 DATA_DIRECTORY_ENVIRONMENT_VARIABLE = "BAJA_STUDIO_DATA"
 FRONTEND_DIRECTORY_ENVIRONMENT_VARIABLE = "BAJA_STUDIO_FRONTEND"
 DATABASE_FILE_NAME = "baja-studio.sqlite3"
-LOG_DIRECTORY_NAME = "logs"
 # Root paths owned by the core; a module's `root_routes` may not use them.
 RESERVED_ROOTS = ("/api", "/ws")
 
 ModuleListBuilder = Callable[[ModuleRegistry], list[Module]]
 
 
-def build_module_list(registry: ModuleRegistry) -> list[Module]:
-    """The modules this service runs, in the order they appear on the home page."""
+def build_module_list(
+    registry: ModuleRegistry,
+    service_control: ServiceControl | None = None,
+    gateway_system: GatewaySystem | None = None,
+) -> list[Module]:
+    """The modules this service runs, in the order they appear on the home page.
+
+    The services and Caddy are found through the folder the installer
+    announced; tests pass fakes for both.
+    """
+    layout = InstallLayout.from_environment()
+    if service_control is None:
+        service_control = service_control_for(layout)
+    if gateway_system is None:
+        gateway_system = GatewaySystem(caddy_version=installed_caddy_version(layout))
     agents = AgentsModule()
     return [
-        HomeModule(registry),
+        HomeModule(registry, service_control),
         CamerasModule(agents),
         PlayoutModule(),
         AudioModule(),
+        GatewayModule(service_control, gateway_system),
         agents,
         HeartbeatModule(),
         EchoModule(),
@@ -127,7 +148,8 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         state.attach_loop(asyncio.get_running_loop())
-        logger.info("starting with data directory %s", data_directory)
+        logger.info("starting version %s with data directory %s", __version__, data_directory)
+        prune_rotated_logs(data_directory / LOG_DIRECTORY_NAME)
         command_log.prune()
         registry.start_all()
         try:

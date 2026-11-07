@@ -18,7 +18,12 @@ and flash-free switching of clips in OBS; see
 **audio** module: the Behringer XR18 over OSC, the M-VAVE SMC-Mixer over
 MIDI, the Ulanzi D200 decks' HTTP actions (the 2026 URLs, at the service
 root), link matrix, macros and scenes; see [docs/bench/wp4.md](docs/bench/wp4.md)
-and [docs/d200/](docs/d200/). Two demo modules remain:
+and [docs/d200/](docs/d200/). WP7 added the **gateway** module, which owns
+Caddy (HTTPS on `live.bajasaebrasil.net`, other apps under paths of the same
+name), a diagnostics bundle on the home page, and the Windows installer built
+and tested by the release workflow; see [docs/install.md](docs/install.md)
+for installing on the streaming PC and [installer/](installer/) for building
+it. Two demo modules remain:
 
 - **heartbeat** counts up once per second. You can change the interval in
   Settings, reset it, or make its worker crash once to watch it recover.
@@ -182,6 +187,22 @@ after 5 s); `drop off` brings it back. Press M-VAVE buttons with
 -d '{"module":"audio","command":"simulate_midi","args":{"messages":[[144,16,127]]}}'`
 (M on strip 1), and try the D200 URLs: `curl localhost:8888/action/mute/1`.
 
+## The gateway without Caddy
+
+On the streaming PC Caddy runs as its own service (see
+[docs/install.md](docs/install.md)). On a development machine, a fake admin
+API stands in for it:
+
+```
+python -m baja_studio.fakes.fake_caddy --port 2019
+```
+
+The **Gateway** card turns `ok`. Each settings change is applied to the
+fake (`curl localhost:2019/config/` counts the lines of the last Caddyfile),
+and the Caddyfile itself is in the data folder under `caddy/`.
+`--refuse "unknown directive"` makes it refuse every config, as Caddy does
+with a typo: the card turns `degraded` and says so.
+
 ## Running the tests
 
 With the virtual environment active:
@@ -242,8 +263,10 @@ another address, set `BAJA_STUDIO_URL`.
 ```
 server/baja_studio/
   main.py          builds the app; the module list lives here
+  release_tools.py version stamping and wheelhouse manifest (installer/build.ps1)
   core/            the shared base: settings, state + WebSocket, supervisor,
-                   child processes, command log, logging, HTTP API
+                   child processes, command log, logging, HTTP API,
+                   diagnostics bundle, the installed services (NSSM)
   agents/          the agent API: contract models, client, scan, live links
   cameras/         camera registry, drivers (VISCA/IP, agent), Pelco-D input,
                    motion arbiter
@@ -254,9 +277,9 @@ server/baja_studio/
   audio/           audio settings, macros, stored levels and link states
   fakes/           runnable stand-ins for external systems (fake_agent,
                    fake_visca_camera, fake_serial, fake_obs, fake_orchestrator,
-                   fake_xr18, fake_midi)
+                   fake_xr18, fake_midi, fake_caddy)
   modules/         one folder per module (home, cameras, playout, audio,
-                   agents, heartbeat, echo)
+                   gateway, agents, heartbeat, echo)
   childprocs/      programs run as child processes (echo_child, midi_child)
 server/tests/      one test file per source file
   agent_contract/  conformance suite for any agent (--agent-url)
@@ -267,6 +290,7 @@ frontend/src/
                    Settings, Logs
   components/      shared UI pieces (badges, the schema-driven form)
 frontend/tests/    Vitest tests
+installer/         build.ps1, the Inno Setup script, pins, the smoke test
 ```
 
 To add a module, see "Modules" in [docs/conventions.md](docs/conventions.md).
@@ -275,13 +299,14 @@ To add a module, see "Modules" in [docs/conventions.md](docs/conventions.md).
 
 | Endpoint | Purpose |
 |---|---|
-| `GET /api/health` | health of every module |
+| `GET /api/health` | health of every module, and the version |
 | `GET /api/settings` | list of settings sections |
 | `GET/PUT /api/settings/{section}` | read, or save `{version, values}` (409 if stale) |
 | `GET /api/settings/{section}/schema` | JSON Schema for the settings form |
 | `GET /api/commands?module=&limit=` | command log, newest first |
 | `POST /api/commands` | run `{module, command, args, caller}` |
 | `GET /api/logs`, `GET /api/logs/stream` | recent log entries, live tail (SSE) |
+| `GET /api/home/diagnostics/{file}` | a diagnostics bundle built by the home page's button |
 | `GET /api/playout/clips/{id}/media` | a clip's video file (range requests) |
 | `GET /api/playout/clips/{id}/thumbnail` | a clip's cached thumbnail |
 | `GET/POST /action/...` | the Ulanzi D200's audio actions (2026 contract; see docs/d200) |

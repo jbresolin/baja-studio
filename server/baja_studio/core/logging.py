@@ -11,6 +11,7 @@ import contextlib
 import json
 import logging
 import logging.handlers
+import re
 import threading
 from collections import deque
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -19,10 +20,14 @@ from pathlib import Path
 from typing import Any
 
 ROOT_LOGGER_NAME = "baja_studio"
+# Inside the data folder; NSSM writes the services' captured output here too.
+LOG_DIRECTORY_NAME = "logs"
 LOG_FILE_NAME = "baja-studio.log"
 LOG_FILE_MAX_BYTES = 5 * 1024 * 1024
 LOG_FILE_BACKUP_COUNT = 5
 RECENT_ENTRIES_KEPT = 500
+# service-stdout-20261106T221327.123.log: a file NSSM rotated out.
+NSSM_ROTATED_NAME = re.compile(r"^(?P<base>.+)-\d{8}T\d{6}\.\d{3}(?P<extension>\.[^.]+)?$")
 
 # Attributes every LogRecord has; anything else on a record came from `extra=`.
 _STANDARD_RECORD_ATTRIBUTES = set(vars(logging.makeLogRecord({}))) | {"message", "asctime"}
@@ -148,6 +153,27 @@ async def stream_log_events(
 
 def _sse_frame(entry: dict[str, Any]) -> str:
     return f"data: {json.dumps(entry, ensure_ascii=False)}\n\n"
+
+
+def prune_rotated_logs(log_directory: Path, keep: int = LOG_FILE_BACKUP_COUNT) -> list[Path]:
+    """Delete all but the newest `keep` files NSSM rotated out, per log; returns the deleted.
+
+    NSSM renames a full `service-stdout.log` to `service-stdout-<timestamp>.log`
+    and never deletes the old ones itself. Called at startup.
+    """
+    rotated: dict[str, list[Path]] = {}
+    if log_directory.is_dir():
+        for path in log_directory.iterdir():
+            match = NSSM_ROTATED_NAME.match(path.name)
+            if match and path.is_file():
+                rotated.setdefault(match["base"] + (match["extension"] or ""), []).append(path)
+    deleted = []
+    for files in rotated.values():
+        # The timestamp in the name sorts in time order.
+        for old in sorted(files)[:-keep] if keep else files:
+            old.unlink(missing_ok=True)
+            deleted.append(old)
+    return deleted
 
 
 def configure_logging(log_directory: Path | None, hub: LogHub, level: int = logging.INFO) -> None:

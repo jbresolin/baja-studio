@@ -13,6 +13,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+import baja_studio
 from baja_studio.core.registry import ModuleRegistry
 from baja_studio.core.settings import SECRET_MASK
 from baja_studio.modules.heartbeat import HeartbeatModule
@@ -44,12 +45,16 @@ def receive_until(socket: Any, wanted: Any) -> dict[str, Any]:
 # --- health ---------------------------------------------------------------------
 
 
-def test_health_lists_every_module_with_its_state(light_client: TestClient) -> None:
+def test_health_lists_every_module_with_its_state_and_the_version(
+    light_client: TestClient,
+) -> None:
     response = light_client.get("/api/health")
 
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "ok"
+    # The version baked in at build time, so the installer's smoke test can check it.
+    assert body["version"] == baja_studio.__version__
     assert [(m["name"], m["state"]) for m in body["modules"]] == [
         ("home", "ok"),
         ("heartbeat", "ok"),

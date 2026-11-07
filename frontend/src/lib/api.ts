@@ -37,6 +37,8 @@ export interface JsonSchemaProperty {
   secret?: boolean;
   /** Edited on the module's own page (e.g. the agents list), so the form skips it. */
   managed_elsewhere?: boolean;
+  /** The fields of a nested model (`type: "object"`). */
+  properties?: Record<string, JsonSchemaProperty>;
 }
 
 export interface SettingsSchema {
@@ -112,7 +114,11 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return body as T;
 }
 
-export function getHealth(): Promise<{ status: string; modules: ModuleHealth[] }> {
+export function getHealth(): Promise<{
+  status: string;
+  version: string;
+  modules: ModuleHealth[];
+}> {
   return request("/api/health");
 }
 

@@ -1,0 +1,6 @@
+{
+  "version": "2.24-101-g897c7ad",
+  "url": "https://nssm.cc/ci/nssm-2.24-101-g897c7ad.zip",
+  "sha256": "99f5045fffbffb745d67fe3a065a953c4a3d9c253b868892d9b685b0ee7d07b8",
+  "executable_in_zip": "nssm-2.24-101-g897c7ad/win64/nssm.exe"
+}
