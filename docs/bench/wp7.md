@@ -16,6 +16,7 @@ to apply to.
 | 3a | Gateway page: *Test DNS* | "points at this PC" | |
 | 4 | hEX: `/ip dns static add name=live.bajasaebrasil.net address=<LAN IP> ttl=1h comment="studio box"`; unplug the WAN | Name still resolves on a phone; page loads, no certificate warning | |
 | 5 | Install the next build over it | Settings, queue, logs and the token survive; version changes; HTTPS still works | |
+| 5a | Take port 80: turn on IIS (Windows features → Internet Information Services) or run another web server on :80; restart *Baja Studio gateway* | Within ten seconds, a red line on the home page: *Gateway: port 80 in use by …* naming it, with the fix; following the fix brings the gateway back and the line goes away | |
 | 6 | Diagnostics bundle (home page button) | Zip downloads; search it for the token: not found | |
 | 7 | Uninstall, keeping the data; reinstall | Everything is back, including HTTPS | |
 

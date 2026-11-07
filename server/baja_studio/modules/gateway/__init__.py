@@ -6,7 +6,8 @@ and watches it: is Caddy up, is the certificate valid, does each proxied app
 answer. It also publishes the apps for the home page's cards.
 
 State (`state.gateway`):
-- `caddy`: {running, version, admin_api, message}
+- `caddy`: {running, version, admin_api, message, port_conflicts[]}; while Caddy
+  is down, `port_conflicts` names whoever else holds port 80/443 and the fix
 - `tls`: {mode, hostname, issued, issuer, expires_at, last_error, checked_at}
 - `studio`, `apps[]`: each upstream with {reachable, status_code, error}
 - `public_base`: https://<hostname> with TLS on, else null (the page uses its own host)
@@ -64,7 +65,13 @@ class GatewayModule(Module):
     def initial_state(self) -> dict[str, Any]:
         """Nothing known about Caddy until the worker first asks."""
         return {
-            "caddy": {"running": False, "version": None, "admin_api": "", "message": ""},
+            "caddy": {
+                "running": False,
+                "version": None,
+                "admin_api": "",
+                "message": "",
+                "port_conflicts": [],
+            },
             "tls": {
                 "mode": TlsMode.OFF.value,
                 "hostname": "",
@@ -138,12 +145,10 @@ class GatewayModule(Module):
             except CaddyUnreachableError as error:
                 self.context.update_state("caddy.running", False)
                 self.context.update_state("caddy.message", str(error))
-                raise DeviceOfflineError(
-                    f"Caddy is not answering on {settings.admin_api}; "
-                    "is the BajaStudioGateway service running?"
-                ) from error
+                raise DeviceOfflineError(self._why_caddy_is_down(settings)) from error
             self.context.update_state("caddy.running", True)
             self.context.update_state("caddy.message", "")
+            self.context.update_state("caddy.port_conflicts", [])
             problems = [self._config_error] if self._config_error else []
             problems.extend(self._check_upstreams(settings))
             if self._tls_check_due(settings):
@@ -156,6 +161,20 @@ class GatewayModule(Module):
                 HealthState.DEGRADED if problems else HealthState.OK, "; ".join(problems)
             )
             worker.sleep(POLL_SECONDS)
+
+    def _why_caddy_is_down(self, settings: GatewaySettings) -> str:
+        """Another program on Caddy's ports is the usual cause; publish it with the fix."""
+        ports = (80, 443) if settings.tls.mode == TlsMode.DNS01 else (80,)
+        holders = self._system.port_holders(ports)
+        self.context.update_state("caddy.port_conflicts", [h.as_state() for h in holders])
+        if holders:
+            return "; ".join(
+                f"port {h.port} in use by {h.description}: Caddy cannot start" for h in holders
+            )
+        return (
+            f"Caddy is not answering on {settings.admin_api}; "
+            "is the BajaStudioGateway service running?"
+        )
 
     def _apply(self, settings: GatewaySettings) -> dict[str, Any]:
         """Apply through the controller; record the outcome (or the refusal) in state."""

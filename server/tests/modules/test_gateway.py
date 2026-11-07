@@ -18,6 +18,7 @@ from baja_studio.core.services import StudioServices
 from baja_studio.core.supervisor import HealthState
 from baja_studio.core.system_services import GATEWAY_SERVICE
 from baja_studio.modules.gateway import GatewayModule
+from baja_studio.modules.gateway.ports import PortHolder
 from baja_studio.modules.gateway.probes import CertificateInfo
 from tests.conftest import (
     AppFactory,
@@ -75,6 +76,7 @@ def test_on_start_the_config_is_applied_and_caddy_is_watched(
         "version": FAKE_CADDY_VERSION,
         "admin_api": "127.0.0.1:2019",
         "message": "",
+        "port_conflicts": [],
     }
     assert state(services, "config.loaded") is True
     assert state(services, "studio.reachable") is True
@@ -131,6 +133,61 @@ def test_caddy_going_away_shows_the_gateway_offline_and_back(
         workers=module_worker_threads("gateway"),
     )
     assert state(services, "caddy.running") is True
+
+
+def test_a_program_holding_port_80_is_named_with_the_fix(
+    services: StudioServices, gateway_fakes: GatewayFakes, fake_clock: FakeClock
+) -> None:
+    # IIS starts with Windows, takes port 80 through HTTP.sys, and Caddy exits.
+    gateway_fakes.port_holders = [PortHolder(80, 4, "System")]
+    gateway_fakes.caddy.stop()
+    poll(fake_clock)
+
+    assert health(services) == (
+        HealthState.OFFLINE,
+        "port 80 in use by Windows HTTP.sys (usually IIS): Caddy cannot start",
+    )
+    [conflict] = state(services, "caddy.port_conflicts")
+    assert conflict["holder"] == "Windows HTTP.sys (usually IIS)"
+    assert '"World Wide Web Publishing Service"' in conflict["fix"]
+    assert gateway_fakes.ports_asked[-1] == (80,)
+
+    # Someone stops IIS and starts the gateway: the conflict is gone from the page.
+    gateway_fakes.port_holders = []
+    gateway_fakes.caddy.start()
+    step_fake_time_until(
+        fake_clock,
+        lambda: health(services) == (HealthState.OK, ""),
+        within_seconds=2.0,
+        workers=module_worker_threads("gateway"),
+    )
+    assert state(services, "caddy.port_conflicts") == []
+
+
+def test_with_tls_on_port_443_is_checked_too(
+    services: StudioServices, gateway_fakes: GatewayFakes, fake_clock: FakeClock
+) -> None:
+    services.settings.update("gateway", TLS_ON)
+    eventually(lambda: gateway_fakes.services.restarts == [GATEWAY_SERVICE])
+    eventually(lambda: state(services, "tls.issued") is False)
+    gateway_fakes.port_holders = [PortHolder(443, 5120, "vmware-hostd.exe", ("VMwareHostd",))]
+    gateway_fakes.caddy.stop()
+    poll(fake_clock)
+
+    assert gateway_fakes.ports_asked[-1] == (80, 443)
+    assert health(services)[1] == (
+        "port 443 in use by vmware-hostd.exe (service VMwareHostd): Caddy cannot start"
+    )
+
+
+def test_caddy_down_with_its_ports_free_asks_about_the_service(
+    services: StudioServices, gateway_fakes: GatewayFakes, fake_clock: FakeClock
+) -> None:
+    gateway_fakes.caddy.stop()
+    poll(fake_clock)
+
+    assert "is the BajaStudioGateway service running?" in health(services)[1]
+    assert state(services, "caddy.port_conflicts") == []
 
 
 def test_turning_tls_on_restarts_caddy_with_the_token_and_checks_the_certificate(

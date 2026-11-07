@@ -4,13 +4,14 @@
 - `FakeServiceControl`: NSSM, remembering every environment set and restart;
 - `FakeUpstreams`: the apps behind the gateway, answering or not;
 - `FakeCertificates`: what a TLS handshake with Caddy would find;
-- a resolver and an address list for `test_dns`.
+- a resolver and an address list for `test_dns`;
+- `port_holders`: the programs `netstat` would find on Caddy's ports.
 
 `gateway_fakes` is a fixture; `make_app(None)` (tests/conftest.py) uses it, so
 the real module list never touches the network either.
 """
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 
 import httpx2
@@ -23,6 +24,7 @@ from baja_studio.core.system_services import (
 )
 from baja_studio.fakes.fake_caddy import FakeCaddy
 from baja_studio.modules.gateway import GatewaySystem
+from baja_studio.modules.gateway.ports import PortHolder
 from baja_studio.modules.gateway.probes import CertificateInfo, TlsProbeError
 
 STUDIO_UPSTREAM = "127.0.0.1:8888"
@@ -93,6 +95,12 @@ class GatewayFakes:
     certificates: FakeCertificates = field(default_factory=FakeCertificates)
     dns_records: dict[str, list[str]] = field(default_factory=dict)
     lan_addresses: list[str] = field(default_factory=lambda: [LAN_ADDRESS])
+    port_holders: list[PortHolder] = field(default_factory=list)
+    ports_asked: list[tuple[int, ...]] = field(default_factory=list)
+
+    def find_port_holders(self, ports: Iterable[int]) -> list[PortHolder]:
+        self.ports_asked.append(tuple(ports))
+        return [holder for holder in self.port_holders if holder.port in self.ports_asked[-1]]
 
     def system(self) -> GatewaySystem:
         return GatewaySystem(
@@ -102,6 +110,7 @@ class GatewayFakes:
             resolve=lambda hostname: list(self.dns_records.get(hostname, [])),
             list_addresses=lambda: list(self.lan_addresses),
             caddy_version=lambda: FAKE_CADDY_VERSION,
+            port_holders=self.find_port_holders,
         )
 
 

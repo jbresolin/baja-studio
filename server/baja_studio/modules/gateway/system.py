@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 import httpx2
 
 from baja_studio.core.system_services import InstallLayout, run_hidden
+from baja_studio.modules.gateway.ports import PortHolderFinder, installed_port_holders
 from baja_studio.modules.gateway.probes import (
     AddressLister,
     Resolver,
@@ -33,6 +34,7 @@ class GatewaySystem:
     resolve: Resolver = resolve_ipv4
     list_addresses: AddressLister = local_ipv4_addresses
     caddy_version: Callable[[], str | None] = field(default=lambda: None)
+    port_holders: PortHolderFinder = installed_port_holders
 
 
 def installed_caddy_version(layout: InstallLayout | None) -> Callable[[], str | None]:

@@ -22,7 +22,14 @@ interface ProxiedAppState {
   error: string;
 }
 
+interface PortConflict {
+  port: number;
+  holder: string;
+  fix: string;
+}
+
 interface GatewayState {
+  caddy?: { port_conflicts?: PortConflict[] };
   tls: {
     mode: "dns01" | "off";
     hostname: string;
@@ -51,6 +58,20 @@ export function Home() {
 
   return (
     <div className="home">
+      {/* Caddy cannot start while another program holds its port: say who, and what to do. */}
+      {gateway?.caddy?.port_conflicts?.map((conflict) => (
+        <div
+          className="notice notice-error"
+          key={`${conflict.port}-${conflict.holder}`}
+          data-testid="gateway-port-conflict"
+        >
+          <strong>
+            Gateway: port {conflict.port} in use by {conflict.holder}.
+          </strong>{" "}
+          {conflict.fix}
+        </div>
+      ))}
+
       <div className="card-grid">
         {modules.map(([name, entry]) => (
           <Link to={`/modules/${name}`} className="card" key={name} data-testid={`card-${name}`}>

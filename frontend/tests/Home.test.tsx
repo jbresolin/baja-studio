@@ -179,6 +179,45 @@ describe("Home page, gateway and diagnostics", () => {
     );
   });
 
+  it("names the program holding the gateway's port, with the fix", () => {
+    const server = showHome();
+
+    act(() =>
+      server.receive(
+        snapshot({
+          caddy: {
+            port_conflicts: [
+              {
+                port: 80,
+                holder: "Windows HTTP.sys (usually IIS)",
+                fix: 'Stop and disable "World Wide Web Publishing Service" (IIS) in the Services app.',
+              },
+            ],
+          },
+          tls: TLS_OFF,
+          apps: [],
+          public_base: null,
+        }),
+      ),
+    );
+
+    expect(screen.getByTestId("gateway-port-conflict")).toHaveTextContent(
+      'Gateway: port 80 in use by Windows HTTP.sys (usually IIS). Stop and disable "World Wide Web Publishing Service" (IIS) in the Services app.',
+    );
+  });
+
+  it("shows no port notice while the gateway runs", () => {
+    const server = showHome();
+
+    act(() =>
+      server.receive(
+        snapshot({ caddy: { port_conflicts: [] }, tls: TLS_OFF, apps: [], public_base: null }),
+      ),
+    );
+
+    expect(screen.queryByTestId("gateway-port-conflict")).not.toBeInTheDocument();
+  });
+
   it("builds a diagnostics bundle and offers it for download", async () => {
     const server = showHome();
     act(() => server.receive(snapshot()));

@@ -117,8 +117,25 @@ days; Caddy renews it whenever the PC is online).
   service's own log), `service-*.log` and `caddy-*.log` (what each service
   printed, rotated at 5 MB).
 - The services can be restarted from Windows' *Services* app like any other.
-- **Gateway offline, `caddy-stderr.log` says "listening on :80 … forbidden"**
-  (or "address already in use"): another program holds port 80, usually IIS
-  (*World Wide Web Publishing Service*) or Skype/Teams-era software. Stop and
-  disable it (Services app), then start *Baja Studio gateway*. If NSSM shows
-  the gateway as *Paused*, it gave up after quick failures: *Start* it again.
+
+### Port 80 or 443 in use
+
+Caddy cannot start while another program listens on port 80 (or 443 with
+HTTPS on). The home page then shows a red line at the top, e.g. **Gateway:
+port 80 in use by Windows HTTP.sys (usually IIS)**, with the fix for that
+program; the gateway card says the same. (`caddy-stderr.log` has "listening
+on :80 … forbidden" or "address already in use".)
+
+- **Windows HTTP.sys (usually IIS)**: in the *Services* app, stop *World Wide
+  Web Publishing Service* and set it to *Disabled*. If it is not there, another
+  program registered the port with Windows: in an administrator terminal,
+  `netsh http show servicestate view=requestq` lists each one with its process
+  ID; find that ID in Task Manager (*Details*).
+- **A service** (the line names it): stop it and set it to *Disabled* in the
+  *Services* app.
+- **A program** (Skype, another web server or proxy, a VPN client): close it,
+  or change the port in its settings, and stop it from starting with Windows.
+
+Then start *Baja Studio gateway* in the *Services* app. If it shows as
+*Paused*, NSSM is waiting between retries after quick failures; *Start* it
+anyway. The red line goes away within ten seconds of Caddy starting.

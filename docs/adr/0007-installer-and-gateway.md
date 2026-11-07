@@ -92,24 +92,33 @@ runbook only). Brief: Plane page "09 — WP7 brief". Goals §7.4 and §7.6.
 20. Health: `offline` when the admin API does not answer, `degraded` when
     Caddy refused the config, an app or the studio does not answer, or there
     is no valid certificate (with the reason).
+21. **A program holding port 80/443 is named on the home page.** Caddy exits
+    at once when it cannot bind, so it cannot report this itself. While the
+    admin API is silent, the module asks Windows who listens on 80 (and 443
+    with TLS on): `netstat -ano`, then `tasklist /SVC` per process.
+    `modules/gateway/ports.py` reads only columns, never words, because
+    Windows translates them. Caddy itself is skipped, and pid 4 is HTTP.sys
+    (IIS). The result goes in `caddy.port_conflicts`, each entry with its fix,
+    and becomes the offline reason. It is not read from `caddy-stderr.log`,
+    because `netstat` also names the culprit.
 
 ### Diagnostics
 
-21. Besides masking settings, **every secret value is scrubbed from every
+22. Besides masking settings, **every secret value is scrubbed from every
     file in the bundle** (a library logging a token by mistake). Values under
     four characters are left alone.
-22. Bundles go to `<data>\diagnostics` (five kept) and are served only by
+23. Bundles go to `<data>\diagnostics` (five kept) and are served only by
     exact name (`/api/home/diagnostics/BajaStudio-diag-*.zip`). The button
     shows a download link once the bundle is built.
 
 ### Release pipeline
 
-23. `release.yml` also runs on pull requests that touch `installer/` or
+24. `release.yml` also runs on pull requests that touch `installer/` or
     itself, building and smoke-testing without publishing: the installer is
     only tested by that smoke test, so a change to it should run it before
     merge. `ci.yml`'s `dist` job (no Caddy, no installer) covers
     `server/pyproject.toml` changes as the brief asks.
-24. The smoke test cannot require `/api/health` `status: ok`: on a runner,
+25. The smoke test cannot require `/api/health` `status: ok`: on a runner,
     playout and audio are `offline: not configured`. It requires this version,
     `home` and `gateway` ok, both services running, the studio reachable
     through Caddy on port 80, a bundle with the Caddy version and no database,
@@ -117,10 +126,10 @@ runbook only). Brief: Plane page "09 — WP7 brief". Goals §7.4 and §7.6.
 
 ### Frontend
 
-25. `SchemaForm` draws a nested model (the gateway's `tls`) as a group of
+26. `SchemaForm` draws a nested model (the gateway's `tls`) as a group of
     real fields (dropdown, password), for every module. Lists of models
     (proxied apps) are still a JSON box.
-26. Proxied apps link through the gateway: `https://<hostname><prefix>/` with
+27. Proxied apps link through the gateway: `https://<hostname><prefix>/` with
     TLS on, else `http://<this page's host><prefix>/` (port 80).
 
 ## Left open
@@ -133,9 +142,10 @@ runbook only). Brief: Plane page "09 — WP7 brief". Goals §7.4 and §7.6.
   fall back to the module list only.
 - **Port 80 on the streaming PC.** GitHub's Windows runners run IIS (W3SVC),
   which holds port 80; Caddy then fails with "bind: forbidden" and NSSM
-  pauses the gateway. The smoke test stops IIS first. The installer does not
-  check or free port 80 on a real PC; docs/install.md says what to do. Worth
-  a check at the bench.
+  pauses the gateway. The smoke test stops IIS first. On a real PC the home
+  page names whoever holds the port, with the fix (decision 21). The installer
+  still neither checks nor frees it. At the bench, start IIS (or anything else
+  on :80) and check the home page names it.
 - Code signing (SmartScreen click-through until then), auto-update.
 - A dedicated gateway page with a table editor for proxied apps; for now the
   generic module page (status, Apply, Test DNS, Test TLS) and Settings.
