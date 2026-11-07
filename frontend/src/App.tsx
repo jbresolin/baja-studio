@@ -17,6 +17,10 @@ export function App() {
           </NavLink>
           <NavLink to="/cameras/config">Camera setup</NavLink>
           <NavLink to="/playout">Playout</NavLink>
+          <NavLink to="/audio" end>
+            Audio
+          </NavLink>
+          <NavLink to="/audio/config">Audio setup</NavLink>
           <NavLink to="/settings">Settings</NavLink>
           <NavLink to="/logs">Logs</NavLink>
         </nav>

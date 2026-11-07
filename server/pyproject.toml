@@ -17,6 +17,8 @@ dependencies = [
     "httpx2==2.16.0",
     # The RS485 joystick controller (Pelco-D), camera control (WP2).
     "pyserial==3.5",
+    # The M-VAVE SMC-Mixer, audio (WP4); only ever imported inside the MIDI child process.
+    "python-rtmidi==1.5.8",
 ]
 
 [project.optional-dependencies]
@@ -52,3 +54,8 @@ select = ["E", "F", "W", "I", "B", "UP", "N", "SIM", "RUF"]
 strict = true
 python_version = "3.12"
 files = ["baja_studio", "tests"]
+
+[[tool.mypy.overrides]]
+# python-rtmidi ships no type information; midi_rtmidi.py keeps its objects as `Any`.
+module = ["rtmidi"]
+ignore_missing_imports = true
