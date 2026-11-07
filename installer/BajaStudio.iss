@@ -259,8 +259,8 @@ begin
   NssmStep('start ' + StudioService);
   NssmStep('start ' + GatewayService);
   if FailedSteps <> '' then
-    SuppressibleMsgBox('Baja Studio is installed, but these steps failed:' + FailedSteps +
-      #13#10#13#10 + 'The setup log (in %TEMP%) has the details.', mbError, MB_OK, IDOK);
+    SuppressibleMsgBox('Baja Studio is installed, but these steps failed:' + FailedSteps + #13#10#13#10 +
+      'The setup log (in %TEMP%) has the details.', mbError, MB_OK, IDOK);
 end;
 
 { --- Uninstall -------------------------------------------------------------------- }
