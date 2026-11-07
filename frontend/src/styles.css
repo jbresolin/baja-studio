@@ -1155,3 +1155,20 @@ label.inline {
   padding: 0.5rem 0.75rem;
   border-radius: 6px;
 }
+
+/* Home: the version and the diagnostics button under the cards. */
+.home h2 {
+  margin-top: 1.2rem;
+}
+
+.home-footer {
+  margin-top: 1.2rem;
+}
+
+/* A nested settings model (the gateway's TLS) drawn as a group of fields. */
+.nested-fields {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.6rem 0.8rem;
+  margin: 0;
+}

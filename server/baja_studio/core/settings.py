@@ -115,6 +115,18 @@ def mask_secrets(model_class: type[BaseModel], values: dict[str, Any]) -> dict[s
     return masked
 
 
+def secret_values(model_class: type[BaseModel], values: dict[str, Any]) -> list[str]:
+    """Every non-empty secret in dumped `values`, at any depth (the diagnostics scrub them)."""
+    found = [str(values[name]) for name in secret_field_names(model_class) if values.get(name)]
+    for name, (inner_class, is_list) in nested_model_fields(model_class).items():
+        value = values.get(name)
+        items = value if is_list and isinstance(value, list) else [value]
+        for item in items:
+            if isinstance(item, dict):
+                found.extend(secret_values(inner_class, item))
+    return found
+
+
 def restore_masked_secrets(
     model_class: type[BaseModel], patch: dict[str, Any], current: dict[str, Any]
 ) -> dict[str, Any]:
@@ -224,6 +236,15 @@ class SettingsStore:
         """Settings as a plain dict with secret values (at any depth) masked, for the API."""
         record = self.record(section)
         return mask_secrets(type(record.values), record.values.model_dump(mode="json"))
+
+    def all_secret_values(self) -> list[str]:
+        """The value of every secret in every section, unmasked; only for scrubbing them."""
+        with self._lock:
+            records = list(self._records.values())
+        found: list[str] = []
+        for record in records:
+            found.extend(secret_values(type(record.values), record.values.model_dump(mode="json")))
+        return found
 
     def update(
         self, section: str, patch: dict[str, Any], expected_version: int | None = None

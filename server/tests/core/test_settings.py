@@ -260,3 +260,10 @@ def test_asking_for_an_unregistered_section_raises(store: SettingsStore) -> None
         store.get("does-not-exist")
     with pytest.raises(UnknownSettingsSectionError):
         store.update("does-not-exist", {})
+
+
+def test_every_secret_value_can_be_listed_for_scrubbing(fleet_store: SettingsStore) -> None:
+    # The diagnostics bundle replaces these wherever they appear, even in logs.
+    fleet_store.update("camera", {"password": "hunter2"})
+
+    assert sorted(fleet_store.all_secret_values()) == ["hunter2", "token-a", "token-b"]

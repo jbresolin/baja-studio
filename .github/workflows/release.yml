@@ -1,0 +1,96 @@
+name: Release
+
+# A tag v* builds the installer, installs it on the runner (smoke test) and
+# attaches it to a GitHub Release. Pull requests that change the installer run
+# the same build and smoke test, without releasing anything.
+on:
+  push:
+    tags: ["v*"]
+  pull_request:
+    paths:
+      - "installer/**"
+      - ".github/workflows/release.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  installer:
+    name: Build, install and test the installer
+    runs-on: windows-latest
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: pwsh
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - name: Read the pinned Go version
+        id: pins
+        run: |
+          $pin = Get-Content installer/caddy/pin.json -Raw | ConvertFrom-Json
+          "go=$($pin.go_version)" >> $env:GITHUB_OUTPUT
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ steps.pins.outputs.go }}
+          cache: false
+
+      - name: Stamp the version
+        working-directory: server
+        run: |
+          if ($env:GITHUB_REF_TYPE -eq 'tag') {
+            $version = python -m baja_studio.release_tools stamp-version --tag $env:GITHUB_REF_NAME
+          } else {
+            $version = python -m baja_studio.release_tools stamp-version --dev $env:GITHUB_RUN_NUMBER
+          }
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+          "VERSION=$version" >> $env:GITHUB_ENV
+
+      - name: Assemble dist\app
+        run: ./installer/build.ps1
+
+      - name: Build the installer
+        run: |
+          $iscc = Get-Command iscc -ErrorAction SilentlyContinue
+          if (-not $iscc) {
+            $candidate = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+            if (-not (Test-Path $candidate)) { choco install innosetup --no-progress -y }
+            $iscc = $candidate
+          }
+          & $iscc "/DAppVersion=$env:VERSION" installer/BajaStudio.iss
+          if ($LASTEXITCODE -ne 0) { exit 1 }
+
+      - name: Smoke test (install, check, uninstall)
+        run: ./installer/smoke-test.ps1 -Installer "dist/BajaStudio-Setup-$env:VERSION.exe" -Version $env:VERSION -OutputDirectory smoke
+
+      - name: Keep the installer and the smoke test's logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: baja-studio-${{ env.VERSION }}
+          path: |
+            dist/BajaStudio-Setup-*.exe
+            dist/app/wheelhouse-manifest.json
+            smoke/
+          if-no-files-found: warn
+
+      - name: Publish the GitHub Release
+        if: github.ref_type == 'tag'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $assets = @("dist/BajaStudio-Setup-$env:VERSION.exe") + (Get-ChildItem smoke -Filter 'BajaStudio-diag-*.zip').FullName
+          $options = @('--title', "Baja Studio $env:VERSION", '--generate-notes')
+          if ($env:VERSION -match '(a|b|rc)\d+$') { $options += '--prerelease' }
+          gh release create $env:GITHUB_REF_NAME @assets @options
+          if ($LASTEXITCODE -ne 0) { exit 1 }

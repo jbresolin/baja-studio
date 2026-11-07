@@ -189,3 +189,65 @@ describe("Settings page", () => {
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
   });
 });
+
+// A section with a nested model, shaped like the gateway's `tls`.
+const NESTED_SCHEMA = {
+  title: "GatewaySettings",
+  properties: {
+    hostname: { type: "string", title: "Hostname" },
+    tls: { $ref: "#/$defs/GatewayTls" },
+  },
+  $defs: {
+    GatewayTls: {
+      type: "object",
+      title: "GatewayTls",
+      properties: {
+        mode: { $ref: "#/$defs/TlsMode", default: "off" },
+        cloudflare_api_token: { type: "string", title: "Cloudflare Api Token", secret: true },
+      },
+    },
+    TlsMode: { enum: ["dns01", "off"], title: "TlsMode", type: "string" },
+  },
+};
+
+describe("Settings page, nested models", () => {
+  beforeEach(() => vi.unstubAllGlobals());
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("draws a nested model's fields and saves the whole model with one field changed", async () => {
+    const requests = fakeServer((method, path, body) => {
+      if (path === "/api/settings") {
+        return { status: 200, body: [{ section: "heartbeat", title: "Gateway" }] };
+      }
+      if (path.endsWith("/schema")) return { status: 200, body: NESTED_SCHEMA };
+      const values =
+        method === "PUT"
+          ? (body as { values: Record<string, unknown> }).values
+          : {
+              hostname: "live.example.net",
+              tls: { mode: "off", cloudflare_api_token: "********" },
+            };
+      return {
+        status: 200,
+        body: { section: "heartbeat", version: 1, updated_at: "now", values },
+      };
+    });
+    const user = userEvent.setup();
+    showSettingsPage();
+
+    // The nested fields are real inputs, not a JSON text box: a dropdown and a password.
+    const mode = await screen.findByLabelText("TlsMode");
+    expect(mode).toHaveValue("off");
+    expect(screen.getByLabelText("Cloudflare Api Token")).toHaveAttribute("type", "password");
+
+    await user.selectOptions(mode, "dns01");
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    // The masked token goes back as the mask, which the server reads as "unchanged".
+    await screen.findByText("Saved.");
+    const save = requests.find((request) => request.method === "PUT");
+    expect(save?.body).toMatchObject({
+      values: { tls: { mode: "dns01", cloudflare_api_token: "********" } },
+    });
+  });
+});

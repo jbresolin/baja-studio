@@ -1,0 +1,21 @@
+# Written by Baja Studio from the gateway settings. Edits here are overwritten.
+{
+	admin localhost:2020
+	persist_config off
+	storage file_system "/data/BajaStudio/caddy/data"
+}
+
+studio.example.net {
+	tls {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+	}
+	handle {
+		reverse_proxy 127.0.0.1:9999 {
+			stream_close_delay 5m
+		}
+	}
+}
+
+:80 {
+	redir https://studio.example.net{uri} 308
+}

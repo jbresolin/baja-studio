@@ -1,0 +1,21 @@
+# Written by Baja Studio from the gateway settings. Edits here are overwritten.
+{
+	admin 127.0.0.1:2019
+	persist_config off
+	storage file_system "/data/BajaStudio/caddy/data"
+}
+
+live.bajasaebrasil.net {
+	tls {
+		dns cloudflare {env.CLOUDFLARE_API_TOKEN}
+	}
+	handle {
+		reverse_proxy 127.0.0.1:8888 {
+			stream_close_delay 5m
+		}
+	}
+}
+
+:80 {
+	redir https://live.bajasaebrasil.net{uri} 308
+}

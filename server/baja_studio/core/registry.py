@@ -12,13 +12,14 @@ from typing import Any
 
 from pydantic import BaseModel
 
+from baja_studio import __version__
 from baja_studio.core.clock import Clock
 from baja_studio.core.commandlog import CommandLog
 from baja_studio.core.database import Database
 from baja_studio.core.module import CommandError, Module, ModuleContext, ModuleLogger
 from baja_studio.core.settings import ModuleSettings, SettingsStore
 from baja_studio.core.state import StateStore
-from baja_studio.core.supervisor import Supervisor
+from baja_studio.core.supervisor import HealthState, Supervisor
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +79,29 @@ class ModuleRegistry:
         """True if the module is started (not disabled or stopped)."""
         with self._lifecycle_lock:
             return name in self._running
+
+    def health_report(self) -> dict[str, Any]:
+        """Each module's health and the service version, as `/api/health` returns them.
+
+        `status` is "ok" only if no running module is degraded or offline.
+        """
+        modules = []
+        for module in self._modules.values():
+            health = self._supervisor.module_health(module.name)
+            modules.append(
+                {
+                    "name": module.name,
+                    "title": module.title,
+                    "state": health.state.value,
+                    "message": health.message,
+                }
+            )
+        problems = [m for m in modules if m["state"] in (HealthState.DEGRADED, HealthState.OFFLINE)]
+        return {
+            "status": "ok" if not problems else "degraded",
+            "version": __version__,
+            "modules": modules,
+        }
 
     def start_all(self) -> None:
         """Start every module whose `enabled` setting is on; called at startup."""

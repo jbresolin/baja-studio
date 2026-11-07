@@ -4,7 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "baja_studio"
-version = "0.1.0"
+# From baja_studio/__init__.py, where the release build stamps the git tag.
+dynamic = ["version"]
 description = "Baja Studio: one service for the studio tools (camera control, playout, audio)"
 requires-python = ">=3.12,<3.13"
 dependencies = [
@@ -31,6 +32,9 @@ dev = [
 
 [project.scripts]
 baja-studio = "baja_studio.__main__:main"
+
+[tool.setuptools.dynamic]
+version = { attr = "baja_studio.__version__" }
 
 [tool.setuptools.packages.find]
 include = ["baja_studio*"]
