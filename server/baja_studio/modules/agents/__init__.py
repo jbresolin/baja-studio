@@ -4,6 +4,9 @@ Settings hold the list of agents (edited on the Agents page with the `add`,
 `update` and `remove` commands), the network the Scan button searches, and
 the direct-fallback delay that camera control (WP2) will use.
 
+Readiness checks (`readiness.py`): each enabled agent linked, compatible,
+our token accepted.
+
 One worker runs an event loop with an `AgentRegistry` on it: a live link to
 every enabled agent, published to `state.agents.agents`. Its health is the
 summary of all agents, so the home page card says when one is away.
@@ -35,8 +38,10 @@ from baja_studio.agents.scan import (
 from baja_studio.agents.transport import AgentTransport, NetworkTransport
 from baja_studio.cameras.drivers.agent_gateway import AgentCall, AgentLinkView
 from baja_studio.core.module import CommandError, Module, ModuleContext
+from baja_studio.core.readiness import ReadinessCheck
 from baja_studio.core.settings import ModuleSettings
 from baja_studio.core.supervisor import WorkerContext, WorkerSpec
+from baja_studio.modules.agents.readiness import agent_checks
 
 LINKS_WORKER = "links"
 SCAN_TIMEOUT = httpx2.Timeout(PROBE_TIMEOUT_SECONDS)
@@ -118,6 +123,11 @@ class AgentsModule(Module):
     def workers(self) -> list[WorkerSpec]:
         """One worker: the event loop holding every agent link."""
         return [WorkerSpec(LINKS_WORKER, self._run_links)]
+
+    def readiness_checks(self) -> list[ReadinessCheck]:
+        """Each enabled agent, from its live link (see `readiness.py`)."""
+        agents_state = self.context.state.get(self.name, "agents") or {}
+        return agent_checks(self._settings().agents, agents_state)
 
     # --- the links worker ----------------------------------------------------------
 

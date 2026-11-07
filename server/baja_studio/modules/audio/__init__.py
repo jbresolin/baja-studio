@@ -7,6 +7,7 @@ one `AudioController`, so they are peers.
 
 Health: `offline` while the XR18 is not answering (nothing works without
 it); `degraded` while only the M-VAVE is missing; `ok` otherwise.
+Readiness checks: `readiness.py`.
 """
 
 from collections.abc import Callable
@@ -21,6 +22,7 @@ from baja_studio.audio.config import AudioSettings
 from baja_studio.audio.stores import LinkStore, StoredLevels, create_audio_tables
 from baja_studio.core.childproc import EventCallback
 from baja_studio.core.module import CommandError, Module, ModuleContext
+from baja_studio.core.readiness import ReadinessCheck
 from baja_studio.core.supervisor import Health, HealthState, WorkerSpec
 from baja_studio.modules.audio.commands import DRAG_COMMANDS, run_command
 from baja_studio.modules.audio.controller import AudioController
@@ -28,6 +30,7 @@ from baja_studio.modules.audio.d200_routes import d200_routes
 from baja_studio.modules.audio.midi_worker import MidiChildHost, MidiWorker
 from baja_studio.modules.audio.mixer_worker import MixerWorker
 from baja_studio.modules.audio.publisher import AudioPublisher, initial_audio_state
+from baja_studio.modules.audio.readiness import audio_checks
 from baja_studio.modules.audio.surface import MvaveSurface
 
 MIDI_CHILD_MODULE = "baja_studio.childprocs.midi_child"
@@ -179,6 +182,15 @@ class AudioModule(Module):
     ) -> bool:
         """Everything but a dragged fader's in-between values."""
         return failed or not (command in DRAG_COMMANDS and args.get("dragging") is True)
+
+    def readiness_checks(self) -> list[ReadinessCheck]:
+        """XR18, M-VAVE, the D200 endpoint and the link matrix (see `readiness.py`)."""
+        return audio_checks(
+            self.settings(),
+            self.context.state.get(self.name) or {},
+            self.context.state,
+            self.controller.links.matrix(),
+        )
 
     def root_routes(self) -> APIRouter:
         """The D200 contract (`/action/...`)."""

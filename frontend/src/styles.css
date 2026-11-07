@@ -1172,3 +1172,126 @@ label.inline {
   padding: 0.6rem 0.8rem;
   margin: 0;
 }
+
+/* --- Readiness (/readiness), its banner on the home page, its toast --- */
+
+.readiness-banner {
+  margin: 0.6rem 0;
+  padding: 0.6rem 0.8rem;
+  border-radius: 4px;
+  font-size: 1.3rem;
+  font-weight: 700;
+  color: #0d1117;
+}
+
+.readiness-banner a {
+  color: inherit;
+}
+
+.readiness-ready {
+  background: var(--ok);
+}
+
+.readiness-not-ready {
+  background: var(--offline);
+}
+
+.readiness-progress {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.8rem;
+  padding: 0;
+  list-style: none;
+  color: var(--text-muted);
+}
+
+.readiness-module h2 {
+  font-size: 1rem;
+  margin: 1rem 0 0.3rem;
+}
+
+.readiness-checks {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.readiness-check {
+  display: flex;
+  gap: 0.6rem;
+  align-items: flex-start;
+  padding: 0.45rem 0.2rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.readiness-dot {
+  flex: none;
+  width: 0.9rem;
+  height: 0.9rem;
+  margin-top: 0.2rem;
+  border-radius: 50%;
+}
+
+.readiness-dot-ok {
+  background: var(--ok);
+}
+
+.readiness-dot-warn {
+  background: var(--degraded);
+}
+
+.readiness-dot-fail {
+  background: var(--offline);
+}
+
+.readiness-label {
+  font-weight: 600;
+}
+
+.readiness-detail {
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.readiness-fix {
+  margin-top: 0.2rem;
+}
+
+.readiness-toast ul {
+  margin: 0.3rem 0;
+  padding-left: 1.1rem;
+}
+
+/* --- Settings export / import (/settings/transfer) --- */
+
+.drop-zone {
+  margin: 0.6rem 0;
+  padding: 1.2rem;
+  border: 2px dashed var(--border);
+  border-radius: 6px;
+  text-align: center;
+  color: var(--text-muted);
+}
+
+.drop-zone-active {
+  border-color: var(--accent);
+  color: var(--text);
+}
+
+.import-section {
+  margin: 0.4rem 0;
+  padding: 0.4rem 0.6rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+}
+
+.import-section summary {
+  cursor: pointer;
+}
+
+.import-changes {
+  margin: 0.3rem 0;
+  padding-left: 1.1rem;
+  overflow-wrap: anywhere;
+}

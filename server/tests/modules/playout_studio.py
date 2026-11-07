@@ -6,7 +6,7 @@ clock. Nothing real is opened: OBS is a `FakeObs` reached through the
 in-process network, the orchestrator is a `FakeOrchestrator` behind an httpx2
 mock transport, ffprobe/ffmpeg are a `FakeProber`, and the on-air webhook
 lands in a list. Clips are real (tiny) files in a temporary folder, because
-the scanner walks real folders.
+the scanner walks real folders. Free disk space comes from `system_probes`.
 """
 
 import json
@@ -34,6 +34,7 @@ from tests.conftest import (
     step_fake_time,
     step_fake_time_until,
 )
+from tests.core.fake_system_probes import FakeSystemProbes
 
 OBS_HOST = "obs.test"
 OBS_PORT = 4455
@@ -152,7 +153,12 @@ class PlayoutStudio:
 
 
 @pytest.fixture
-def playout(make_app: AppFactory, fake_clock: FakeClock, tmp_path: Path) -> Iterator[PlayoutStudio]:
+def playout(
+    make_app: AppFactory,
+    fake_clock: FakeClock,
+    tmp_path: Path,
+    system_probes: FakeSystemProbes,
+) -> Iterator[PlayoutStudio]:
     network = InProcessObsNetwork()
     obs = FakeObs.with_playout_scenes(fake_clock, duration_for=lambda _file: CLIP_SECONDS)
     network.plug(OBS_HOST, OBS_PORT, obs)
@@ -179,6 +185,7 @@ def playout(make_app: AppFactory, fake_clock: FakeClock, tmp_path: Path) -> Iter
         orchestrator_transport=httpx2.MockTransport(record_and_forward),
         prober_factory=prober_factory,
         hook_transport=httpx2.MockTransport(catch_hook),
+        free_disk_bytes=system_probes.free_disk_bytes,
     )
     clips_folder = tmp_path / "clips"
     clips_folder.mkdir()

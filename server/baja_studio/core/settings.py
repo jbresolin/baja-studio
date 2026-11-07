@@ -11,7 +11,7 @@ import threading
 import types
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Union, get_args, get_origin
+from typing import Any, ClassVar, Union, get_args, get_origin
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -27,6 +27,10 @@ class ModuleSettings(BaseModel):
     """Base class for every module's settings model; adds the `enabled` switch."""
 
     model_config = ConfigDict(extra="forbid", validate_assignment=True)
+
+    # Raise when a change makes older exported settings files mean something
+    # different (a renamed or re-interpreted key); an import then flags it.
+    settings_version: ClassVar[int] = 1
 
     enabled: bool = Field(
         default=True, description="When off, the module is stopped and shows as 'stopped'."
@@ -65,6 +69,12 @@ SettingsCallback = Callable[[BaseModel], None]
 
 # Items of a list of models are matched by this field when restoring masked secrets.
 LIST_ITEM_KEY = "id"
+
+
+def settings_version_of(model_class: type[BaseModel]) -> int:
+    """A settings model's `settings_version` (1 for models that do not say)."""
+    version = getattr(model_class, "settings_version", 1)
+    return version if isinstance(version, int) else 1
 
 
 def secret_field_names(model_class: type[BaseModel]) -> set[str]:
@@ -226,11 +236,14 @@ class SettingsStore:
 
     def schema(self, section: str) -> dict[str, Any]:
         """JSON Schema of the section's model, used to render the Settings form."""
+        return self.model_class(section).model_json_schema()
+
+    def model_class(self, section: str) -> type[BaseModel]:
+        """The model a section is validated with (settings export and import use it)."""
         with self._lock:
             if section not in self._models:
                 raise UnknownSettingsSectionError(section)
-            model_class = self._models[section]
-        return model_class.model_json_schema()
+            return self._models[section]
 
     def masked_values(self, section: str) -> dict[str, Any]:
         """Settings as a plain dict with secret values (at any depth) masked, for the API."""

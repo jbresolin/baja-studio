@@ -10,7 +10,7 @@ every command.
 
 State: `state.cameras.cameras.<id>` (the contract's `CameraState` fields plus
 label, owner, route, capabilities, control) and `state.cameras.controllers.<id>`.
-Commands: see `commands.py`.
+Commands: see `commands.py`. Readiness checks: `cameras/readiness.py`.
 """
 
 import threading
@@ -24,8 +24,10 @@ from baja_studio.cameras.drivers.agent_gateway import AgentGateway
 from baja_studio.cameras.drivers.visca_ip import DatagramOpener, UdpTransport
 from baja_studio.cameras.inputs.pelco_d_worker import SerialOpener, open_serial_port
 from baja_studio.cameras.inputs.serial_ports import SerialPortLister, list_serial_ports
+from baja_studio.cameras.readiness import camera_checks
 from baja_studio.cameras.registry import CameraRegistry
 from baja_studio.core.module import Module, ModuleContext
+from baja_studio.core.readiness import ReadinessCheck
 from baja_studio.core.supervisor import WorkerContext, WorkerSpec
 from baja_studio.modules.cameras.commands import CameraCommands
 
@@ -82,6 +84,11 @@ class CamerasModule(Module):
     def workers(self) -> list[WorkerSpec]:
         """The motion loop; it also connects the configured devices when it starts."""
         return [WorkerSpec(health.MOTION_WORKER, self._run_motion)]
+
+    def readiness_checks(self) -> list[ReadinessCheck]:
+        """Every enabled camera and controller, from what their workers publish."""
+        state = self.context.state.get(self.name) or {}
+        return camera_checks(self._settings(), state, self.context.clock)
 
     # --- the motion worker ------------------------------------------------------------
 

@@ -1,8 +1,9 @@
 import { NavLink, Outlet } from "react-router-dom";
 
 import { ConnectionIndicator } from "./components/ConnectionIndicator";
+import { ReadinessToast } from "./components/ReadinessToast";
 
-/** The frame around every page: navigation bar and connection status. */
+/** The frame around every page: navigation bar, connection status, readiness alerts. */
 export function App() {
   return (
     <div className="app">
@@ -21,6 +22,7 @@ export function App() {
             Audio
           </NavLink>
           <NavLink to="/audio/config">Audio setup</NavLink>
+          <NavLink to="/readiness">Readiness</NavLink>
           <NavLink to="/settings">Settings</NavLink>
           <NavLink to="/logs">Logs</NavLink>
         </nav>
@@ -29,6 +31,7 @@ export function App() {
       <main>
         <Outlet />
       </main>
+      <ReadinessToast />
     </div>
   );
 }

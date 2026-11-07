@@ -105,6 +105,54 @@ unplug the WAN, then on a phone open `https://live.bajasaebrasil.net`. It still
 loads, with no warning (the certificate was issued while online, and lasts 90
 days; Caddy renews it whenever the PC is online).
 
+## Before an event: the readiness check
+
+On a phone or the PC, open **Readiness** (top bar, or the banner at the top of
+the home page) and press **Run all checks**. Within a few seconds every module
+reports a green, amber or red line:
+
+- **READY** (green banner): nothing fails. Amber lines are worth a look but do
+  not stop the event (an M-VAVE left in its bag, a joystick nobody touched).
+- **NOT READY (n fails, m warnings)**: each red line says what is wrong and
+  what to do; where the fix is made on a page, *Open* goes there. Fix, then
+  run again until the banner is green.
+- **Copy as text** puts the problems on the clipboard for the crew chat.
+
+During the event, turn on Settings → Readiness → *scheduled run* (every five
+minutes by default): when a check that passed starts failing, every open
+page shows a red message naming it.
+
+The page cannot see these; check them by hand:
+
+1. **Cables**: camera power and network, the RS485 adapter and the joystick,
+   the XR18's network cable, the M-VAVE's USB, the D200 on the network.
+2. **OBS**: the stream key and output settings (Settings → Stream and
+   Output), and the scene collection for this event.
+3. **hEX DNS**: the static entry for the studio's name is there
+   (`/ip dns static print where name=live.bajasaebrasil.net`; see *Static DNS*
+   above), so phones find the studio with the WAN down.
+4. **Agents**: each camera laptop is on mains power, with sleep turned off.
+
+## Moving the settings to another PC (or a reinstall)
+
+Settings → **Export / import** → *Export settings* saves one file,
+`BajaStudio-settings-<PC>-<date>.json`, with every module's settings:
+cameras and presets, audio mappings and macros, playout folders and OBS
+names, the gateway, the agents. Passwords and tokens are left out and listed,
+so the file can be kept in a shared folder. The queue, the audio link states
+and levels, and the logs are not settings: they stay in the database file
+(`baja-studio.sqlite3` in the data folder), and a copy of that file is their
+backup.
+
+To import: on the same page, drop the file in the box. Nothing changes yet:
+the page lists, per module, what would be added, changed or removed. A module
+that cannot be imported (a file from a newer version, a value edited by hand
+that is not valid) is marked with the reason; tick *apply partial* to import
+the others anyway. **Apply** saves everything at once; no restart is needed.
+Then re-enter the secrets the page lists (the Cloudflare token in Settings →
+Gateway, the OBS password in Settings → Playout, agent tokens on the Agents
+page) and run the readiness check.
+
 ## When something is wrong
 
 - **Home page**: every module's health; the gateway card says if Caddy is down

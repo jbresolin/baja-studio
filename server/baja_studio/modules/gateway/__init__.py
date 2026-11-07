@@ -14,6 +14,7 @@ State (`state.gateway`):
 - `config`: the last apply's outcome; `dns`: the last `test_dns` result
 
 Commands: `apply`, `test_dns`, `test_tls`. Settings edits apply by themselves.
+Readiness checks: `readiness.py`.
 """
 
 import contextlib
@@ -23,12 +24,14 @@ from typing import Any
 from pydantic import BaseModel
 
 from baja_studio.core.module import CommandError, Module, ModuleContext
+from baja_studio.core.readiness import ReadinessCheck
 from baja_studio.core.supervisor import DeviceOfflineError, HealthState, WorkerContext, WorkerSpec
 from baja_studio.core.system_services import NotInstalledServiceControl, ServiceControl
 from baja_studio.modules.gateway.admin_api import CaddyAdminClient, CaddyUnreachableError
 from baja_studio.modules.gateway.config import GatewaySettings, TlsMode
 from baja_studio.modules.gateway.controller import GatewayApplyError, GatewayController
 from baja_studio.modules.gateway.probes import TlsProbeError, check_dns, check_upstream
+from baja_studio.modules.gateway.readiness import gateway_checks
 from baja_studio.modules.gateway.system import GatewaySystem, installed_caddy_version
 
 __all__ = ["GatewayModule", "GatewaySystem", "installed_caddy_version"]
@@ -129,6 +132,10 @@ class GatewayModule(Module):
         raise CommandError(
             f"gateway has no command {command!r}; try 'apply', 'test_dns' or 'test_tls'"
         )
+
+    def readiness_checks(self) -> list[ReadinessCheck]:
+        """Caddy, its ports, DNS, the certificate and each app (see `readiness.py`)."""
+        return gateway_checks(self._settings(), self._system, self.context.clock)
 
     def _run_watcher(self, worker: WorkerContext) -> None:
         """Worker body: Caddy up? apply if asked; check apps and TLS; sleep 10 s."""

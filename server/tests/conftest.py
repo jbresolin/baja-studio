@@ -29,6 +29,7 @@ from baja_studio.core.module import Module
 from baja_studio.core.registry import ModuleRegistry
 from baja_studio.core.supervisor import Health, HealthState
 from baja_studio.main import build_module_list, create_app
+from tests.core.fake_system_probes import FakeSystemProbes
 
 if TYPE_CHECKING:
     # Only for the annotation: importing it here would stop pytest rewriting its asserts.
@@ -376,21 +377,34 @@ AppFactory = Callable[[Callable[[ModuleRegistry], list[Module]] | None], FastAPI
 
 
 @pytest.fixture
+def system_probes() -> FakeSystemProbes:
+    """The PC as the readiness checks see it: plenty of disk, clock right, not busy."""
+    return FakeSystemProbes()
+
+
+@pytest.fixture
 def make_app(
     fake_clock: FakeClock,
     data_directory: Path,
     frontend_directory: Path,
     gateway_fakes: "GatewayFakes",
+    system_probes: FakeSystemProbes,
 ) -> AppFactory:
     """Build an app on the fake clock and temp data directory.
 
     Pass a function returning a module list to run only those modules;
     pass None for the real module list from `main.py`, whose services and
-    Caddy are then the `gateway_fakes` (no NSSM, no network).
+    Caddy are then the `gateway_fakes` (no NSSM, no network) and whose view
+    of the PC is `system_probes`.
     """
 
     def real_modules_with_fakes(registry: ModuleRegistry) -> list[Module]:
-        return build_module_list(registry, gateway_fakes.services, gateway_fakes.system())
+        return build_module_list(
+            registry,
+            gateway_fakes.services,
+            gateway_fakes.system(),
+            system_probes=system_probes.probes(),
+        )
 
     def build(module_list_builder: Callable[[ModuleRegistry], list[Module]] | None) -> FastAPI:
         return create_app(

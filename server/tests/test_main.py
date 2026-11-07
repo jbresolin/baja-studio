@@ -48,6 +48,7 @@ def test_create_app_registers_every_module_in_home_page_order(
 
     assert names == [
         "home",
+        "readiness",
         "cameras",
         "playout",
         "audio",

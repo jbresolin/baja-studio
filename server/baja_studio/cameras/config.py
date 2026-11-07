@@ -118,6 +118,9 @@ class CameraConfig(StrictModel):
     )
     obs_source: str | None = None
     presets: list[PresetName] = Field(default_factory=list)
+    needs_presets: bool = Field(
+        default=False, description="The readiness checks warn while this camera has no presets."
+    )
     limits: MotionLimits = Field(default_factory=MotionLimits)
     speed_curve: SpeedCurve = SpeedCurve.LINEAR
     direct_fallback: DirectFallback | None = None

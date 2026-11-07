@@ -2,7 +2,9 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 
 import { HealthBadge } from "../components/HealthBadge";
+import type { ReadinessState } from "../lib/readiness";
 import { useModuleState, useSendCommand } from "../lib/stateHooks";
+import { ReadinessBanner } from "./ReadinessPage";
 
 interface HomeModuleEntry {
   title: string;
@@ -46,10 +48,11 @@ interface BundleResult {
   url: string;
 }
 
-/** The landing page: one card per module with its live health, the proxied apps, TLS. */
+/** The landing page: readiness, one card per module with its live health, the proxied apps, TLS. */
 export function Home() {
   const home = useModuleState<HomeState>("home");
   const gateway = useModuleState<GatewayState>("gateway");
+  const readiness = useModuleState<ReadinessState>("readiness");
   const modules = Object.entries(home?.modules ?? {});
 
   if (modules.length === 0) {
@@ -58,6 +61,16 @@ export function Home() {
 
   return (
     <div className="home">
+      {readiness?.last_run ? (
+        <ReadinessBanner run={readiness.last_run} link />
+      ) : (
+        readiness && (
+          <div className="notice" data-testid="readiness-not-run">
+            Readiness not checked yet. <Link to="/readiness">Run the checks</Link>
+          </div>
+        )
+      )}
+
       {/* Caddy cannot start while another program holds its port: say who, and what to do. */}
       {gateway?.caddy?.port_conflicts?.map((conflict) => (
         <div

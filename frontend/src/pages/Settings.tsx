@@ -22,6 +22,10 @@ import {
   type SettingsSection,
   type SettingsValues,
 } from "../lib/api";
+import { SettingsTransfer } from "./SettingsTransfer";
+
+// The export/import page lives beside the sections, under a name no module uses.
+const TRANSFER_SECTION = "transfer";
 
 type Notice = { kind: "saved" | "error" | "conflict"; text: string } | null;
 
@@ -51,10 +55,15 @@ export function Settings() {
             {item.title}
           </NavLink>
         ))}
+        <NavLink to={`/settings/${TRANSFER_SECTION}`}>Export / import</NavLink>
       </nav>
       <div className="settings-editor">
         {loadError && <div className="notice notice-error">{loadError}</div>}
-        {section && <SectionEditor key={section} section={section} />}
+        {section === TRANSFER_SECTION ? (
+          <SettingsTransfer />
+        ) : (
+          section && <SectionEditor key={section} section={section} />
+        )}
       </div>
     </div>
   );

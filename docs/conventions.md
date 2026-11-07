@@ -57,6 +57,22 @@ reading its tests.
 - Secrets inside nested models or lists of models are masked like top-level
   ones; give list items an `id` field so a masked secret sent back stays with
   its item.
+- **Every module declares readiness checks.** Implement `readiness_checks()`
+  returning `ReadinessCheck`s (`core/readiness.py`), kept in a `readiness.py`
+  beside the module. A check only looks: it reads the module's state or
+  settings, or makes one cheap probe that changes nothing (a DNS lookup, an
+  HTTP GET, free disk space); it never starts, reconnects or configures
+  anything, and never spends a device's packet budget on something a worker
+  already watches. Every `warn` and `fail` carries a fix in operator language
+  (what to click, which cable, which settings page) and, where the fix is made
+  on a page, its `link`. One cause gives one red line: a check that depends
+  on something another check already reports missing says "not checked" as a
+  warning. Each check gets a test for `ok` and one for its `warn`/`fail`.
+- Settings are only what an operator configures. State that changes during
+  the show (queues, link states, played flags) lives in the module's own
+  tables, so the settings export never carries it. When a settings change
+  makes older exported files mean something different, raise the model's
+  `settings_version`.
 - Log with `context.logger` (it tags records with the module). When using a
   plain logger, pass `extra={"studio_module": name}` — `module` is reserved
   by Python's `LogRecord`.

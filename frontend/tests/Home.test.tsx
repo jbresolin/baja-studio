@@ -13,6 +13,7 @@ import { StateSocketContext } from "../src/lib/stateHooks";
 import { StateSocket } from "../src/lib/stateSocket";
 import { Home } from "../src/pages/Home";
 import { fakeSocketFactory } from "./fakeSocket";
+import { lastRun, readinessState, READY_RUN } from "./readinessFixtures";
 
 /** Render Home connected to a fake server; returns the fake server socket. */
 function showHome() {
@@ -244,5 +245,62 @@ describe("Home page, gateway and diagnostics", () => {
       "href",
       "/api/home/diagnostics/BajaStudio-diag-20261106-120000.zip",
     );
+  });
+});
+
+describe("Home page, readiness banner", () => {
+  const MODULES = { home: { title: "Home", state: "ok", message: "" } };
+
+  it("invites a first run while no checks have run", () => {
+    const server = showHome();
+
+    act(() =>
+      server.receive({
+        type: "snapshot",
+        seq: 1,
+        state: { home: { modules: MODULES }, readiness: readinessState() },
+      }),
+    );
+
+    expect(screen.getByTestId("readiness-not-run")).toHaveTextContent("Readiness not checked yet.");
+    expect(screen.getByRole("link", { name: "Run the checks" })).toHaveAttribute(
+      "href",
+      "/readiness",
+    );
+  });
+
+  it("shows the last run's banner, linked to the readiness page", () => {
+    const server = showHome();
+
+    act(() =>
+      server.receive({
+        type: "snapshot",
+        seq: 1,
+        state: { home: { modules: MODULES }, readiness: readinessState({ last_run: lastRun() }) },
+      }),
+    );
+
+    const banner = screen.getByTestId("readiness-banner");
+    expect(banner).toHaveClass("readiness-not-ready");
+    expect(within(banner).getByRole("link")).toHaveTextContent("NOT READY (1 fail, 1 warning)");
+    expect(within(banner).getByRole("link")).toHaveAttribute("href", "/readiness");
+  });
+
+  it("says READY, with the warnings counted, when nothing fails", () => {
+    const server = showHome();
+    const readyWithWarning = { ...READY_RUN, warnings: 1 };
+
+    act(() =>
+      server.receive({
+        type: "snapshot",
+        seq: 1,
+        state: {
+          home: { modules: MODULES },
+          readiness: readinessState({ last_run: readyWithWarning }),
+        },
+      }),
+    );
+
+    expect(screen.getByTestId("readiness-banner")).toHaveTextContent("READY · 1 warning");
   });
 });

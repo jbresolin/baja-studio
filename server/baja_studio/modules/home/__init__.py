@@ -1,8 +1,9 @@
 """The home module: the landing page's list of modules and their health.
 
 It also builds the diagnostics bundle (`diagnostics_bundle`), served for
-download at `GET /api/home/diagnostics/<file name>`, and publishes the
-service version the page shows.
+download at `GET /api/home/diagnostics/<file name>`, publishes the service
+version the page shows, exports and imports the settings of every module
+(`settings_transfer.py`), and owns the PC's own readiness checks (`checks.py`).
 """
 
 import threading
@@ -20,10 +21,21 @@ from baja_studio.core.diagnostics import (
 )
 from baja_studio.core.logging import LOG_DIRECTORY_NAME
 from baja_studio.core.module import CommandError, Module, ModuleContext
+from baja_studio.core.readiness import ReadinessCheck
 from baja_studio.core.registry import ModuleRegistry
 from baja_studio.core.supervisor import Health
+from baja_studio.core.system_probes import SystemProbes
 from baja_studio.core.system_services import NotInstalledServiceControl, ServiceControl
 from baja_studio.modules.gateway.caddyfile import caddyfile_path
+from baja_studio.modules.home.checks import home_checks
+from baja_studio.modules.home.settings_transfer import (
+    COMMANDS as SETTINGS_TRANSFER_COMMANDS,
+)
+from baja_studio.modules.home.settings_transfer import (
+    SettingsTransfer,
+    SettingsUploads,
+    settings_upload_routes,
+)
 
 DIAGNOSTICS_URL_PREFIX = "/api/home/diagnostics/"
 
@@ -40,13 +52,19 @@ class HomeModule(Module):
     can_be_disabled = False
 
     def __init__(
-        self, registry: ModuleRegistry, service_control: ServiceControl | None = None
+        self,
+        registry: ModuleRegistry,
+        service_control: ServiceControl | None = None,
+        probes: SystemProbes | None = None,
     ) -> None:
-        """`registry` lists the modules; `service_control` reports the services in bundles."""
+        """`registry` lists the modules; `service_control` reports the services in bundles;
+        `probes` look at the PC for the readiness checks (tests pass fakes)."""
         super().__init__()
         self._registry = registry
         self._service_control = service_control or NotInstalledServiceControl()
+        self._probes = probes or SystemProbes()
         self._listening = threading.Event()
+        self._uploads: SettingsUploads | None = None
 
     def initial_state(self) -> dict[str, Any]:
         """No modules known until `start`; the version is known at once."""
@@ -55,6 +73,8 @@ class HomeModule(Module):
     def start(self, context: ModuleContext) -> None:
         """Publish the current health of every module, then follow changes."""
         super().start(context)
+        if self._uploads is None:
+            self._uploads = SettingsUploads(context.clock)
         for module in self._registry.modules():
             self._publish(module.name, context.supervisor.module_health(module.name))
         # Home cannot be disabled, but guard anyway so a restart never doubles the listener.
@@ -63,15 +83,36 @@ class HomeModule(Module):
             context.supervisor.add_health_listener(self._publish)
 
     def handle_command(self, command: str, args: dict[str, Any], source: str) -> Any:
-        """`diagnostics_bundle`: build a zip and return where to download it."""
+        """`diagnostics_bundle` (build a zip, return where to download it), and
+        `export_settings`, `import_settings_dryrun`, `import_settings_apply`."""
+        if command in SETTINGS_TRANSFER_COMMANDS:
+            assert self._uploads is not None
+            transfer = SettingsTransfer(self.context.settings, self.context.clock, self._uploads)
+            result = transfer.handle(command, args)
+            if command == "import_settings_apply":
+                self.context.logger.info(
+                    "settings imported by %s: %s",
+                    source,
+                    ", ".join(f"{r['section']} {r['result']}" for r in result["results"]),
+                )
+            return result
         if command != "diagnostics_bundle":
-            raise CommandError(f"home has no command {command!r}; try 'diagnostics_bundle'")
+            raise CommandError(
+                f"home has no command {command!r}; try 'diagnostics_bundle' or "
+                + ", ".join(repr(name) for name in SETTINGS_TRANSFER_COMMANDS)
+            )
         path = build_bundle(self._diagnostics_sources())
         return {"file_name": path.name, "url": DIAGNOSTICS_URL_PREFIX + path.name}
 
+    def readiness_checks(self) -> list[ReadinessCheck]:
+        """The PC's own checks (see `checks.py`)."""
+        return home_checks(self.context.data_directory, self._probes, self.context.clock)
+
     def routes(self) -> APIRouter:
-        """`GET /diagnostics/<name>`: a bundle built earlier, as a download."""
+        """`GET /diagnostics/<name>`: a bundle built earlier, as a download;
+        `POST /settings-import`: a settings file to import (see `settings_transfer.py`)."""
         router = APIRouter()
+        router.include_router(settings_upload_routes(self._upload_store))
 
         @router.get("/diagnostics/{file_name}")
         def download_bundle(file_name: str) -> FileResponse:
@@ -82,6 +123,11 @@ class HomeModule(Module):
             return FileResponse(path, media_type="application/zip", filename=file_name)
 
         return router
+
+    def _upload_store(self) -> SettingsUploads:
+        if self._uploads is None:
+            raise HTTPException(503, "the studio is still starting")
+        return self._uploads
 
     def _diagnostics_sources(self) -> DiagnosticsSources:
         context = self.context

@@ -125,6 +125,8 @@ export interface CameraConfig {
   controller_address: number | null;
   obs_source: string | null;
   presets: PresetName[];
+  /** The readiness checks warn while such a camera has no presets. */
+  needs_presets: boolean;
   limits: MotionLimits;
   speed_curve: "linear" | "squared";
   direct_fallback: { driver: "visca_ip"; address: CameraAddress } | null;
@@ -173,6 +175,7 @@ export function newCamera(id: string): CameraConfig {
     controller_address: null,
     obs_source: null,
     presets: [],
+    needs_presets: false,
     limits: {
       pan_speed_scale: 1,
       tilt_speed_scale: 1,

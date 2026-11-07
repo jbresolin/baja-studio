@@ -152,6 +152,12 @@ export function CameraForm(props: CameraFormProps) {
           error={errors.obs_source}
           onChange={(text) => set({ obs_source: text.trim() ? text : null })}
         />
+        <CheckField
+          label="Needs presets (the readiness checks warn while it has none)"
+          checked={draft.needs_presets}
+          error={errors.needs_presets}
+          onChange={(needs_presets) => set({ needs_presets })}
+        />
         <SelectField
           label="Speed curve"
           value={draft.speed_curve}
