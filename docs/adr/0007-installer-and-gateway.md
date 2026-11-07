@@ -127,9 +127,15 @@ runbook only). Brief: Plane page "09 — WP7 brief". Goals §7.4 and §7.6.
 
 - **The bench (docs/bench/wp7.md) has not been run**; LIVESTACK-21/-22/-23
   close with it.
-- **The Caddy SHA-256** in the pin comes from the first CI build; if two runs
-  ever give different hashes, reproducibility is broken and the check should
+- **The Caddy SHA-256** in the pin (`4abc688c…`) came from the first CI build
+  and was reproduced by the four builds after it on fresh runners. If a run
+  ever gives a different hash, reproducibility is broken and the check should
   fall back to the module list only.
+- **Port 80 on the streaming PC.** GitHub's Windows runners run IIS (W3SVC),
+  which holds port 80; Caddy then fails with "bind: forbidden" and NSSM
+  pauses the gateway. The smoke test stops IIS first. The installer does not
+  check or free port 80 on a real PC; docs/install.md says what to do. Worth
+  a check at the bench.
 - Code signing (SmartScreen click-through until then), auto-update.
 - A dedicated gateway page with a table editor for proxied apps; for now the
   generic module page (status, Apply, Test DNS, Test TLS) and Settings.
