@@ -13,7 +13,9 @@
     4. build a diagnostics bundle and check it holds no secret and the Caddy version;
     5. uninstall silently; services and firewall rule gone, data kept.
 
-    Leaves install.log, uninstall.log and the bundle in -OutputDirectory.
+    Leaves install.log, uninstall.log and the bundle in -OutputDirectory, and,
+    whatever happens, a copy of the data folder's logs and Caddyfile with
+    NSSM's view of both services (in data\), for when something fails.
 #>
 param(
     [Parameter(Mandatory)] [string] $Installer,
@@ -32,12 +34,31 @@ function Wait-Until([scriptblock] $Condition, [string] $What, [int] $Seconds = 1
         try { if (& $Condition) { Write-Host "ok: $What"; return } } catch { $lastError = $_ }
         Start-Sleep -Seconds 2
     }
-    throw "timed out waiting for: $What. Last error: $lastError"
+    $lastHealth = if ($script:health) { $script:health | ConvertTo-Json -Depth 5 -Compress } else { 'none' }
+    throw "timed out waiting for: $What. Last error: $lastError. Last health: $lastHealth"
 }
 
 function Get-ModuleHealth($Health, [string] $Name) {
     ($Health.modules | Where-Object name -eq $Name).state
 }
+
+function Save-ServiceEvidence {
+    <# Copy what the services wrote, before the uninstaller (or the runner) removes it. #>
+    $evidence = New-Item -ItemType Directory -Force (Join-Path $output 'data')
+    foreach ($item in 'logs', 'caddy\Caddyfile') {
+        $source = Join-Path $dataDirectory $item
+        if (Test-Path $source) { Copy-Item $source $evidence -Recurse -Force }
+    }
+    $nssm = Join-Path $programDirectory 'nssm\nssm.exe'
+    if (Test-Path $nssm) {
+        foreach ($service in 'BajaStudio', 'BajaStudioGateway') {
+            "$service status: $(& $nssm status $service 2>&1)" | Add-Content (Join-Path $evidence 'services.txt')
+            "$service params: $(& $nssm get $service AppParameters 2>&1)" | Add-Content (Join-Path $evidence 'services.txt')
+        }
+    }
+}
+
+trap { Save-ServiceEvidence; break }
 
 Write-Host "--- install $Installer"
 $install = Start-Process $Installer -Wait -PassThru -ArgumentList @(
@@ -85,6 +106,7 @@ try {
 }
 finally { $zip.Dispose() }
 
+Save-ServiceEvidence
 Write-Host '--- uninstall (keeping the data)'
 $uninstaller = Join-Path $programDirectory 'unins000.exe'
 Start-Process $uninstaller -Wait -ArgumentList @(
