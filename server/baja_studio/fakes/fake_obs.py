@@ -47,6 +47,7 @@ DEFAULT_MEDIA_DURATION_SECONDS = 10.0
 TICK_SECONDS = 0.1
 FIXED_SALT = "fake-obs-salt"
 FIXED_CHALLENGE = "fake-obs-challenge"
+MEDIA_EVENTS = {"started": "MediaInputPlaybackStarted", "ended": "MediaInputPlaybackEnded"}
 
 Deliver = Callable[[str], object]
 CloseConnection = Callable[[int, str], object]
@@ -92,6 +93,8 @@ class FakeObs(FakeObsRequests):
         self.transition_overrides: dict[str, tuple[str | None, int | None]] = {}
         self.requests: list[RequestRecord] = []
         self.program_history: list[str] = []
+        # Files that never finish opening (tests of the cue timeout).
+        self.stuck_files: set[str] = set()
         self._sessions: list[FakeObsSession] = []
         self._next_item_id = 1
 
@@ -187,13 +190,14 @@ class FakeObs(FakeObsRequests):
                 session.deliver(encode(OpCode.REQUEST_RESPONSE, self._answer(data)))
 
     def tick(self) -> None:
-        """Let media time pass: a source that reached its end sends `MediaInputPlaybackEnded`."""
+        """Let media time pass: opening sources start, finished ones end (with their events)."""
         with self.lock:
             now = self.now()
             for name, source in self.inputs.items():
-                if source.media.advance(now):
+                happened = source.media.advance(now)
+                if happened is not None:
                     self.emit(
-                        "MediaInputPlaybackEnded",
+                        MEDIA_EVENTS[happened],
                         {"inputName": name},
                         EventSubscription.MEDIA_INPUTS,
                     )

@@ -9,7 +9,13 @@ import pytest
 
 from baja_studio.core.module import CommandError
 from baja_studio.fakes.fake_obs import FakeObs
-from tests.modules.playout_studio import OBS_HOST, OBS_PORT, PlayoutStudio, ready_studio
+from tests.modules.playout_studio import (
+    OBS_HOST,
+    OBS_PASSWORD,
+    OBS_PORT,
+    PlayoutStudio,
+    ready_studio,
+)
 
 
 def test_an_unknown_command_is_refused(playout: PlayoutStudio) -> None:
@@ -90,18 +96,21 @@ def test_switching_commands_say_obs_is_away_when_it_is(playout: PlayoutStudio) -
 
     # The clip went back to the head of the queue, ready for when OBS returns.
     assert [entry["clip_id"] for entry in playout.state("queue")] == [first]
-    playout.network.plug(OBS_HOST, OBS_PORT, FakeObs.with_playout_scenes(playout.clock))
+    playout.network.plug(
+        OBS_HOST, OBS_PORT, FakeObs.with_playout_scenes(playout.clock, password=OBS_PASSWORD)
+    )
 
 
 def test_return_without_a_return_scene_is_refused_and_the_clip_stays_on_air(
     playout: PlayoutStudio,
 ) -> None:
     first, _, _ = ready_studio(playout)
-    playout.connect_obs(return_scene="")
+    # "Return to: chosen scene" with no scene picked yet.
+    playout.command("set_return_target", mode="chosen")
     playout.command("queue_add", clip_ids=[first])
     playout.command("take", cue_if_needed=True)
 
-    with pytest.raises(CommandError, match="no return scene"):
+    with pytest.raises(CommandError, match="no return scene chosen"):
         playout.command("return_to_scene")
 
     assert playout.state("program")["clip"]["id"] == first

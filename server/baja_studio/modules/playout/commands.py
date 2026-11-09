@@ -7,11 +7,17 @@ Every command is logged with its source by the registry. Refusals are
 from collections.abc import Callable
 from typing import Any
 
+from pydantic import ValidationError
+
 from baja_studio.adapters.obs_transport import ObsError, ObsNotConnectedError
 from baja_studio.core.module import CommandError
 from baja_studio.core.settings import SettingsStore
+from baja_studio.core.settings_import import readable_errors
 from baja_studio.modules.playout.controller import PlayoutController
+from baja_studio.modules.playout.return_target import RETURN_MODES
+from baja_studio.playout.config import OnAirActions
 from baja_studio.playout.library import LibraryError
+from baja_studio.playout.playlists import PlaylistError
 from baja_studio.playout.queue_store import QueueError
 from baja_studio.playout.switcher import SwitchError
 
@@ -36,7 +42,7 @@ def run_command(
         return handler(controller, args, source)
     except ObsNotConnectedError as error:
         raise CommandError("OBS is not connected; check the OBS status") from error
-    except (ObsError, SwitchError, LibraryError, QueueError) as error:
+    except (ObsError, SwitchError, LibraryError, QueueError, PlaylistError) as error:
         raise CommandError(str(error)) from error
 
 
@@ -142,7 +148,82 @@ def _mark_stream_start(
     return {"stream_start_marker": marker}
 
 
+def _set_return_target(controller: PlayoutController, args: dict[str, Any], source: str) -> Any:
+    mode = args.get("mode")
+    if mode not in RETURN_MODES:
+        raise CommandError("'mode' must be 'previous' or 'chosen'")
+    scene = args.get("scene")
+    if scene is not None and not isinstance(scene, str):
+        raise CommandError("'scene' must be text")
+    return controller.set_return_target(mode, scene)
+
+
+def _playlist_clip_ids(controller: PlayoutController, args: dict[str, Any]) -> list[int]:
+    """`clip_ids` (a multi-selection) or `group` (every present clip of a library group)."""
+    if "group" in args:
+        group = _text_arg(args, "group")
+        clip_ids = [
+            clip["id"]
+            for clip in controller.library.all()
+            if clip["group"] == group and not clip["missing"]
+        ]
+        if not clip_ids:
+            raise CommandError(f"the library group {group!r} has no clips")
+        return clip_ids
+    return _int_list_arg(args, "clip_ids")
+
+
+def _playlist_create(controller: PlayoutController, args: dict[str, Any], source: str) -> Any:
+    with controller.lock:
+        clip_ids = _playlist_clip_ids(controller, args)
+        name = args.get("name", args.get("group"))
+        if not isinstance(name, str):
+            raise CommandError("'name' must be text")
+        playlist_id = controller.playlists.create(name, clip_ids)
+        controller.playlists_changed()
+        return controller.playlists.get(playlist_id)
+
+
+def _playlist_update(controller: PlayoutController, args: dict[str, Any], source: str) -> Any:
+    playlist_id = _int_arg(args, "playlist_id")
+    shuffle = args.get("shuffle")
+    if shuffle is not None and not isinstance(shuffle, bool):
+        raise CommandError("'shuffle' must be true or false")
+    on_air: OnAirActions | None = None
+    if "on_air" in args:
+        try:
+            on_air = None if args["on_air"] is None else OnAirActions.model_validate(args["on_air"])
+        except ValidationError as error:
+            raise CommandError(f"'on_air': {readable_errors(error)}") from error
+    with controller.lock:
+        controller.playlists.update(
+            playlist_id,
+            name=_text_arg(args, "name") if "name" in args else None,
+            clip_ids=_int_list_arg(args, "clip_ids") if "clip_ids" in args else None,
+            shuffle=shuffle,
+            set_on_air="on_air" in args,
+            on_air=on_air,
+        )
+        controller.playlists_changed()
+        return controller.playlists.get(playlist_id)
+
+
+def _playlist_delete(controller: PlayoutController, args: dict[str, Any], source: str) -> None:
+    with controller.lock:
+        controller.playlists.delete(_int_arg(args, "playlist_id"))
+        controller.playlists_changed()
+
+
+def _playlist_queue(controller: PlayoutController, args: dict[str, Any], source: str) -> Any:
+    return {"entry_ids": controller.queue_playlist(_int_arg(args, "playlist_id"), source)}
+
+
 HANDLERS: dict[str, Handler] = {
+    "set_return_target": _set_return_target,
+    "playlist_create": _playlist_create,
+    "playlist_update": _playlist_update,
+    "playlist_delete": _playlist_delete,
+    "playlist_queue": _playlist_queue,
     "queue_add": _queue_add,
     "queue_remove": _queue_remove,
     "queue_move": _queue_move,

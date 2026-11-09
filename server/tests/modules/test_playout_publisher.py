@@ -15,6 +15,7 @@ from baja_studio.adapters.obs_requests import MediaStatus
 from baja_studio.core.database import Database
 from baja_studio.modules.playout.publisher import PlayoutPublisher, initial_playout_state
 from baja_studio.playout.library import LibraryStore, ScannedFile
+from baja_studio.playout.playlists import PlaylistStore
 from baja_studio.playout.queue_store import QueueStore
 from baja_studio.playout.schema import create_playout_tables
 from tests.conftest import FakeClock
@@ -43,8 +44,9 @@ def make_publisher(
     database: Database, clock: FakeClock
 ) -> tuple[PlayoutPublisher, RecordedState, LibraryStore, QueueStore]:
     library, queue = LibraryStore(database, clock), QueueStore(database, clock)
+    playlists = PlaylistStore(database, clock)
     recorded = RecordedState()
-    return PlayoutPublisher(recorded, library, queue), recorded, library, queue
+    return PlayoutPublisher(recorded, library, queue, playlists), recorded, library, queue
 
 
 def scanned(name: str) -> ScannedFile:

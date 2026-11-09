@@ -9,7 +9,7 @@ line, e.g. `web:3fa1c2d4`; the command log names that page's actions with
 the same id.
 
 Without OBS: `python -m baja_studio.fakes.fake_obs --port 4455` plays an OBS
-already set up as below (host `127.0.0.1`; `--password P` to require one,
+already set up as below (host `127.0.0.1`; `--password P` is required since WP5b, which never connects without one;
 `--duration 8` for 8 s clips). Without the VPS:
 `python -m baja_studio.fakes.fake_orchestrator --token T --from-folder <clips folder>`
 announces every `<prova>/<car>/<passagem>.mp4` under that folder (base URL
@@ -34,7 +34,8 @@ either: every name below is a playout setting and can be changed.
      manual test behaves the same);
    - *Use hardware decoding when available* as you prefer.
 4. A **return scene** for after a clip (for example your main camera scene).
-   Put its name in the playout settings (`obs.return_scene`).
+   Since WP5b it is chosen on the playout page (*Return to*: previous scene,
+   or a chosen one), not in the settings; see `wp5b.md`.
 5. Transitions: playout sets a *Cut* transition override on both playback
    scenes when it connects, so a take is always a cut. If OBS runs in
    Portuguese, the built-in transitions are called *Corte* and
@@ -42,14 +43,14 @@ either: every name below is a playout setting and can be changed.
    accordingly, or the override fails (logged as a warning) and a take uses
    whatever transition is selected.
 
-Playout settings live on **Settings → Playout**. The `sources`, `obs`,
-`tools`, `operators`, `hooks` and `export` sections are JSON boxes there;
-edit the whole section and Save. Example `obs`:
+Playout settings live on **Playout → Settings** (`/playout/settings`) since
+WP5b, with forms for folders, OBS, tools and on-air actions; the JSON below
+still works under *Advanced*. Example `obs`:
 
 ```json
 {"host": "127.0.0.1", "port": 4455, "password": "********", "scene_a": "Playback A",
  "scene_b": "Playback B", "source_a": "baja_program_a", "source_b": "baja_program_b",
- "return_scene": "Main", "post_clip": "return", "fade_ms": 1000,
+ "post_clip": "return", "fade_ms": 1000,
  "cut_transition": "Cut", "fade_transition": "Fade"}
 ```
 

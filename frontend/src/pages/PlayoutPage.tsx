@@ -1,7 +1,12 @@
 /**
  * The Playout page (/playout): library, queue, and program/preview in three
- * columns (WP5 brief §6). At phone width the library and queue become tabs
- * and the program strip stays on top.
+ * columns that share the window's width (WP5 brief §6, WP5b §2). At phone
+ * width the library and queue become tabs and the program strip stays on top.
+ *
+ * Above the columns: one banner when ffprobe/ffmpeg are missing, and the
+ * reason the last cue failed. Problems the server reports on its own (an
+ * on-air action that failed, auto-play falling back) arrive as `notice` and
+ * show as a toast on every page.
  *
  * Every action is a command to the `playout` module; the server keeps all
  * the state, so every browser sees the same queue and program. Keys work
@@ -9,6 +14,7 @@
  */
 
 import { useEffect, useRef, useState } from "react";
+import { Link } from "react-router-dom";
 
 import { AiredExport } from "../components/playout/AiredExport";
 import { KeyboardLegend } from "../components/playout/KeyboardLegend";
@@ -40,6 +46,25 @@ export function PlayoutPage() {
   const [tab, setTab] = useState<Tab>("library");
   const [error, setError] = useState<string | null>(null);
   const [confirmAsked, setConfirmAsked] = useState(false);
+  // The id of the server's notice already seen (undefined until the first
+  // state arrives), so each notice toasts once.
+  const seenNotice = useRef<number | null | undefined>(undefined);
+  const loaded = state !== undefined;
+  const notice = state?.notice ?? null;
+
+  useEffect(() => {
+    if (!loaded) return;
+    const id = notice?.id ?? null;
+    if (seenNotice.current === undefined) {
+      // Opening the page: a notice from before is history, not news.
+      seenNotice.current = id;
+      return;
+    }
+    if (notice !== null && id !== seenNotice.current) {
+      seenNotice.current = id;
+      setError(notice.message);
+    }
+  }, [loaded, notice]);
 
   useEffect(() => {
     if (error === null) return;
@@ -107,8 +132,18 @@ export function PlayoutPage() {
 
   return (
     <div className="playout-page">
-      <ProgramStrip program={state.program} />
+      <ProgramStrip state={state} />
       <StatusLine state={state} clientId={clientId} />
+      {state.tools?.problem && (
+        <div className="notice notice-error" role="alert" data-testid="tools-banner">
+          {state.tools.problem} <Link to="/playout/settings">Playout settings</Link>
+        </div>
+      )}
+      {state.cue_problem && (
+        <div className="notice notice-error" role="alert" data-testid="cue-problem">
+          Cue failed: {state.cue_problem}
+        </div>
+      )}
       {confirming && (
         <div className="take-confirm" role="alert">
           Press Take again within 3 s
@@ -134,6 +169,8 @@ export function PlayoutPage() {
         <div className={tab === "library" ? "playout-column" : "playout-column phone-hidden"}>
           <LibraryPanel
             library={state.library}
+            playlists={state.playlists ?? []}
+            toolsProblem={state.tools?.problem ?? null}
             selected={selectedClips}
             onSelectedChange={setSelectedClips}
             searchRef={searchRef}
@@ -144,6 +181,7 @@ export function PlayoutPage() {
           <QueuePanel
             queue={state.queue}
             totalSeconds={state.queue_total_s}
+            unknownCount={state.queue_unknown ?? 0}
             selected={selectedEntries}
             onSelectedChange={setSelectedEntries}
             run={run}
@@ -157,6 +195,9 @@ export function PlayoutPage() {
             run={run}
           />
           <AiredExport marker={state.export.stream_start_marker} run={run} />
+          <p>
+            <Link to="/playout/settings">Playout settings</Link>
+          </p>
         </div>
       </div>
       {error && (

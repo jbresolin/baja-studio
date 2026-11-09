@@ -295,9 +295,33 @@ def test_only_subscribed_event_categories_arrive(
 
     fake_obs.change_program_scene("Playback A")
     client.set_input_settings("baja_program_a", {"local_file": "clip.mp4"})
+    fake_obs.tick()  # the file finished opening: OBS reports the start
 
     eventually(lambda: "MediaInputPlaybackStarted" in received)
     assert "CurrentProgramSceneChanged" not in received
+
+
+def test_an_expected_event_is_signalled_only_while_expected_and_only_if_it_matches(
+    client: ObsWebsocketClient, fake_obs: FakeObs
+) -> None:
+    # Playout waits for "this source started" this way: it enters
+    # `expecting_event` before the request that causes it.
+    with client.expecting_event("MediaInputPlaybackStarted", inputName="baja_program_b") as seen:
+        # A start of the *other* source does not count.
+        client.set_input_settings("baja_program_a", {"local_file": "a.mp4"})
+        fake_obs.tick()
+        client.get_version()  # a round trip, so the event has surely been read
+        assert not seen.is_set()
+
+        client.set_input_settings("baja_program_b", {"local_file": "b.mp4"})
+        fake_obs.tick()
+        eventually(seen.is_set, "the expected start was not signalled")
+
+    # Once the block is left, nothing is listening any more (no leak).
+    client.set_input_settings("baja_program_b", {"local_file": "c.mp4"})
+    fake_obs.tick()
+    client.get_version()
+    assert client._expected_events == []
 
 
 def test_the_disconnect_listener_hears_obs_going_away(

@@ -8,7 +8,7 @@ Only the requests the studio uses are here; others answer "unknown request".
 from dataclasses import dataclass, field
 from typing import Any
 
-from baja_studio.adapters.obs_protocol import EventSubscription, MediaAction, RequestStatus
+from baja_studio.adapters.obs_protocol import MediaAction, RequestStatus
 from baja_studio.fakes.simulated_media import SimulatedMedia
 
 # A 1x1 grey PNG: enough for a page to show "a screenshot came back".
@@ -54,6 +54,7 @@ class FakeObsRequests:
     program_scene: str
     transitions: list[str]
     transition_overrides: dict[str, tuple[str | None, int | None]]
+    stuck_files: set[str]
 
     def now(self) -> float:
         """Implemented by `FakeObs`."""
@@ -104,7 +105,6 @@ class FakeObsRequests:
         return {"inputSettings": dict(source.settings), "inputKind": source.kind}
 
     def _request_SetInputSettings(self, data: dict[str, Any]) -> dict[str, Any]:  # noqa: N802
-        name = self._input_name(data)
         source = self._input(data)
         new_settings = data.get("inputSettings")
         if not isinstance(new_settings, dict):
@@ -117,15 +117,13 @@ class FakeObsRequests:
         )
         new_file = str(source.settings.get("local_file", ""))
         if new_file != old_file:
+            # It opens now and starts on the next tick (MediaInputPlaybackStarted then).
             source.media.load(new_file, self.duration_of(new_file), self.now())
-            if new_file:
-                self.emit(
-                    "MediaInputPlaybackStarted", {"inputName": name}, EventSubscription.MEDIA_INPUTS
-                )
+            source.media.stuck = new_file in self.stuck_files
         return {}
 
     def _request_TriggerMediaInputAction(self, data: dict[str, Any]) -> dict[str, Any]:  # noqa: N802
-        name, media, now = self._input_name(data), self._input(data).media, self.now()
+        media, now = self._input(data).media, self.now()
         action = data.get("mediaAction")
         if action == MediaAction.PLAY:
             media.play(now)
@@ -139,10 +137,6 @@ class FakeObsRequests:
             raise FakeRequestRefusedError(
                 RequestStatus.MISSING_REQUEST_FIELD, f"bad action {action}"
             )
-        if action in (MediaAction.PLAY, MediaAction.RESTART):
-            self.emit(
-                "MediaInputPlaybackStarted", {"inputName": name}, EventSubscription.MEDIA_INPUTS
-            )
         return {}
 
     def _request_SetMediaInputCursor(self, data: dict[str, Any]) -> dict[str, Any]:  # noqa: N802
@@ -151,7 +145,14 @@ class FakeObsRequests:
             raise FakeRequestRefusedError(
                 RequestStatus.MISSING_REQUEST_FIELD, "mediaCursor missing"
             )
-        self._input(data).media.seek(cursor_ms / 1000, self.now())
+        media = self._input(data).media
+        if not media.is_seekable:
+            # Real OBS's words (the 2026-11-08 bench saw them on a cue).
+            raise FakeRequestRefusedError(
+                RequestStatus.INVALID_RESOURCE_STATE,
+                "The media input must be playing or paused in order to set the cursor position.",
+            )
+        media.seek(cursor_ms / 1000, self.now())
         return {}
 
     def _request_GetMediaInputStatus(self, data: dict[str, Any]) -> dict[str, Any]:  # noqa: N802

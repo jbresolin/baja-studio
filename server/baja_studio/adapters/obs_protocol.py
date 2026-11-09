@@ -61,6 +61,7 @@ class RequestStatus(IntEnum):
     UNKNOWN_REQUEST_TYPE = 204
     MISSING_REQUEST_FIELD = 300
     RESOURCE_NOT_FOUND = 600
+    INVALID_RESOURCE_STATE = 604
 
 
 class MediaAction:

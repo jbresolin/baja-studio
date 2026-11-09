@@ -4,15 +4,21 @@ Library from the local folders plus the orchestrator's manifest, a queue,
 flash-free program switching through two OBS media sources, post-clip
 behaviour, session persistence, the aired log and the on-air webhook.
 
+WP5b added playlists, the "Return to" control, on-air actions (commands to
+other modules when a clip starts or ends, sent through `dispatch`, the
+registry's command path) and the hosts view.
+
 Workers: `obs` (connection, events, 5 Hz position), `scanner` (folders
-every 5 s), `probe` (ffprobe/thumbnails), `sync` (orchestrator manifest)
-and `hooks` (webhook POSTs). The module is as healthy as its most worrying
-worker: OBS away makes it `offline`, an unreadable folder or an unreachable
-orchestrator `degraded`; library and queue work regardless.
+every 5 s), `probe` (ffprobe/thumbnails), `sync` (orchestrator manifest),
+`hooks` (webhook POSTs) and `actions` (on-air actions). The module is as
+healthy as its most worrying worker: OBS away makes it `offline`, a failed
+cue, an unreadable folder or an unreachable orchestrator `degraded`; library
+and queue work regardless.
 
 Readiness checks: `readiness.py`.
 """
 
+import shutil
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -27,6 +33,7 @@ from baja_studio.core.module import CommandError, Module, ModuleContext
 from baja_studio.core.readiness import ReadinessCheck
 from baja_studio.core.supervisor import WorkerSpec
 from baja_studio.core.system_probes import free_disk_bytes as real_free_disk_bytes
+from baja_studio.modules.playout.airing import AiringBookkeeper
 from baja_studio.modules.playout.commands import run_command
 from baja_studio.modules.playout.controller import PlayoutController
 from baja_studio.modules.playout.library_workers import LibraryWorkers, ProberFactory
@@ -37,7 +44,9 @@ from baja_studio.modules.playout.routes import playout_routes
 from baja_studio.playout.config import PlayoutSettings, ToolsSettings
 from baja_studio.playout.hooks import WebhookNotifier
 from baja_studio.playout.library import LibraryStore
-from baja_studio.playout.probe import MediaProber, Prober
+from baja_studio.playout.on_air import Dispatch, OnAirActionRunner
+from baja_studio.playout.playlists import PlaylistStore
+from baja_studio.playout.probe import MediaProber, Prober, tools_status
 from baja_studio.playout.queue_store import QueueStore
 from baja_studio.playout.schema import create_playout_tables
 from baja_studio.playout.switcher import ProgramSwitcher
@@ -62,10 +71,18 @@ class PlayoutModule(Module):
         prober_factory: ProberFactory = real_prober,
         hook_transport: httpx2.BaseTransport | None = None,
         free_disk_bytes: Callable[[Path], int] = real_free_disk_bytes,
+        dispatch: Dispatch | None = None,
+        find_tool: Callable[[str], str | None] = shutil.which,
     ) -> None:
-        """The defaults are the real network, tools and disks; tests pass fakes."""
+        """The defaults are the real network, tools and disks; tests pass fakes.
+
+        `dispatch` is the registry's `dispatch_command`, for on-air actions.
+        """
         super().__init__()
         self._free_disk_bytes = free_disk_bytes
+        self._dispatch = dispatch
+        self._find_tool = find_tool
+        self._actions: OnAirActionRunner | None = None
         self._obs_client: ObsWebsocketClient | None = None
         self._obs_transport_factory = obs_transport_factory
         self._orchestrator_transport = orchestrator_transport
@@ -101,7 +118,8 @@ class PlayoutModule(Module):
         create_playout_tables(context.database)
         library = LibraryStore(context.database, context.clock)
         queue = QueueStore(context.database, context.clock)
-        publisher = PlayoutPublisher(context.update_state, library, queue)
+        playlists = PlaylistStore(context.database, context.clock)
+        publisher = PlayoutPublisher(context.update_state, library, queue, playlists)
         client = ObsWebsocketClient(context.clock, self._obs_transport_factory)
         self._obs_client = client
         switcher = ProgramSwitcher(client, lambda: self.settings().obs, context.clock)
@@ -111,18 +129,36 @@ class PlayoutModule(Module):
             self._hook_transport,
             wake_worker=lambda: context.supervisor.wake(self.name, "hooks"),
         )
+        self._actions = OnAirActionRunner(
+            self._dispatch,
+            context.logger,
+            on_failure=publisher.publish_notice,
+            wake_worker=lambda: context.supervisor.wake(self.name, "actions"),
+        )
+        airing = AiringBookkeeper(
+            context.clock,
+            self.settings,
+            library,
+            queue,
+            playlists,
+            self._notifier,
+            self._actions,
+            publisher,
+        )
         controller = PlayoutController(
             context.clock,
             self.settings,
             library,
             queue,
+            playlists,
             switcher,
-            self._notifier,
+            airing,
             publisher,
             context.logger,
         )
         controller.restore_session()
         self._publish_export_marker(publisher)
+        self._publish_tools(publisher)
         self._obs_worker = ObsConnectionWorker(client, controller, self.settings, context.logger)
         self._library_workers = LibraryWorkers(
             context.clock,
@@ -146,14 +182,15 @@ class PlayoutModule(Module):
         self._controller = None
 
     def workers(self) -> list[WorkerSpec]:
-        """OBS connection, folder scanner, prober, orchestrator sync, webhook sender."""
-        assert self._obs_worker and self._library_workers and self._notifier
+        """OBS connection, folder scanner, prober, orchestrator sync, webhook and action senders."""
+        assert self._obs_worker and self._library_workers and self._notifier and self._actions
         return [
             WorkerSpec("obs", self._obs_worker.run, starts_offline=True),
             WorkerSpec("scanner", self._library_workers.run_scanner),
             WorkerSpec("probe", self._library_workers.run_probe),
             WorkerSpec("sync", self._library_workers.run_sync),
             WorkerSpec("hooks", self._notifier.run),
+            WorkerSpec("actions", self._actions.run),
         ]
 
     def handle_command(self, command: str, args: dict[str, Any], source: str) -> Any:
@@ -185,10 +222,17 @@ class PlayoutModule(Module):
             # A fixed ffprobe path deserves another try at the files that failed.
             controller.library.clear_probe_errors()
             self._last_tools = values.tools
+            self._publish_tools(controller.publisher)
         if self._obs_worker is not None:
             self._obs_worker.wake()
         for worker_name in ("scanner", "probe", "sync"):
             self.context.supervisor.wake(self.name, worker_name)
+
+    def _publish_tools(self, publisher: PlayoutPublisher) -> None:
+        tools = self.settings().tools
+        publisher.publish_tools(
+            tools_status(tools.ffprobe_path, tools.ffmpeg_path, self._find_tool)
+        )
 
     def _publish_export_marker(self, publisher: PlayoutPublisher) -> None:
         marker = self.settings().export.stream_start_marker

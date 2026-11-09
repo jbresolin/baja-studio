@@ -5,7 +5,8 @@ rows for files it finds and marks the others missing; the orchestrator sync
 adds metadata (prova, car, team, passagem) to the row whose path matches
 the manifest's `relative_path` under the delivery folder, creating a
 "missing" row when the file has not arrived yet. A file with no metadata is
-a manual clip with an editable label.
+an unmatched clip (inside the receiver root) or a manual one (any other
+folder), with an editable label; see `clip_view.py`.
 """
 
 import json
@@ -18,10 +19,7 @@ from typing import Any
 
 from baja_studio.core.clock import Clock
 from baja_studio.core.database import Database
-
-SOURCE_MANUAL = "manual"
-SOURCE_ORCHESTRATOR = "orchestrator"
-MANUAL_PROVA_GROUP = "Manual"
+from baja_studio.playout.clip_view import SOURCE_MANUAL, SOURCE_ORCHESTRATOR, public_clip
 
 
 class LibraryError(Exception):
@@ -37,6 +35,8 @@ class ScannedFile:
     folder_label: str
     size: int
     mtime: float
+    # Found under the receiver root (so, without a manifest entry, "unmatched").
+    in_receiver_root: bool = False
 
 
 @dataclass(frozen=True)
@@ -52,45 +52,6 @@ class ManifestClip:
     sha256: str
     size_bytes: int
     delivered_at: str
-
-
-def clip_title(row: sqlite3.Row | dict[str, Any]) -> str:
-    """The name shown for a clip: its label, else its metadata, else its file name."""
-    if row["label"]:
-        return str(row["label"])
-    if row["prova"] is not None and row["car_number"] is not None:
-        team = f" [{row['team']}]" if row["team"] else ""
-        title = f"{row['prova']} · carro {row['car_number']}{team}"
-        return f"{title} · passagem {row['passagem']}" if row["show_pass"] else title
-    return PurePosixPath(str(row["relative_path"])).stem
-
-
-def public_clip(row: sqlite3.Row) -> dict[str, Any]:
-    """A clip as browsers see it (state and API); JSON-serialisable."""
-    metadata = json.loads(row["metadata_json"] or "{}")
-    return {
-        "id": row["id"],
-        "source": row["source"],
-        "title": clip_title(row),
-        "file_path": row["file_path"],
-        "relative_path": row["relative_path"],
-        "folder_label": row["folder_label"],
-        "missing": bool(row["missing"]),
-        "queueable": not row["missing"],
-        "duration_s": row["duration_s"],
-        "probe_error": row["probe_error"],
-        "prova": row["prova"],
-        "car_number": row["car_number"],
-        "team": row["team"],
-        "passagem": row["passagem"],
-        "label": row["label"],
-        "show_pass": bool(row["show_pass"]),
-        "notes": row["notes"],
-        "played_count": row["played_count"],
-        "last_played_at": row["last_played_at"],
-        "has_thumbnail": row["thumbnail_path"] is not None,
-        "delivered_at": metadata.get("delivered_at"),
-    }
 
 
 class LibraryStore:
@@ -118,7 +79,8 @@ class LibraryStore:
                 if row is None:
                     cursor = connection.execute(
                         "INSERT INTO playout_clips (source, file_path, relative_path, "
-                        "folder_label, file_size, mtime) VALUES (?, ?, ?, ?, ?, ?)",
+                        "folder_label, file_size, mtime, in_receiver_root) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
                         (
                             SOURCE_MANUAL,
                             found.path,
@@ -126,6 +88,7 @@ class LibraryStore:
                             found.folder_label,
                             found.size,
                             found.mtime,
+                            int(found.in_receiver_root),
                         ),
                     )
                     changed.append(int(cursor.lastrowid or 0))
@@ -133,14 +96,25 @@ class LibraryStore:
                     connection.execute(
                         "UPDATE playout_clips SET file_size = ?, mtime = ?, missing = 0, "
                         "duration_s = NULL, probe_error = NULL, thumbnail_path = NULL, "
-                        "folder_label = ? WHERE id = ?",
-                        (found.size, found.mtime, found.folder_label, row["id"]),
+                        "folder_label = ?, in_receiver_root = ? WHERE id = ?",
+                        (
+                            found.size,
+                            found.mtime,
+                            found.folder_label,
+                            int(found.in_receiver_root),
+                            row["id"],
+                        ),
                     )
                     changed.append(row["id"])
-                elif row["missing"] or row["folder_label"] != found.folder_label:
+                elif (
+                    row["missing"]
+                    or row["folder_label"] != found.folder_label
+                    or bool(row["in_receiver_root"]) != found.in_receiver_root
+                ):
                     connection.execute(
-                        "UPDATE playout_clips SET missing = 0, folder_label = ? WHERE id = ?",
-                        (found.folder_label, row["id"]),
+                        "UPDATE playout_clips SET missing = 0, folder_label = ?, "
+                        "in_receiver_root = ? WHERE id = ?",
+                        (found.folder_label, int(found.in_receiver_root), row["id"]),
                     )
                     changed.append(row["id"])
             for path, row in rows.items():
@@ -180,8 +154,8 @@ class LibraryStore:
                 if row is None:
                     cursor = connection.execute(
                         "INSERT INTO playout_clips (source, file_path, relative_path, "
-                        "folder_label, missing, prova, car_number, team, passagem, "
-                        "metadata_json) VALUES (?, ?, ?, ?, 1, ?, ?, ?, ?, ?)",
+                        "folder_label, missing, in_receiver_root, prova, car_number, team, "
+                        "passagem, metadata_json) VALUES (?, ?, ?, ?, 1, 1, ?, ?, ?, ?, ?)",
                         (SOURCE_ORCHESTRATOR, path, entry.relative_path, delivery_label, *values),
                     )
                     changed.append(int(cursor.lastrowid or 0))
@@ -282,14 +256,15 @@ class LibraryStore:
             self._update(clip_id, "played_count = 0, last_played_at = NULL", ())
 
     def summary(self) -> dict[str, Any]:
-        """Counts for the page header: per prova, missing, unplayed, total."""
+        """Counts for the page header: per group, missing, unplayed, unmatched, total."""
         clips = self.all()
-        per_prova = Counter(clip["prova"] or MANUAL_PROVA_GROUP for clip in clips)
+        per_group = Counter(clip["group"] for clip in clips)
         return {
             "total": len(clips),
             "missing": sum(1 for clip in clips if clip["missing"]),
             "unplayed": sum(1 for clip in clips if clip["played_count"] == 0),
-            "per_prova": dict(sorted(per_prova.items())),
+            "unmatched": sum(1 for clip in clips if clip["kind"] == "unmatched"),
+            "per_group": dict(sorted(per_group.items())),
         }
 
     def require_queueable(self, clip_id: int) -> dict[str, Any]:

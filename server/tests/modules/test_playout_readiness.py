@@ -11,6 +11,7 @@ from pathlib import Path
 
 from baja_studio.core.readiness import CheckStatus
 from baja_studio.core.system_probes import GIGABYTE
+from baja_studio.playout.config import OBS_NOT_CONFIGURED
 from tests.core.fake_system_probes import FakeSystemProbes
 from tests.modules.playout_studio import (
     OBS_HOST,
@@ -41,6 +42,7 @@ def checks(playout: PlayoutStudio) -> dict[str, CheckStatus]:
 def test_a_ready_studio_passes_every_check(playout: PlayoutStudio, tmp_path: Path) -> None:
     ready_studio(playout)
     playout.configure(tools=fake_tools(tmp_path))
+    playout.command("set_return_target", mode="chosen", scene="Main")
 
     results = run_module_checks(playout.services, "playout", playout.clock)
 
@@ -76,17 +78,39 @@ def test_obs_stopped_is_one_red_line_and_its_scenes_only_a_warning(
 
 
 def test_obs_not_configured_fails(playout: PlayoutStudio) -> None:
+    # Read from the settings, not the worker's status: the same line whether
+    # or not the worker has published anything yet.
     result = run_module_checks(playout.services, "playout", playout.clock)["obs"]
 
     assert result.status == CheckStatus.FAIL
-    assert result.detail.startswith("not_configured: OBS not configured")
+    assert result.detail == OBS_NOT_CONFIGURED
+
+
+def test_an_address_without_a_password_is_still_not_configured(playout: PlayoutStudio) -> None:
+    playout.configure(obs=playout.obs_settings(password=""))
+
+    result = run_module_checks(playout.services, "playout", playout.clock)["obs"]
+
+    assert (result.status, result.detail) == (CheckStatus.FAIL, OBS_NOT_CONFIGURED)
+
+
+def test_a_configured_obs_that_does_not_respond_is_no_answer(playout: PlayoutStudio) -> None:
+    # Address and password set, but nothing listens there.
+    playout.network.unplug(OBS_HOST, OBS_PORT)
+    playout.configure(obs=playout.obs_settings())
+    playout.soon(lambda: playout.state("obs.connection") == "offline")
+
+    result = run_module_checks(playout.services, "playout", playout.clock)["obs"]
+
+    assert result.status == CheckStatus.FAIL
+    assert result.detail == f"no answer from OBS at {OBS_HOST}:{OBS_PORT}"
+    assert_fix_given(result)
 
 
 def test_missing_scenes_sources_and_transition_are_named(playout: PlayoutStudio) -> None:
     # OBS is reachable, but the profile on this PC is not the bench one.
-    playout.connect_obs(
-        scene_b="Playback Z", source_a="wrong_source", return_scene="Gone", cut_transition="Corte"
-    )
+    playout.connect_obs(scene_b="Playback Z", source_a="wrong_source", cut_transition="Corte")
+    playout.command("set_return_target", mode="chosen", scene="Gone")
 
     result = run_module_checks(playout.services, "playout", playout.clock)["obs_scenes"]
 
@@ -98,13 +122,16 @@ def test_missing_scenes_sources_and_transition_are_named(playout: PlayoutStudio)
     assert_fix_given(result)
 
 
-def test_no_return_scene_with_return_after_a_clip_warns(playout: PlayoutStudio) -> None:
-    playout.connect_obs(return_scene="")
+def test_no_return_target_with_return_after_a_clip_warns(playout: PlayoutStudio) -> None:
+    # "Return to: previous scene", but nothing has been taken yet, so no
+    # previous scene is known: a warning (it becomes known at the first take).
+    playout.connect_obs()
 
     result = run_module_checks(playout.services, "playout", playout.clock)["obs_scenes"]
 
     assert result.status == CheckStatus.WARN
-    assert result.fix == "Set the return scene in Settings → Playout."
+    assert result.detail.startswith("no previous scene yet")
+    assert result.fix == "On the playout page, set Return to: previous scene, or choose a scene."
 
 
 def test_no_clip_folder_fails_and_a_missing_one_says_so(

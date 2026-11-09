@@ -2,8 +2,12 @@
 
 Pure code told `now` on every call, like the fake agent's simulated camera,
 so its rules are tested without any clock. Like real OBS, loading a new file
-starts playing it at once; that is why playout restarts and pauses a source
-when it cues one.
+(or restarting one) does not play it at once: the source is *opening* until
+the next tick, which starts it and sends `MediaInputPlaybackStarted`. Until
+then it cannot be paused or sought (real OBS refuses `SetMediaInputCursor`
+with "media must be playing or paused"), which is why playout waits for the
+start before parking a cued clip on its first frame. A `stuck` source never
+finishes opening, for the cue-timeout tests.
 """
 
 from dataclasses import dataclass
@@ -21,6 +25,13 @@ class SimulatedMedia:
     # Position at `anchor_time`; while playing, it grows with time from there.
     anchor_cursor_s: float = 0.0
     anchor_time: float = 0.0
+    # Never finishes opening (a file OBS cannot start in time).
+    stuck: bool = False
+
+    @property
+    def is_seekable(self) -> bool:
+        """True while playing or paused: the only states OBS lets a client seek in."""
+        return self.state in (MediaState.PLAYING, MediaState.PAUSED)
 
     def cursor(self, now: float) -> float:
         """Where playback is at `now`, in seconds (never past the end)."""
@@ -30,17 +41,17 @@ class SimulatedMedia:
         return min(position, self.duration_s) if self.duration_s is not None else position
 
     def load(self, file: str, duration_s: float | None, now: float) -> None:
-        """A new `local_file`: OBS opens it and starts playing from the top."""
+        """A new `local_file`: OBS opens it, and starts it from the top on the next tick."""
         self.file, self.duration_s = file, duration_s
         if file:
-            self._set(MediaState.PLAYING, 0.0, now)
+            self._set(MediaState.OPENING, 0.0, now)
         else:
             self._set(MediaState.NONE, 0.0, now)
 
     def restart(self, now: float) -> None:
-        """Play from the top."""
+        """Play from the top (after opening again, like real OBS)."""
         if self.file:
-            self._set(MediaState.PLAYING, 0.0, now)
+            self._set(MediaState.OPENING, 0.0, now)
 
     def play(self, now: float) -> None:
         """Resume a paused file; an ended or stopped one starts again from the top."""
@@ -48,11 +59,11 @@ class SimulatedMedia:
             return
         if self.state == MediaState.PAUSED:
             self._set(MediaState.PLAYING, self.anchor_cursor_s, now)
-        elif self.state != MediaState.PLAYING:
-            self._set(MediaState.PLAYING, 0.0, now)
+        elif self.state not in (MediaState.PLAYING, MediaState.OPENING):
+            self._set(MediaState.OPENING, 0.0, now)
 
     def pause(self, now: float) -> None:
-        """Freeze at the current frame."""
+        """Freeze at the current frame (an opening source has no frame yet: nothing happens)."""
         if self.state == MediaState.PLAYING:
             self._set(MediaState.PAUSED, self.cursor(now), now)
 
@@ -66,14 +77,21 @@ class SimulatedMedia:
         limit = self.duration_s if self.duration_s is not None else cursor_s
         self._set(self.state, max(0.0, min(cursor_s, limit)), now)
 
-    def advance(self, now: float) -> bool:
-        """Notice the end of the file; True exactly once, when playback reaches it."""
+    def advance(self, now: float) -> str | None:
+        """Let time pass; returns "started" or "ended" when that just happened, else None.
+
+        An opening source starts playing from the top. A playing one that
+        reached its end says "ended" exactly once.
+        """
+        if self.state == MediaState.OPENING and not self.stuck:
+            self._set(MediaState.PLAYING, 0.0, now)
+            return "started"
         if self.state != MediaState.PLAYING or self.duration_s is None:
-            return False
+            return None
         if self.cursor(now) < self.duration_s:
-            return False
+            return None
         self._set(MediaState.ENDED, self.duration_s, now)
-        return True
+        return "ended"
 
     def _set(self, state: str, cursor_s: float, now: float) -> None:
         self.state, self.anchor_cursor_s, self.anchor_time = state, cursor_s, now

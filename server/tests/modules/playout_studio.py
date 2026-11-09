@@ -19,6 +19,8 @@ import httpx2
 import pytest
 from fastapi.testclient import TestClient
 
+from baja_studio.core.module import Module
+from baja_studio.core.registry import ModuleRegistry
 from baja_studio.core.services import StudioServices
 from baja_studio.fakes.fake_obs import FakeObs
 from baja_studio.fakes.fake_obs_in_process import InProcessObsNetwork
@@ -38,6 +40,8 @@ from tests.core.fake_system_probes import FakeSystemProbes
 
 OBS_HOST = "obs.test"
 OBS_PORT = 4455
+# Playout never connects without a password, so the fake OBS asks for one.
+OBS_PASSWORD = "obs-secret"
 ORCHESTRATOR_URL = "http://orchestrator.test:8080"
 ORCHESTRATOR_TOKEN = "studio-token"
 HOOK_URL = "http://overlay.test/hook"
@@ -82,6 +86,8 @@ class PlayoutStudio:
     orchestrator_queries: list[dict[str, str]]
     # Sends HTTP requests to the running service (no network).
     http: TestClient
+    # Which of ffprobe/ffmpeg the module finds (both, unless a test removes one).
+    tools_found: set[str]
 
     def command(self, command: str, source: str = "web:alice", **args: Any) -> Any:
         return self.services.registry.dispatch_command("playout", command, args, source)
@@ -94,7 +100,7 @@ class PlayoutStudio:
         self.services.settings.update("playout", sections)
 
     def obs_settings(self, **overrides: Any) -> dict[str, Any]:
-        return {"host": OBS_HOST, "port": OBS_PORT, "return_scene": "Main", **overrides}
+        return {"host": OBS_HOST, "port": OBS_PORT, "password": OBS_PASSWORD, **overrides}
 
     def connect_obs(self, **overrides: Any) -> None:
         """Point playout at the fake OBS and wait until it reports `connected`."""
@@ -153,14 +159,23 @@ class PlayoutStudio:
 
 
 @pytest.fixture
+def playout_extra_modules() -> list[Module]:
+    """Modules to run beside playout (none); a test file overrides this to add audio."""
+    return []
+
+
+@pytest.fixture
 def playout(
     make_app: AppFactory,
     fake_clock: FakeClock,
     tmp_path: Path,
     system_probes: FakeSystemProbes,
+    playout_extra_modules: list[Module],
 ) -> Iterator[PlayoutStudio]:
     network = InProcessObsNetwork()
-    obs = FakeObs.with_playout_scenes(fake_clock, duration_for=lambda _file: CLIP_SECONDS)
+    obs = FakeObs.with_playout_scenes(
+        fake_clock, password=OBS_PASSWORD, duration_for=lambda _file: CLIP_SECONDS
+    )
     network.plug(OBS_HOST, OBS_PORT, obs)
     orchestrator = FakeOrchestrator(ORCHESTRATOR_TOKEN)
     prober = FakeProber()
@@ -180,16 +195,33 @@ def playout(
     def prober_factory(tools: ToolsSettings) -> Prober:
         return prober
 
+    registries: list[ModuleRegistry] = []
+    tools_found: set[str] = {"ffprobe", "ffmpeg"}
+
+    def dispatch(module_name: str, command: str, args: dict[str, Any], source: str) -> Any:
+        # On-air actions go through the registry, like any command.
+        return registries[0].dispatch_command(module_name, command, args, source)
+
+    def find_tool(name: str) -> str | None:
+        return f"/opt/ffmpeg/{name}" if name in tools_found else None
+
     module = PlayoutModule(
         obs_transport_factory=network.connect,
         orchestrator_transport=httpx2.MockTransport(record_and_forward),
         prober_factory=prober_factory,
         hook_transport=httpx2.MockTransport(catch_hook),
         free_disk_bytes=system_probes.free_disk_bytes,
+        dispatch=dispatch,
+        find_tool=find_tool,
     )
     clips_folder = tmp_path / "clips"
     clips_folder.mkdir()
-    app = make_app(lambda registry: [module])
+
+    def modules(registry: ModuleRegistry) -> list[Module]:
+        registries.append(registry)
+        return [module, *playout_extra_modules]
+
+    app = make_app(modules)
     with TestClient(app) as http:
         yield PlayoutStudio(
             app.state.services,
@@ -203,6 +235,7 @@ def playout(
             clips_folder,
             orchestrator_queries,
             http,
+            tools_found,
         )
 
 

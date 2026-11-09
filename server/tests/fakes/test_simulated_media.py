@@ -11,18 +11,42 @@ from baja_studio.fakes.simulated_media import SimulatedMedia
 
 
 def playing(duration: float = 10.0, at: float = 0.0) -> SimulatedMedia:
-    """A source that loaded a `duration`-second file at time `at`."""
+    """A source that loaded a `duration`-second file and started it at time `at`."""
     media = SimulatedMedia()
     media.load("clip.mp4", duration, at)
+    media.advance(at)
     return media
 
 
-def test_loading_a_file_starts_playing_it_from_the_top() -> None:
-    # Real OBS starts a media source as soon as its file changes.
-    media = playing(at=5.0)
+def test_loading_a_file_opens_it_and_the_next_advance_starts_it_from_the_top() -> None:
+    # Real OBS opens a new file first and starts it a moment later.
+    media = SimulatedMedia()
+    media.load("clip.mp4", 10.0, 5.0)
+    assert media.state == MediaState.OPENING
+    assert not media.is_seekable
+
+    assert media.advance(5.0) == "started"
 
     assert media.state == MediaState.PLAYING
     assert media.cursor(7.0) == pytest.approx(2.0)
+
+
+def test_a_stuck_source_never_finishes_opening() -> None:
+    media = SimulatedMedia(stuck=True)
+    media.load("clip.mp4", 10.0, 0.0)
+
+    assert media.advance(100.0) is None
+    assert media.state == MediaState.OPENING
+
+
+def test_pausing_an_opening_source_does_nothing() -> None:
+    # There is no frame to freeze yet; OBS leaves it opening.
+    media = SimulatedMedia()
+    media.load("clip.mp4", 10.0, 0.0)
+
+    media.pause(0.0)
+
+    assert media.state == MediaState.OPENING
 
 
 def test_loading_no_file_empties_the_source() -> None:
@@ -56,6 +80,7 @@ def test_playing_an_ended_file_starts_it_again() -> None:
     media.advance(10.0)
 
     media.play(20.0)
+    media.advance(20.0)
 
     assert media.state == MediaState.PLAYING
     assert media.cursor(21.0) == pytest.approx(1.0)
@@ -66,6 +91,7 @@ def test_restart_goes_back_to_the_top() -> None:
 
     media.restart(4.0)
 
+    assert media.state == MediaState.OPENING
     assert media.cursor(4.0) == 0.0
 
 
@@ -93,9 +119,9 @@ def test_the_end_is_noticed_exactly_once() -> None:
     # sends a single MediaInputPlaybackEnded.
     media = playing()
 
-    assert media.advance(9.9) is False
-    assert media.advance(10.0) is True
-    assert media.advance(11.0) is False
+    assert media.advance(9.9) is None
+    assert media.advance(10.0) == "ended"
+    assert media.advance(11.0) is None
     assert media.state == MediaState.ENDED
     assert media.cursor(50.0) == 10.0
 

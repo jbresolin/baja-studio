@@ -80,7 +80,7 @@ def build_module_list(
         HomeModule(registry, service_control, probes),
         ReadinessModule(registry),
         CamerasModule(agents),
-        PlayoutModule(free_disk_bytes=probes.free_disk_bytes),
+        PlayoutModule(free_disk_bytes=probes.free_disk_bytes, dispatch=registry.dispatch_command),
         AudioModule(),
         GatewayModule(service_control, gateway_system),
         agents,

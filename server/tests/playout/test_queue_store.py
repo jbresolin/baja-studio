@@ -109,5 +109,19 @@ def test_an_airing_is_logged_with_its_start_and_only_its_first_end(queue: QueueS
             "title": "Enduro · carro 42",
             "started_at": "2026-11-07T14:05:00+00:00",
             "ended_at": "2026-11-07T14:05:30+00:00",
+            "playlist": None,
         }
     ]
+
+
+def test_an_airing_from_a_playlist_is_logged_with_the_playlist_name(queue: QueueStore) -> None:
+    queue.start_airing(7, "Logo", "2026-11-07T14:05:00+00:00", playlist="Patrocinadores")
+
+    assert queue.aired()[0]["playlist"] == "Patrocinadores"
+
+
+def test_queue_entries_remember_the_playlist_they_came_from(queue: QueueStore) -> None:
+    queue.add([1, 2], "web:alice", playlist_id=5)
+    queue.add([3], "web:alice")
+
+    assert [entry["playlist_id"] for entry in queue.entries()] == [5, 5, None]

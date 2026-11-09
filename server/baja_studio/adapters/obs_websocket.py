@@ -11,10 +11,11 @@ request after `request_timeout_s` (2 s). A closed socket fails every waiting
 request at once and tells the disconnect listeners.
 """
 
+import contextlib
 import itertools
 import logging
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -56,6 +57,13 @@ DisconnectListener = Callable[[str], None]
 class _PendingRequest:
     answered: threading.Event = field(default_factory=threading.Event)
     response: dict[str, Any] | None = None
+
+
+@dataclass(eq=False)
+class _ExpectedEvent:
+    event_type: str
+    match: dict[str, Any]
+    arrived: threading.Event = field(default_factory=threading.Event)
 
 
 @dataclass
@@ -114,6 +122,8 @@ class ObsWebsocketClient(ObsRequestsMixin):
         self._request_ids = itertools.count(1)
         self._event_listeners: list[EventListener] = []
         self._disconnect_listeners: list[DisconnectListener] = []
+        self._expected_events: list[_ExpectedEvent] = []
+        self._expected_lock = threading.Lock()
 
     @property
     def is_connected(self) -> bool:
@@ -132,6 +142,23 @@ class ObsWebsocketClient(ObsRequestsMixin):
     def add_disconnect_listener(self, listener: DisconnectListener) -> None:
         """Call `listener(reason)` when an identified connection drops (not on `close`)."""
         self._disconnect_listeners.append(listener)
+
+    @contextlib.contextmanager
+    def expecting_event(self, event_type: str, **match: Any) -> Iterator[threading.Event]:
+        """While inside, the yielded event is set when OBS sends `event_type` matching `match`.
+
+        Used to wait for something OBS reports only as an event (a media
+        source that started, for one): enter before the request that causes
+        it, then wait on the event with the clock.
+        """
+        expected = _ExpectedEvent(event_type, match)
+        with self._expected_lock:
+            self._expected_events.append(expected)
+        try:
+            yield expected.arrived
+        finally:
+            with self._expected_lock:
+                self._expected_events.remove(expected)
 
     def connect(self, address: ObsAddress, password: str) -> None:
         """Open a connection and identify; returns once OBS accepted us.
@@ -254,6 +281,12 @@ class ObsWebsocketClient(ObsRequestsMixin):
         session.transport.send(identify_message(authentication, self._event_subscriptions))
 
     def _dispatch_event(self, event_type: str, event_data: dict[str, Any]) -> None:
+        with self._expected_lock:
+            for expected in self._expected_events:
+                if expected.event_type == event_type and all(
+                    event_data.get(key) == value for key, value in expected.match.items()
+                ):
+                    expected.arrived.set()
         for listener in list(self._event_listeners):
             try:
                 listener(event_type, event_data)

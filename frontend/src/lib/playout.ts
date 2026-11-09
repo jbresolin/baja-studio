@@ -1,15 +1,19 @@
 /**
- * Types and pure helpers for the Playout page (WP5 brief §6).
+ * Types and pure helpers for the Playout page (WP5 brief §6, WP5b).
  *
  * The shapes mirror the server: `playout` state from
  * server/baja_studio/modules/playout/publisher.py, clips from `public_clip`
- * in server/baja_studio/playout/library.py. Everything here is plain
+ * in server/baja_studio/playout/clip_view.py. Everything here is plain
  * TypeScript, testable without React.
  */
 
 export interface PlayoutClip {
   id: number;
   source: "orchestrator" | "manual";
+  /** pipeline (in the manifest), unmatched (receiver root, not in it) or manual. */
+  kind: ClipKind;
+  /** The library group: the prova, "Unmatched", or the folder's label. */
+  group: string;
   title: string;
   file_path: string;
   relative_path: string;
@@ -31,11 +35,15 @@ export interface PlayoutClip {
   delivered_at: string | null;
 }
 
+export type ClipKind = "pipeline" | "unmatched" | "manual";
+
 export interface QueueEntry {
   entry_id: number;
   clip_id: number;
   added_by: string;
   added_at: string;
+  playlist_id: number | null;
+  playlist: string | null;
   title: string;
   duration_s: number | null;
   missing: boolean;
@@ -55,6 +63,45 @@ export interface PreviewView {
   slot: "a" | "b";
 }
 
+export interface OnAirAction {
+  module: string;
+  command: string;
+  args: Record<string, unknown>;
+}
+
+export interface OnAirActions {
+  on_clip_start: OnAirAction[];
+  on_clip_end: OnAirAction[];
+}
+
+export interface Playlist {
+  id: number;
+  name: string;
+  shuffle: boolean;
+  /** Replaces the settings' on-air actions for this playlist's clips; null: use the settings'. */
+  on_air: OnAirActions | null;
+  clip_ids: number[];
+  created_at: string;
+}
+
+export type ReturnMode = "previous" | "chosen";
+
+export interface ReturnTarget {
+  mode: ReturnMode;
+  chosen_scene: string | null;
+  previous_scene: string | null;
+  /** Where a return goes now, or null. */
+  scene: string | null;
+  /** Why there is no return target (shown on the strip), or null. */
+  warning: string | null;
+}
+
+export interface HostsView {
+  on_air: { label: string; remaining_s: number | null; duration_s: number | null } | null;
+  next: { label: string; duration_s: number | null }[];
+  queue_remaining_s: number;
+}
+
 export type ObsConnection =
   "not_configured" | "connecting" | "connected" | "offline" | "auth_failed";
 
@@ -64,18 +111,30 @@ export interface PlayoutState {
     message: string;
     current_scene: string | null;
     address?: string;
+    /** OBS's scenes without the two playback ones (the "chosen scene" list). */
+    scenes?: string[];
   };
   program: ProgramView | null;
   preview: PreviewView | null;
   queue: QueueEntry[];
   queue_total_s: number;
+  /** Queue entries whose duration is unknown. */
+  queue_unknown: number;
   library: Record<string, PlayoutClip>;
   library_summary: {
     total: number;
     missing: number;
     unplayed: number;
-    per_prova: Record<string, number>;
+    unmatched: number;
+    per_group: Record<string, number>;
   };
+  playlists: Playlist[];
+  return_target: ReturnTarget | null;
+  tools: { ffprobe: string | null; ffmpeg: string | null; problem: string | null };
+  cue_problem: string | null;
+  /** The latest problem to show once as a toast; a new id each time. */
+  notice: { id: number; message: string } | null;
+  hosts_view: HostsView;
   sync_status: { state: string; last_success_at: string | null; error: string | null };
   folders: { errors: Record<string, string> };
   auto_play_next: boolean;
@@ -91,6 +150,7 @@ export interface AiredExport {
     title: string;
     started_at: string;
     ended_at: string | null;
+    playlist: string | null;
     offset: string | null;
   }[];
   chapters: string | null;
@@ -100,8 +160,10 @@ export type CountdownColour = "white" | "amber" | "red";
 
 export const AMBER_AT_SECONDS = 10;
 export const RED_AT_SECONDS = 5;
-/** The group manual clips (no prova) are listed under. */
-export const MANUAL_GROUP = "Manual";
+/** The group of files in the receiver root that the manifest does not know. */
+export const UNMATCHED_GROUP = "Unmatched";
+/** Tooltip of an unmatched clip. */
+export const UNMATCHED_HINT = "file not in the orchestrator manifest";
 
 /** Countdown colour: white, amber from 10 s left, red from 5 s left. */
 export function countdownColour(remainingSeconds: number | null): CountdownColour {
@@ -121,6 +183,54 @@ export function formatDuration(seconds: number | null | undefined): string {
   return hours > 0 ? `${hours}:${String(minutes).padStart(2, "0")}:${secs}` : `${minutes}:${secs}`;
 }
 
+/** A duration, or "?" when it is unknown (ffprobe missing or not run yet). */
+export function formatKnownDuration(seconds: number | null | undefined): string {
+  return seconds === null || seconds === undefined ? "?" : formatDuration(seconds);
+}
+
+/**
+ * How much plays after the clip on air: the cued clip plus the queue.
+ * Unknown durations are counted apart, and shown as "+?".
+ */
+export function remainingAfterOnAir(
+  preview: PreviewView | null,
+  queue: { duration_s: number | null }[],
+): { seconds: number; unknown: number } {
+  const upcoming = [...(preview ? [preview.clip] : []), ...queue];
+  return {
+    seconds: upcoming.reduce((total, item) => total + (item.duration_s ?? 0), 0),
+    unknown: upcoming.filter((item) => item.duration_s === null).length,
+  };
+}
+
+/** "−1:05", "−1:05 +?" when some durations are unknown, "+?" when none is known. */
+export function formatRemaining(seconds: number, unknown: number): string {
+  if (seconds === 0 && unknown > 0) return "+?";
+  return `−${formatDuration(seconds)}${unknown > 0 ? " +?" : ""}`;
+}
+
+/** Fraction of the clip on air already played, 0..1 (0 when unknown). */
+export function programProgress(program: ProgramView | null): number {
+  if (!program || !program.duration_s) return 0;
+  return Math.min(1, Math.max(0, program.position_s / program.duration_s));
+}
+
+/**
+ * The second line of a library row: prova · carro N [team] for pipeline
+ * clips, the folder for others; null when the title already says it.
+ */
+export function clipDetails(clip: PlayoutClip): string | null {
+  let text: string;
+  if (clip.kind === "pipeline") {
+    const parts = [clip.prova, clip.car_number !== null ? `carro ${clip.car_number}` : null];
+    text = parts.filter(Boolean).join(" · ");
+    if (clip.team) text = `${text} [${clip.team}]`;
+  } else {
+    text = clip.kind === "unmatched" ? clip.relative_path : clip.folder_label;
+  }
+  return text && !clip.title.includes(text) ? text : null;
+}
+
 /** "12 s ago", "3 min ago", or "never". */
 export function formatAge(isoTime: string | null, nowMs: number): string {
   if (!isoTime) return "never";
@@ -133,9 +243,13 @@ export function formatAge(isoTime: string | null, nowMs: number): string {
 export type LibraryFilter = "all" | "unplayed" | "played" | "missing";
 
 export interface ClipGroup {
-  prova: string;
+  /** The group's name: a prova, a folder label, or "Unmatched". */
+  name: string;
+  kind: ClipKind;
   clips: PlayoutClip[];
 }
+
+const KIND_ORDER: Record<ClipKind, number> = { pipeline: 0, manual: 1, unmatched: 2 };
 
 function matchesFilter(clip: PlayoutClip, filter: LibraryFilter): boolean {
   if (filter === "unplayed") return clip.played_count === 0 && !clip.missing;
@@ -161,28 +275,32 @@ function matchesSearch(clip: PlayoutClip, words: string[]): boolean {
 }
 
 /**
- * The library grouped by prova (manual clips last), filtered by `filter` and
+ * The library in groups: provas first, then labelled folders, then
+ * "Unmatched" (left out with `hideUnmatched`); each filtered by `filter` and
  * by every word of `search`. Inside a group: car number, then pass, then title.
  */
 export function groupLibrary(
   library: Record<string, PlayoutClip>,
   search: string,
   filter: LibraryFilter,
+  hideUnmatched = false,
 ): ClipGroup[] {
   const words = search.toLowerCase().split(/\s+/).filter(Boolean);
-  const groups = new Map<string, PlayoutClip[]>();
+  const groups = new Map<string, { kind: ClipKind; clips: PlayoutClip[] }>();
   for (const clip of Object.values(library)) {
+    if (hideUnmatched && clip.kind === "unmatched") continue;
     if (!matchesFilter(clip, filter) || !matchesSearch(clip, words)) continue;
-    const prova = clip.prova ?? MANUAL_GROUP;
-    groups.set(prova, [...(groups.get(prova) ?? []), clip]);
+    const group = groups.get(clip.group) ?? { kind: clip.kind, clips: [] };
+    group.clips.push(clip);
+    groups.set(clip.group, group);
   }
-  const ordered = [...groups.entries()].sort(([a], [b]) => {
-    if (a === MANUAL_GROUP) return 1;
-    if (b === MANUAL_GROUP) return -1;
-    return a.localeCompare(b);
-  });
-  return ordered.map(([prova, clips]) => ({
-    prova,
+  const ordered = [...groups.entries()].sort(
+    ([a, groupA], [b, groupB]) =>
+      KIND_ORDER[groupA.kind] - KIND_ORDER[groupB.kind] || a.localeCompare(b),
+  );
+  return ordered.map(([name, { kind, clips }]) => ({
+    name,
+    kind,
     clips: clips.sort(
       (a, b) =>
         (a.car_number ?? 0) - (b.car_number ?? 0) ||

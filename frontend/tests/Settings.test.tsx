@@ -10,7 +10,7 @@ import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { Settings } from "../src/pages/Settings";
+import { fieldErrorsBySection, Settings } from "../src/pages/Settings";
 
 // What the server would publish for the heartbeat module's settings.
 const HEARTBEAT_SCHEMA = {
@@ -248,6 +248,23 @@ describe("Settings page, nested models", () => {
     const save = requests.find((request) => request.method === "PUT");
     expect(save?.body).toMatchObject({
       values: { tls: { mode: "dns01", cloudflare_api_token: "********" } },
+    });
+  });
+});
+
+describe("fieldErrorsBySection", () => {
+  it("shows a problem deep inside a section under that section, with the rest of its path", () => {
+    // Regression, bench 2026-11-08: the error for sources.local_folders.0 was
+    // keyed by its full path, which no field on the page has, so nothing showed.
+    expect(
+      fieldErrorsBySection([
+        { field: "sources.local_folders.0", message: "must be an object" },
+        { field: "sources.orchestrator.base_url", message: "bad URL" },
+        { field: "interval_s", message: "too small" },
+      ]),
+    ).toEqual({
+      sources: "local_folders.0: must be an object; orchestrator.base_url: bad URL",
+      interval_s: "too small",
     });
   });
 });

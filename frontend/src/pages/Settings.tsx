@@ -69,6 +69,25 @@ export function Settings() {
   );
 }
 
+/**
+ * Field errors keyed by the top-level field the form shows. A problem deep
+ * inside a nested section (`sources.local_folders.0`) is shown under that
+ * section with the rest of its path, instead of under no field at all.
+ */
+export function fieldErrorsBySection(
+  problems: { field: string; message: string }[],
+): Record<string, string> {
+  const bySection: Record<string, string[]> = {};
+  for (const problem of problems) {
+    const [section = "", ...rest] = problem.field.split(".");
+    const text = rest.length > 0 ? `${rest.join(".")}: ${problem.message}` : problem.message;
+    (bySection[section] ??= []).push(text);
+  }
+  return Object.fromEntries(
+    Object.entries(bySection).map(([section, texts]) => [section, texts.join("; ")]),
+  );
+}
+
 /** Loads, edits and saves one section. Re-mounted (via `key`) when the section changes. */
 export function SectionEditor({ section }: { section: string }) {
   const [schema, setSchema] = useState<SettingsSchema | null>(null);
@@ -130,7 +149,7 @@ export function SectionEditor({ section }: { section: string }) {
             `(now version ${error.currentVersion}). Load the latest values and redo your change.`,
         });
       } else if (error instanceof SettingsValidationError) {
-        setFieldErrors(Object.fromEntries(error.fieldErrors.map((e) => [e.field, e.message])));
+        setFieldErrors(fieldErrorsBySection(error.fieldErrors));
         setNotice({ kind: "error", text: "Some values were not accepted; see the fields below." });
       } else {
         setNotice({ kind: "error", text: (error as Error).message });

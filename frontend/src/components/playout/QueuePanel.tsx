@@ -5,13 +5,15 @@
 
 import { useState } from "react";
 
-import { formatDuration, type QueueEntry } from "../../lib/playout";
+import { formatDuration, formatKnownDuration, type QueueEntry } from "../../lib/playout";
 
 type Run = (command: string, args?: Record<string, unknown>) => Promise<unknown>;
 
 interface QueuePanelProps {
   queue: QueueEntry[];
+  /** Known durations summed; entries without one are counted in `unknownCount`. */
   totalSeconds: number;
+  unknownCount: number;
   selected: Set<number>;
   onSelectedChange: (selected: Set<number>) => void;
   run: Run;
@@ -20,6 +22,7 @@ interface QueuePanelProps {
 export function QueuePanel({
   queue,
   totalSeconds,
+  unknownCount,
   selected,
   onSelectedChange,
   run,
@@ -41,9 +44,19 @@ export function QueuePanel({
   return (
     <section className="playout-queue" aria-label="Queue">
       <div className="playout-toolbar">
-        <span>
-          {queue.length} in queue ·{" "}
-          <span data-testid="queue-total">{formatDuration(totalSeconds)}</span>
+        <span className="queue-header">
+          {queue.length === 0 ? (
+            "Queue empty"
+          ) : (
+            <>
+              {queue.length} in queue ·{" "}
+              <span data-testid="queue-total">
+                {unknownCount === queue.length
+                  ? "length unknown"
+                  : `${formatDuration(totalSeconds)}${unknownCount > 0 ? " +?" : ""}`}
+              </span>
+            </>
+          )}
         </span>
         <button disabled={queue.length === 0} onClick={() => void run("queue_clear")}>
           Clear
@@ -92,8 +105,9 @@ export function QueuePanel({
             {index === 0 && <span className="badge badge-cue">next</span>}
             <span className={entry.missing ? "queue-title missing" : "queue-title"}>
               {entry.title}
+              {entry.playlist && <span className="clip-details muted">{entry.playlist}</span>}
             </span>
-            <span className="muted">{formatDuration(entry.duration_s)}</span>
+            <span className="muted">{formatKnownDuration(entry.duration_s)}</span>
             <span className="queue-buttons" onClick={(event) => event.stopPropagation()}>
               <button
                 aria-label={`Move ${entry.title} up`}

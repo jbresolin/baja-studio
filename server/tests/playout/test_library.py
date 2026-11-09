@@ -11,27 +11,29 @@ from typing import Any
 import pytest
 
 from baja_studio.core.database import Database
-from baja_studio.playout.library import (
-    SOURCE_MANUAL,
-    SOURCE_ORCHESTRATOR,
-    LibraryError,
-    LibraryStore,
-    ManifestClip,
-    ScannedFile,
-)
+from baja_studio.playout.clip_view import SOURCE_MANUAL, SOURCE_ORCHESTRATOR
+from baja_studio.playout.library import LibraryError, LibraryStore, ManifestClip, ScannedFile
 from tests.conftest import FakeClock
 
 ROOT = str(Path("/clips"))
 
 
-def scanned(relative_path: str, size: int = 100, mtime: float = 1.0) -> ScannedFile:
-    """A file under ROOT as the scanner would report it."""
+def scanned(
+    relative_path: str,
+    size: int = 100,
+    mtime: float = 1.0,
+    root: str = ROOT,
+    label: str = "Delivery",
+    in_receiver_root: bool = True,
+) -> ScannedFile:
+    """A file under `root` (the receiver root unless told otherwise), as the scanner reports it."""
     return ScannedFile(
-        path=str(Path(ROOT) / PurePosixPath(relative_path)),
+        path=str(Path(root) / PurePosixPath(relative_path)),
         relative_path=relative_path,
-        folder_label="Delivery",
+        folder_label=label,
         size=size,
         mtime=mtime,
+        in_receiver_root=in_receiver_root,
     )
 
 
@@ -237,9 +239,18 @@ def test_notes_and_played_state_are_kept_per_clip(
     assert only_clip(library)["played_count"] == 1
 
 
-def test_the_summary_counts_clips_per_prova_missing_and_unplayed(library: LibraryStore) -> None:
-    # One pipeline clip (present), one announced but missing, one manual clip.
-    library.apply_scan([scanned("enduro/42/3.mp4"), scanned("intro.mp4")])
+def test_the_summary_counts_clips_per_group_missing_unplayed_and_unmatched(
+    library: LibraryStore,
+) -> None:
+    # One pipeline clip (present), one announced but missing, one file in the
+    # receiver root that the manifest does not know, one sponsor clip.
+    library.apply_scan(
+        [
+            scanned("enduro/42/3.mp4"),
+            scanned("old-output.mp4"),
+            scanned("logo.mp4", root="/sponsors", label="Patrocinadores", in_receiver_root=False),
+        ]
+    )
     library.merge_manifest(
         [manifest_clip(), manifest_clip(relative_path="enduro/7/1.mp4")], ROOT, "Delivery"
     )
@@ -247,11 +258,49 @@ def test_the_summary_counts_clips_per_prova_missing_and_unplayed(library: Librar
     summary = library.summary()
 
     assert summary == {
-        "total": 3,
+        "total": 4,
         "missing": 1,
-        "unplayed": 3,
-        "per_prova": {"Enduro": 2, "Manual": 1},
+        "unplayed": 4,
+        "unmatched": 1,
+        "per_group": {"Enduro": 2, "Patrocinadores": 1, "Unmatched": 1},
     }
+
+
+def test_files_are_pipeline_unmatched_or_manual_and_grouped_accordingly(
+    library: LibraryStore,
+) -> None:
+    # In the receiver root: one file the manifest announces, one it does not
+    # (an old pipeline output). In another folder: an institutional video.
+    library.apply_scan(
+        [
+            scanned("enduro/42/3.mp4"),
+            scanned("manobrabilidade-001-p2-v2.mp4"),
+            scanned("sae.mp4", root="/inst", label="SAE institucional", in_receiver_root=False),
+        ]
+    )
+    library.merge_manifest([manifest_clip()], ROOT, "Delivery")
+
+    by_path = {clip["relative_path"]: clip for clip in library.all()}
+
+    # Announced → pipeline, grouped by prova.
+    assert by_path["enduro/42/3.mp4"]["kind"] == "pipeline"
+    assert by_path["enduro/42/3.mp4"]["group"] == "Enduro"
+    # In the receiver root but not in the manifest → unmatched, its own group.
+    assert by_path["manobrabilidade-001-p2-v2.mp4"]["kind"] == "unmatched"
+    assert by_path["manobrabilidade-001-p2-v2.mp4"]["group"] == "Unmatched"
+    # Any other folder → manual, grouped under the folder's label.
+    assert by_path["sae.mp4"]["kind"] == "manual"
+    assert by_path["sae.mp4"]["group"] == "SAE institucional"
+
+
+def test_a_file_moved_out_of_the_receiver_root_becomes_manual(library: LibraryStore) -> None:
+    # The same path was first found through the receiver root, then (after a
+    # settings change) through an ordinary folder.
+    library.apply_scan([scanned("x.mp4")])
+    changed = library.apply_scan([scanned("x.mp4", in_receiver_root=False)])
+
+    assert len(changed) == 1
+    assert library.all()[0]["kind"] == "manual"
 
 
 def test_only_present_clips_can_be_queued(library: LibraryStore) -> None:

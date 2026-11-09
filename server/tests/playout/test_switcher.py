@@ -10,6 +10,7 @@ The fake records every request it answered (`fake.requests`), which is how
 the tests check what the switcher did and, as importantly, did not do.
 """
 
+import threading
 from collections.abc import Iterator
 from typing import Any
 
@@ -21,8 +22,8 @@ from baja_studio.adapters.obs_websocket import ObsWebsocketClient
 from baja_studio.fakes.fake_obs import FakeObs
 from baja_studio.fakes.fake_obs_in_process import InProcessObsNetwork
 from baja_studio.playout.config import ObsSettings
-from baja_studio.playout.switcher import ProgramSwitcher, SwitchError
-from tests.conftest import FakeClock
+from baja_studio.playout.switcher import CueError, ProgramSwitcher, SwitchError
+from tests.conftest import FakeClock, eventually
 
 HOST, PORT = "obs.test", 4455
 
@@ -42,7 +43,7 @@ class Rig:
         self.network.plug(HOST, PORT, self.fake)
         self.client = ObsWebsocketClient(clock, self.network.connect)
         self.client.connect(ObsAddress(HOST, PORT), "")
-        self.settings = ObsSettings(host=HOST, return_scene="Main")
+        self.settings = ObsSettings(host=HOST)
         self.switcher = ProgramSwitcher(self.client, lambda: self.settings, clock)
 
     def requests_since(self, start: int) -> list[tuple[str, dict[str, Any]]]:
@@ -80,6 +81,72 @@ def test_the_first_cue_loads_the_clip_into_source_a_parked_on_its_first_frame(ri
     settings = rig.fake.inputs["baja_program_a"].settings
     assert settings["looping"] is False
     assert settings["clear_on_media_end"] is False
+
+
+def test_a_cue_waits_for_obs_to_start_the_source_before_pausing_and_rewinding(rig: Rig) -> None:
+    # Regression, bench 2026-11-08: OBS refused SetMediaInputCursor ("media must
+    # be playing or paused") because the cue rewound a source that had not
+    # started yet, and only the second take worked. The fake now behaves like
+    # OBS: a loaded or restarted file is "opening" until OBS starts it, and
+    # seeking it before then is refused.
+    rig.switcher.cue(clip(1))
+
+    # The order of what was asked: load the file, restart, ask the status
+    # until it plays, then pause and rewind.
+    asked = [
+        (kind, data.get("mediaAction", ""))
+        for kind, data in rig.requests_since(0)
+        if kind != "SetSceneSceneTransitionOverride"
+    ]
+    assert asked == [
+        ("SetInputSettings", ""),
+        ("TriggerMediaInputAction", "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART"),
+        ("GetMediaInputStatus", ""),
+        ("TriggerMediaInputAction", "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_PAUSE"),
+        ("SetMediaInputCursor", ""),
+    ]
+    # And the clip sits on its first frame, ready for a take.
+    assert rig.media("baja_program_a").state == MediaState.PAUSED
+    assert rig.media("baja_program_a").cursor(rig.clock.monotonic()) == 0.0
+
+
+def test_a_cue_whose_source_never_starts_fails_after_three_seconds_naming_its_state(
+    rig: Rig,
+) -> None:
+    # This file never finishes opening in the fake (a file OBS cannot start).
+    rig.fake.stuck_files.add("/clips/1.mp4")
+    failures: list[Exception] = []
+
+    def cue_in_background() -> None:
+        try:
+            rig.switcher.cue(clip(1))
+        except Exception as error:
+            failures.append(error)
+
+    def waiting_between_polls() -> bool:
+        # Asleep in the 0.1 s wait between two status questions (not inside a
+        # request, which waits up to 2 s for OBS's answer).
+        wake_ups = rig.clock.wake_up_times()
+        return bool(wake_ups) and wake_ups[0] <= rig.clock.monotonic() + 0.1 + 1e-6
+
+    # The cue waits on the fake clock, so it runs on its own thread while the
+    # test moves time in 0.1 s steps.
+    worker = threading.Thread(target=cue_in_background)
+    worker.start()
+    for _ in range(40):
+        eventually(lambda: waiting_between_polls() or not worker.is_alive())
+        if not worker.is_alive():
+            break
+        rig.clock.advance(0.1)
+    worker.join(timeout=5)
+
+    # It gave up after about 3 s, saying what OBS reported, and nothing is cued.
+    assert len(failures) == 1
+    assert isinstance(failures[0], CueError)
+    assert "within 3 s" in str(failures[0])
+    assert "OBS_MEDIA_STATE_OPENING" in str(failures[0])
+    assert rig.clock.monotonic() == pytest.approx(3.0, abs=0.15)
+    assert rig.switcher.cued is None
 
 
 def test_cueing_while_a_clip_is_on_air_never_touches_the_source_on_air(rig: Rig) -> None:
@@ -164,16 +231,16 @@ def test_preparing_the_scenes_makes_transitions_into_them_cuts(rig: Rig) -> None
 
 
 def test_returning_with_a_cut_switches_to_the_return_scene(rig: Rig) -> None:
-    assert rig.switcher.go_to_return_scene(fade=False) is True
+    rig.switcher.go_to_scene("Main", fade=False)
 
     assert rig.fake.program_scene == "Main"
     assert "Main" not in rig.fake.transition_overrides
 
 
 def test_returning_with_a_fade_uses_a_temporary_override_on_the_return_scene(rig: Rig) -> None:
-    rig.settings = ObsSettings(host=HOST, return_scene="Main", fade_ms=1500)
+    rig.settings = ObsSettings(host=HOST, fade_ms=1500)
 
-    rig.switcher.go_to_return_scene(fade=True)
+    rig.switcher.go_to_scene("Main", fade=True)
 
     # During the fade, transitions into Main are a 1.5 s fade.
     assert rig.fake.program_scene == "Main"
@@ -186,11 +253,12 @@ def test_returning_with_a_fade_uses_a_temporary_override_on_the_return_scene(rig
     assert rig.override_of("Main") == (None, None)
 
 
-def test_without_a_return_scene_nothing_is_switched(rig: Rig) -> None:
-    rig.settings = ObsSettings(host=HOST, return_scene="")
-
-    assert rig.switcher.go_to_return_scene(fade=False) is False
-    assert rig.fake.requests_of("SetCurrentProgramScene") == []
+def test_only_the_two_playback_scenes_count_as_playback_scenes(rig: Rig) -> None:
+    # The return target is never a playback scene; this is how it is told apart.
+    assert rig.switcher.is_playback_scene("Playback A") is True
+    assert rig.switcher.is_playback_scene("Playback B") is True
+    assert rig.switcher.is_playback_scene("Main") is False
+    assert rig.switcher.is_playback_scene(None) is False
 
 
 def test_scene_events_we_caused_are_recognised_in_order(rig: Rig) -> None:
@@ -214,7 +282,7 @@ def test_a_lost_echo_is_skipped_when_a_later_one_arrives(rig: Rig) -> None:
     # We asked for A and then Main; only the Main report arrives.
     rig.switcher.cue(clip(1))
     rig.switcher.take()
-    rig.switcher.go_to_return_scene(fade=False)
+    rig.switcher.go_to_scene("Main", fade=False)
 
     assert rig.switcher.is_our_scene_change("Main") is True
     # The forgotten "A" was dropped with it, so a real cut to A is not swallowed.
