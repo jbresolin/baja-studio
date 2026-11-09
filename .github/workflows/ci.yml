@@ -83,3 +83,35 @@ jobs:
       - name: Assemble dist\app without Caddy
         if: steps.changes.outputs.build == 'true'
         run: ./installer/build.ps1 -SkipCaddy
+
+  tray:
+    # The tray icon's package (tray/, WP7b). Only app.py needs a desktop; the
+    # installer's smoke test covers that part on a Windows runner.
+    name: Tray (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    defaults:
+      run:
+        working-directory: tray
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install
+        run: pip install -e ".[dev]"
+      - name: Lint (ruff)
+        run: |
+          ruff check .
+          ruff format --check .
+      - name: Type-check (mypy --strict)
+        # Twice, so the Windows-only code (sys.platform == "win32") is checked
+        # on every runner, not just on Windows.
+        run: |
+          mypy
+          mypy --platform win32
+      - name: Test (pytest)
+        run: pytest

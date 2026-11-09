@@ -194,7 +194,7 @@ describe("Settings page", () => {
 const NESTED_SCHEMA = {
   title: "GatewaySettings",
   properties: {
-    hostname: { type: "string", title: "Hostname" },
+    hostname: { type: "string", title: "Hostname", examples: ["live.example.net"] },
     tls: { $ref: "#/$defs/GatewayTls" },
   },
   $defs: {
@@ -234,6 +234,12 @@ describe("Settings page, nested models", () => {
     });
     const user = userEvent.setup();
     showSettingsPage();
+
+    // A schema example shows as the text box's placeholder (greyed out while it is empty).
+    expect(await screen.findByLabelText("Hostname")).toHaveAttribute(
+      "placeholder",
+      "live.example.net",
+    );
 
     // The nested fields are real inputs, not a JSON text box: a dropdown and a password.
     const mode = await screen.findByLabelText("TlsMode");

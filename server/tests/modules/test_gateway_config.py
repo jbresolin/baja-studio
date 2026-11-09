@@ -30,7 +30,7 @@ def test_the_defaults_are_plain_http_to_the_studio_with_no_apps() -> None:
 
 def test_the_cloudflare_token_is_masked_like_every_secret() -> None:
     settings = GatewaySettings.model_validate(
-        {"tls": {"mode": "dns01", "cloudflare_api_token": "abc123"}}
+        {"hostname": "live.example.net", "tls": {"mode": "dns01", "cloudflare_api_token": "abc123"}}
     )
 
     masked = mask_secrets(GatewaySettings, settings.model_dump(mode="json"))

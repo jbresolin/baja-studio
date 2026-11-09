@@ -121,6 +121,7 @@ function FieldInput({ id, schema, property, value, onChange }: FieldInputProps) 
           id={id}
           type={property.secret ? "password" : "text"}
           autoComplete={property.secret ? "new-password" : "off"}
+          placeholder={property.examples?.length ? String(property.examples[0]) : undefined}
           value={String(value ?? "")}
           onChange={(event) => onChange(event.target.value)}
         />

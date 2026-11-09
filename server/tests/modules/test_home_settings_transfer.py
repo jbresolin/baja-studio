@@ -56,7 +56,11 @@ def page(make_app: AppFactory) -> Iterator[Page]:
     with TestClient(make_app(None)) as client:
         studio = Page(client)
         studio.services.settings.update(
-            "gateway", {"tls": {"mode": "dns01", "cloudflare_api_token": TOKEN}}
+            "gateway",
+            {
+                "hostname": "live.example.net",
+                "tls": {"mode": "dns01", "cloudflare_api_token": TOKEN},
+            },
         )
         studio.services.settings.update("playout", {"obs": OBS})
         yield studio

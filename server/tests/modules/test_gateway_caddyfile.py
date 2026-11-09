@@ -37,17 +37,22 @@ REVIEW = {
     "label": "Pipeline review",
 }
 
+HOSTNAME = "live.bajasaebrasil.net"
 CASES: dict[str, dict[str, object]] = {
     # The defaults: TLS off, so plain HTTP on port 80 to the studio.
     "tls-off-defaults": {},
     "tls-off-with-apps": {"proxied_apps": [OVERLAY, REVIEW]},
-    "dns01-studio-only": {"tls": {"mode": "dns01", "cloudflare_api_token": TOKEN}},
+    "dns01-studio-only": {
+        "hostname": HOSTNAME,
+        "tls": {"mode": "dns01", "cloudflare_api_token": TOKEN},
+    },
     "dns01-with-apps": {
+        "hostname": HOSTNAME,
         "tls": {"mode": "dns01", "cloudflare_api_token": TOKEN},
         "proxied_apps": [OVERLAY, REVIEW],
     },
     # A token is not needed to render: Caddy reports the missing token itself.
-    "dns01-without-token": {"tls": {"mode": "dns01"}},
+    "dns01-without-token": {"hostname": HOSTNAME, "tls": {"mode": "dns01"}},
     "custom-addresses": {
         "hostname": "studio.example.net",
         "tls": {"mode": "dns01", "cloudflare_api_token": TOKEN},

@@ -100,7 +100,10 @@ def _ports(settings: GatewaySettings, system: GatewaySystem) -> CheckOutcome:
 
 def _dns(settings: GatewaySettings, system: GatewaySystem) -> CheckOutcome:
     if not settings.hostname:
-        return warning("no hostname is set: phones can only use the PC's address")
+        return warning(
+            "not set: phones can only use the PC's address",
+            "Pick the studio's name and enter it as the hostname in Settings → Gateway.",
+        )
     result = check_dns(settings.hostname, system.resolve, system.list_addresses)
     if result.matches:
         return passed(result.message)

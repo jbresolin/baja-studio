@@ -9,8 +9,11 @@ them "found" points the settings at two empty executable files.
 import stat
 from pathlib import Path
 
+import pytest
+
 from baja_studio.core.readiness import CheckStatus
 from baja_studio.core.system_probes import GIGABYTE
+from baja_studio.core.system_services import INSTALL_DIRECTORY_ENVIRONMENT_VARIABLE
 from baja_studio.playout.config import OBS_NOT_CONFIGURED
 from tests.core.fake_system_probes import FakeSystemProbes
 from tests.modules.playout_studio import (
@@ -156,6 +159,26 @@ def test_tools_that_are_not_found_are_named(playout: PlayoutStudio, tmp_path: Pa
 
     assert result.status == CheckStatus.FAIL
     assert result.detail == f"not found: {tmp_path / 'nowhere' / 'ffmpeg.exe'}"
+
+
+def test_the_tools_line_says_the_bundled_copies_are_used(
+    playout: PlayoutStudio, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # An installed studio: the installer put both tools in <program>\ffmpeg and
+    # told the service where the program folder is. The settings keep the
+    # default names, so the bundled copies are used, whatever PATH has.
+    bundled = tmp_path / "program" / "ffmpeg"
+    bundled.mkdir(parents=True)
+    fake_tools(bundled)
+    monkeypatch.setenv(INSTALL_DIRECTORY_ENVIRONMENT_VARIABLE, str(tmp_path / "program"))
+    playout.configure(tools={"ffprobe_path": "ffprobe", "ffmpeg_path": "ffmpeg"})
+
+    result = run_module_checks(playout.services, "playout", playout.clock)["tools"]
+
+    assert result.status == CheckStatus.OK
+    assert result.detail == (
+        f"ffprobe: bundled ({bundled / 'ffprobe.exe'}); ffmpeg: bundled ({bundled / 'ffmpeg.exe'})"
+    )
 
 
 def test_an_unreachable_orchestrator_only_warns(playout: PlayoutStudio) -> None:

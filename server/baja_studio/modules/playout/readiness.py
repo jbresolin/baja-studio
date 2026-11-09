@@ -6,7 +6,6 @@ when OBS is not connected, the scene check says so as a warning, so one
 stopped OBS is one red line, not four.
 """
 
-import shutil
 from collections.abc import Callable
 from functools import partial
 from pathlib import Path
@@ -18,6 +17,7 @@ from baja_studio.core.readiness import CheckOutcome, ReadinessCheck, failed, pas
 from baja_studio.core.system_probes import disk_space_outcome, writable_problem
 from baja_studio.modules.playout.controller import PlayoutController
 from baja_studio.playout.config import OBS_NOT_CONFIGURED, PlayoutSettings
+from baja_studio.playout.tools import resolve_tools
 
 PLAYOUT_SETTINGS_LINK = "/playout/settings"
 PLAYOUT_PAGE_LINK = "/playout"
@@ -73,8 +73,8 @@ def playout_checks(
             "ffprobe and ffmpeg are found",
             lambda: _tools(settings),
             fix=(
-                "Install ffmpeg (it brings ffprobe) and put the full paths of both in "
-                "Playout → Settings → Tools."
+                "Run the Baja Studio installer again (it brings both), or put the full paths "
+                "of both in Playout → Settings → Tools, or leave them as ffprobe and ffmpeg."
             ),
             link=PLAYOUT_SETTINGS_LINK,
         ),
@@ -183,12 +183,12 @@ def _clip_root(settings: PlayoutSettings) -> CheckOutcome:
 
 
 def _tools(settings: PlayoutSettings) -> CheckOutcome:
-    tools = settings.tools
-    paths = (tools.ffprobe_path, tools.ffmpeg_path)
-    missing = [path for path in paths if shutil.which(path) is None]
+    resolved = resolve_tools(settings.tools)
+    missing = [tool.command for tool in resolved if tool.found_at is None]
     if missing:
         return failed(f"not found: {', '.join(missing)}")
-    return passed(f"{shutil.which(tools.ffprobe_path)}, {shutil.which(tools.ffmpeg_path)}")
+    # Which copy is used (bundled, a configured path, or PATH), so a surprise shows.
+    return passed("; ".join(tool.describe() for tool in resolved))
 
 
 def _orchestrator(settings: PlayoutSettings, status: dict[str, Any]) -> CheckOutcome:

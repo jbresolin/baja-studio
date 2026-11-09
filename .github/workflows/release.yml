@@ -9,6 +9,7 @@ on:
   pull_request:
     paths:
       - "installer/**"
+      - "tray/**"
       - ".github/workflows/release.yml"
   workflow_dispatch:
 
@@ -90,7 +91,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $assets = @("dist/BajaStudio-Setup-$env:VERSION.exe") + (Get-ChildItem smoke -Filter 'BajaStudio-diag-*.zip').FullName
-          $options = @('--title', "Baja Studio $env:VERSION", '--generate-notes')
+          # Our notes (install, upgrade) first; GitHub's list of changes is appended after them.
+          (Get-Content installer/release-notes.md -Raw).Replace('{version}', $env:VERSION) | Set-Content release-notes.md
+          $options = @('--title', "Baja Studio $env:VERSION", '--notes-file', 'release-notes.md', '--generate-notes')
           if ($env:VERSION -match '(a|b|rc)\d+$') { $options += '--prerelease' }
           gh release create $env:GITHUB_REF_NAME @assets @options
           if ($LASTEXITCODE -ne 0) { exit 1 }

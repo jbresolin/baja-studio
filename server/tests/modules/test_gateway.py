@@ -8,6 +8,7 @@ tests move fake time with `step_fake_time` to make a poll happen.
 
 import json
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -15,9 +16,10 @@ from fastapi.testclient import TestClient
 
 from baja_studio.core.module import CommandError
 from baja_studio.core.services import StudioServices
-from baja_studio.core.supervisor import HealthState
+from baja_studio.core.supervisor import HealthState, WorkerSpec
 from baja_studio.core.system_services import GATEWAY_SERVICE
 from baja_studio.modules.gateway import GatewayModule
+from baja_studio.modules.gateway.caddyfile import caddyfile_path
 from baja_studio.modules.gateway.ports import PortHolder
 from baja_studio.modules.gateway.probes import CertificateInfo
 from tests.conftest import (
@@ -32,7 +34,10 @@ from tests.modules.gateway_studio import FAKE_CADDY_VERSION, LAN_ADDRESS, Gatewa
 
 TOKEN = "cf-token-0123456789abcdef"
 OVERLAY = {"path_prefix": "/overlay", "upstream": "127.0.0.1:5000", "label": "BajaOvrLay"}
-TLS_ON = {"tls": {"mode": "dns01", "cloudflare_api_token": TOKEN}}
+TLS_ON = {
+    "hostname": "live.bajasaebrasil.net",
+    "tls": {"mode": "dns01", "cloudflare_api_token": TOKEN},
+}
 CERTIFICATE = CertificateInfo(
     "Let's Encrypt", "live.bajasaebrasil.net", "2027-02-04T12:00:00+00:00"
 )
@@ -236,7 +241,7 @@ def test_a_valid_certificate_is_rechecked_once_a_minute_not_every_poll(
 def test_tls_on_without_a_token_says_to_paste_one(
     services: StudioServices, gateway_fakes: GatewayFakes
 ) -> None:
-    services.settings.update("gateway", {"tls": {"mode": "dns01"}})
+    services.settings.update("gateway", {**TLS_ON, "tls": {"mode": "dns01"}})
 
     eventually(lambda: "paste a Cloudflare API token" in health(services)[1])
 
@@ -266,6 +271,7 @@ def test_the_apply_command_reports_what_it_did(services: StudioServices) -> None
 def test_test_dns_compares_the_name_with_this_pcs_addresses(
     services: StudioServices, gateway_fakes: GatewayFakes
 ) -> None:
+    services.settings.update("gateway", {"hostname": "live.bajasaebrasil.net"})
     gateway_fakes.dns_records["live.bajasaebrasil.net"] = [LAN_ADDRESS]
 
     result = command(services, "test_dns")
@@ -290,3 +296,46 @@ def test_the_token_never_appears_in_the_state(
     command(services, "test_tls")
 
     assert TOKEN not in json.dumps(services.state.snapshot())
+
+
+class GatewayWithoutWatcher(GatewayModule):
+    """The gateway module with its worker left out: only `start()` can write the Caddyfile."""
+
+    def workers(self) -> list[WorkerSpec]:
+        return []
+
+
+def test_the_caddyfile_is_written_before_the_service_answers(
+    make_app: AppFactory, gateway_fakes: GatewayFakes, data_directory: Path
+) -> None:
+    # A fresh install: no Caddyfile yet, and Caddy not running (the installer
+    # starts it only once the studio answers /api/health).
+    gateway_fakes.caddy.stop()
+    app = make_app(
+        lambda registry: [GatewayWithoutWatcher(gateway_fakes.services, gateway_fakes.system())]
+    )
+
+    # Entering the client runs the startup, as the real service does before it
+    # listens; without the watcher, the file can only come from `start()`.
+    with TestClient(app) as client:
+        assert client.get("/api/health").status_code == 200
+        written = caddyfile_path(data_directory).read_text(encoding="utf-8")
+
+    # It is the config for the current settings: the studio behind port 80.
+    assert "reverse_proxy 127.0.0.1:8888" in written
+
+
+def test_an_existing_caddyfile_is_left_for_the_watcher_to_replace(
+    make_app: AppFactory, gateway_fakes: GatewayFakes, data_directory: Path
+) -> None:
+    # An upgrade: the Caddyfile Caddy last accepted is already there.
+    path = caddyfile_path(data_directory)
+    path.parent.mkdir(parents=True)
+    path.write_text("# the config Caddy accepted\n", encoding="utf-8")
+    app = make_app(
+        lambda registry: [GatewayWithoutWatcher(gateway_fakes.services, gateway_fakes.system())]
+    )
+
+    with TestClient(app):
+        # `start()` does not touch it: only an apply Caddy accepted may change it.
+        assert path.read_text(encoding="utf-8") == "# the config Caddy accepted\n"

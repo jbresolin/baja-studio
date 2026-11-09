@@ -3,15 +3,16 @@
     Assembles dist\app, the folder the installer installs to %ProgramFiles%\BajaStudio.
 
 .DESCRIPTION
-    dist\app\python     python.org embeddable Python, with the service and its
-                        dependencies installed from a wheelhouse (no system Python)
+    dist\app\python     python.org embeddable Python, with the service, the tray
+                        (tray\) and their dependencies installed from a wheelhouse
     dist\app\frontend   the built web pages
-    dist\app\caddy      Caddy with the Cloudflare DNS module, built with xcaddy
+    dist\app\caddy      Caddy with the Cloudflare DNS module, built with xcaddy (+ LICENSE.txt)
     dist\app\nssm       NSSM, which runs both as Windows services
-    dist\app\VERSION, dist\app\wheelhouse-manifest.json
+    dist\app\ffmpeg     ffmpeg and ffprobe for playout (+ LICENSE.txt, README.txt)
+    dist\app\baja-studio.ico, dist\app\VERSION, dist\app\wheelhouse-manifest.json
 
     Every download and the Caddy build are checked against the pins in
-    installer\python, installer\nssm and installer\caddy. The version is the one
+    installer\python, installer\nssm, installer\ffmpeg and installer\caddy. The version is the one
     already stamped in server\baja_studio\__init__.py
     (python -m baja_studio.release_tools stamp-version ...).
 
@@ -36,6 +37,7 @@ param(
 $ErrorActionPreference = 'Stop'
 $repository = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $server = Join-Path $repository 'server'
+$tray = Join-Path $repository 'tray'
 $frontend = Join-Path $repository 'frontend'
 $output = [System.IO.Path]::GetFullPath($OutputDirectory)
 $app = Join-Path $output 'app'
@@ -101,17 +103,48 @@ if ($PSCmdlet.ShouldProcess($wheelhouse, 'Build the wheelhouse')) {
     $hostVersion = (Invoke-Native python @('-c', 'import sys; print(sys.version_info[:2] == (3, 12) and sys.maxsize > 2**32)'))
     if ($hostVersion.Trim() -ne 'True') { throw 'build.ps1 needs a 64-bit Python 3.12 on PATH' }
     Invoke-Native python @('-m', 'pip', 'wheel', '--no-deps', '--wheel-dir', $wheelhouse, $server)
-    $requirements = Invoke-Native python @('-m', 'baja_studio.release_tools', 'requirements') $server
+    Invoke-Native python @('-m', 'pip', 'wheel', '--no-deps', '--wheel-dir', $wheelhouse, $tray)
+    $requirements = @(Invoke-Native python @('-m', 'baja_studio.release_tools', 'requirements') $server)
+    # The tray's pins, read from its pyproject (it has no release tools of its own).
+    # (No double quotes in the script: PowerShell would have to escape them for python.exe.)
+    $requirements += Invoke-Native python @('-c',
+        'import sys, tomllib; print(chr(10).join(tomllib.load(open(sys.argv[1], ''rb''))[''project''][''dependencies'']))',
+        (Join-Path $tray 'pyproject.toml'))
     Invoke-Native python (@('-m', 'pip', 'download', '--dest', $wheelhouse, '--only-binary=:all:',
             '--platform', 'win_amd64', '--python-version', '3.12', '--implementation', 'cp') + $requirements)
     Invoke-Native python @('-m', 'baja_studio.release_tools', 'wheelhouse-manifest',
         '--wheelhouse', $wheelhouse, '--output', (Join-Path $app 'wheelhouse-manifest.json')) $server
     # Offline install from the wheelhouse only: what was downloaded and listed is what ships.
     Invoke-Native python @('-m', 'pip', 'install', '--no-index', '--find-links', $wheelhouse,
-        '--target', (Join-Path $pythonDirectory 'Lib\site-packages'), "baja_studio==$version")
+        '--target', (Join-Path $pythonDirectory 'Lib\site-packages'), "baja_studio==$version", 'baja_studio_tray')
     $installed = Invoke-Native (Join-Path $pythonDirectory 'python.exe') @('-c',
         'import baja_studio, fastapi, uvicorn, serial, rtmidi; print(baja_studio.__version__)')
     if ($installed.Trim() -ne $version) { throw "the embedded Python reports $installed, not $version" }
+    # The tray, with its icon frames (pystray itself only loads on a desktop).
+    Invoke-Native (Join-Path $pythonDirectory 'python.exe') @('-c',
+        'from baja_studio_tray.icons import load_frames; print(sorted(load_frames()))') | Out-Host
+}
+
+# --- The icon: the tray's, also the installer's and the shortcuts' --------------------
+if ($PSCmdlet.ShouldProcess((Join-Path $app 'baja-studio.ico'), 'Copy the icon')) {
+    Copy-Item (Join-Path $tray 'baja_studio_tray\assets\baja-studio.ico') (Join-Path $app 'baja-studio.ico')
+}
+
+# --- ffmpeg and ffprobe for playout (durations, thumbnails) ------------------------------
+$ffmpegPin = Read-Pin 'ffmpeg'
+if ($PSCmdlet.ShouldProcess((Join-Path $app 'ffmpeg'), "Unpack ffmpeg $($ffmpegPin.version)")) {
+    $zip = Get-PinnedDownload $ffmpegPin "ffmpeg-$($ffmpegPin.version)-essentials.zip"
+    $unpacked = Join-Path $cache 'ffmpeg'
+    if (Test-Path $unpacked) { Remove-Item $unpacked -Recurse -Force }
+    Expand-Archive $zip -DestinationPath $unpacked
+    $source = Join-Path $unpacked $ffmpegPin.folder_in_zip
+    $target = New-Item -ItemType Directory -Force (Join-Path $app 'ffmpeg')
+    Copy-Item (Join-Path $source 'bin\ffmpeg.exe'), (Join-Path $source 'bin\ffprobe.exe') $target
+    # GPL: the licence and the build's README (its configuration and source links) go along.
+    Copy-Item (Join-Path $source 'LICENSE') (Join-Path $target 'LICENSE.txt')
+    Copy-Item (Join-Path $source 'README.txt') (Join-Path $target 'README.txt')
+    $reported = Invoke-Native (Join-Path $target 'ffprobe.exe') @('-hide_banner', '-version') | Select-Object -First 1
+    if ($reported -notmatch [regex]::Escape($ffmpegPin.version)) { throw "ffprobe reports '$reported'" }
 }
 
 # --- Frontend -------------------------------------------------------------------------
@@ -162,6 +195,10 @@ elseif ($PSCmdlet.ShouldProcess($caddy, "Build Caddy $($caddyPin.caddy_version) 
     foreach ($module in $caddyPin.modules) {
         if ($modules -notcontains $module.caddy_module_id) { throw "Caddy lacks $($module.caddy_module_id)" }
     }
+    # Apache 2.0: the licence ships with the binary; Go's module cache has it from the build.
+    $caddyModule = Invoke-Native go @('mod', 'download', '-json', "github.com/caddyserver/caddy/v2@$($caddyPin.caddy_version)") |
+        Out-String | ConvertFrom-Json
+    Copy-Item (Join-Path $caddyModule.Dir 'LICENSE') (Join-Path (Split-Path $caddy) 'LICENSE.txt')
     # Every Caddyfile the gateway can render (the tests' golden files) must parse.
     foreach ($golden in Get-ChildItem (Join-Path $server 'tests\modules\gateway_golden') -Filter *.Caddyfile) {
         Invoke-Native $caddy @('adapt', '--config', $golden.FullName, '--adapter', 'caddyfile') | Out-Null
