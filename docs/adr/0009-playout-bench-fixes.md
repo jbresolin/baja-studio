@@ -77,6 +77,18 @@ page "11 — WP5b brief". Bench findings: comments on LIVESTACK-35
     were found, via `shutil.which`, and the banner text) at start and when
     the tools settings change. Durations without a value show `?`.
 
+12a. **OBS without an address or a password is `not_configured`**, with
+    one fixed message ("OBS not configured: set its address and password
+    in Playout → Settings"), and the `obs` worker never tries to connect.
+    "No answer" is kept for a configured OBS that does not respond. The
+    readiness `obs` check reads "not configured" from the settings, not
+    from the worker's status (which could still be the initial
+    `not_configured` with no message, so the line depended on timing), and
+    leaves the worker's changing message out: the same situation always
+    gives the same line (`no answer from OBS at host:port`, `OBS at
+    host:port refused the password`). OBS's WebSocket server must therefore
+    have authentication on; the fakes and tests use a password.
+
 ### Library (§3)
 
 13. **Three kinds, computed per row** (`playout/clip_view.py`): `pipeline`

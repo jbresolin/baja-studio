@@ -6,12 +6,18 @@ actions. "Killing OBS" is unplugging the fake from the in-process network;
 "restarting" it is plugging a fake back in.
 """
 
+from typing import Any
+
+import pytest
+
 from baja_studio.core.supervisor import HealthState
 from baja_studio.fakes.fake_obs import FakeObs
+from baja_studio.playout.config import OBS_NOT_CONFIGURED
 from tests.conftest import eventually
 from tests.modules.playout_studio import (
     CLIP_SECONDS,
     OBS_HOST,
+    OBS_PASSWORD,
     OBS_PORT,
     PlayoutStudio,
     ready_studio,
@@ -20,6 +26,32 @@ from tests.modules.playout_studio import (
 
 def health(playout: PlayoutStudio) -> HealthState:
     return playout.services.supervisor.module_health("playout").state
+
+
+@pytest.mark.parametrize("missing", [{"host": ""}, {"password": ""}, {"host": "", "password": ""}])
+def test_without_an_address_or_a_password_no_connection_is_ever_tried(
+    playout: PlayoutStudio, missing: dict[str, str]
+) -> None:
+    # Count every connection that reaches the fake OBS (it greets each one).
+    attempts: list[object] = []
+    open_session = playout.obs.open_session
+
+    def counting_open_session(deliver: Any, close_connection: Any) -> Any:
+        attempts.append(deliver)
+        return open_session(deliver, close_connection)
+
+    playout.obs.open_session = counting_open_session  # type: ignore[method-assign]
+    playout.configure(obs=playout.obs_settings(**missing))
+
+    playout.pass_time(5.0)
+
+    # Not configured, with the fixed words, offline, and never a single attempt.
+    assert playout.state("obs.connection") == "not_configured"
+    assert playout.state("obs.message") == OBS_NOT_CONFIGURED
+    assert playout.services.supervisor.module_health("playout").message == OBS_NOT_CONFIGURED
+    assert health(playout) == HealthState.OFFLINE
+    assert attempts == []
+    assert playout.obs.session_count == 0
 
 
 def test_an_address_where_nothing_answers_is_offline_and_keeps_retrying(
@@ -69,7 +101,7 @@ def test_killing_obs_mid_clip_goes_offline_keeps_the_queue_and_reconnects(
     assert [entry["clip_id"] for entry in playout.state("queue")] == [second]
 
     # OBS comes back, freshly started: program is on "Main", not on the clip.
-    restarted = FakeObs.with_playout_scenes(playout.clock)
+    restarted = FakeObs.with_playout_scenes(playout.clock, password=OBS_PASSWORD)
     playout.network.plug(OBS_HOST, OBS_PORT, restarted)
     playout.soon(lambda: playout.state("obs.connection") == "connected", within_seconds=5)
 
@@ -88,7 +120,7 @@ def test_a_cue_lost_in_an_obs_restart_is_loaded_again_on_reconnect(
 
     playout.network.unplug(OBS_HOST, OBS_PORT)
     eventually(lambda: playout.state("obs.connection") == "offline")
-    restarted = FakeObs.with_playout_scenes(playout.clock)
+    restarted = FakeObs.with_playout_scenes(playout.clock, password=OBS_PASSWORD)
     playout.network.plug(OBS_HOST, OBS_PORT, restarted)
     playout.soon(lambda: playout.state("obs.connection") == "connected", within_seconds=5)
 
@@ -131,7 +163,9 @@ def test_the_position_of_the_clip_on_air_is_published_while_it_plays(
 
 def test_changing_the_obs_address_reconnects_to_the_new_one(playout: PlayoutStudio) -> None:
     playout.connect_obs()
-    other = FakeObs.with_playout_scenes(playout.clock, other_scenes=("Studio",))
+    other = FakeObs.with_playout_scenes(
+        playout.clock, password=OBS_PASSWORD, other_scenes=("Studio",)
+    )
     playout.network.plug("obs2.test", OBS_PORT, other)
 
     playout.configure(obs=playout.obs_settings(host="obs2.test"))

@@ -10,7 +10,7 @@ Settings are on **Playout → Settings** (`/playout/settings`): folders (with
 and on-air actions; the whole document is under *Advanced* as JSON. Where to
 go after a clip is the **Return to** control on the playout page.
 
-Without OBS: `python -m baja_studio.fakes.fake_obs --port 4455` (it now
+Without OBS: `python -m baja_studio.fakes.fake_obs --port 4455 --password P` (it now
 opens files like OBS does, starting them a moment after they are loaded).
 Without the XR18: `python -m baja_studio.fakes.fake_xr18` (see `wp4.md`).
 

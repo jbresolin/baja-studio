@@ -12,6 +12,8 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from baja_studio.core.settings import ModuleSettings
 
 PostClipBehaviour = Literal["return", "hold", "fade"]
+# Shown (state, health, readiness) while OBS has no address or no password.
+OBS_NOT_CONFIGURED = "OBS not configured: set its address and password in Playout → Settings"
 
 
 class StrictModel(BaseModel):
@@ -113,6 +115,11 @@ class ObsSettings(StrictModel):
     # Transition names are localised in OBS (pt-BR: "Corte", "Desvanecer").
     cut_transition: str = Field(default="Cut", min_length=1)
     fade_transition: str = Field(default="Fade", min_length=1)
+
+    @property
+    def is_configured(self) -> bool:
+        """True once both the address and the password are set; until then no connection."""
+        return bool(self.host.strip()) and bool(self.password)
 
     @model_validator(mode="before")
     @classmethod

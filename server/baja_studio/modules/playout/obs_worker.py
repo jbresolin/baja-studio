@@ -3,6 +3,7 @@
 It connects (reconnecting after 0.5, 1, 2, then every 4 s), re-reads the
 program scene on every connect, polls the clip on air at 5 Hz, and hands
 events from the client's reader thread to the controller on this thread.
+No address or no password is `not_configured`, and no connection is tried;
 OBS away is `offline`; a refused password is `degraded`. Library and queue
 keep working either way.
 """
@@ -23,7 +24,7 @@ from baja_studio.adapters.obs_transport import (
 from baja_studio.adapters.obs_websocket import ObsWebsocketClient, ReconnectBackoff
 from baja_studio.core.worker import HealthState, WorkerContext
 from baja_studio.modules.playout.controller import PlayoutController
-from baja_studio.playout.config import PlayoutSettings
+from baja_studio.playout.config import OBS_NOT_CONFIGURED, PlayoutSettings
 
 POLL_INTERVAL_SECONDS = 0.2
 IDLE_INTERVAL_SECONDS = 1.0
@@ -70,10 +71,11 @@ class ObsConnectionWorker:
         try:
             while not worker.should_stop:
                 obs = self._settings().obs
-                if not obs.host:
-                    message = "OBS not configured: set its address in the playout settings"
-                    publisher.publish_obs(connection="not_configured", message=message)
-                    worker.report_health(HealthState.OFFLINE, message)
+                if not obs.is_configured:
+                    # No address or no password: never try, and say so in fixed words
+                    # ("no answer" is for a configured OBS that does not respond).
+                    publisher.publish_obs(connection="not_configured", message=OBS_NOT_CONFIGURED)
+                    worker.report_health(HealthState.OFFLINE, OBS_NOT_CONFIGURED)
                     worker.sleep(IDLE_INTERVAL_SECONDS)
                     continue
                 address = ObsAddress(obs.host, obs.port)

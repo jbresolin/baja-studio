@@ -11,6 +11,7 @@ from pathlib import Path
 
 from baja_studio.core.readiness import CheckStatus
 from baja_studio.core.system_probes import GIGABYTE
+from baja_studio.playout.config import OBS_NOT_CONFIGURED
 from tests.core.fake_system_probes import FakeSystemProbes
 from tests.modules.playout_studio import (
     OBS_HOST,
@@ -77,10 +78,33 @@ def test_obs_stopped_is_one_red_line_and_its_scenes_only_a_warning(
 
 
 def test_obs_not_configured_fails(playout: PlayoutStudio) -> None:
+    # Read from the settings, not the worker's status: the same line whether
+    # or not the worker has published anything yet.
     result = run_module_checks(playout.services, "playout", playout.clock)["obs"]
 
     assert result.status == CheckStatus.FAIL
-    assert result.detail.startswith("not_configured: OBS not configured")
+    assert result.detail == OBS_NOT_CONFIGURED
+
+
+def test_an_address_without_a_password_is_still_not_configured(playout: PlayoutStudio) -> None:
+    playout.configure(obs=playout.obs_settings(password=""))
+
+    result = run_module_checks(playout.services, "playout", playout.clock)["obs"]
+
+    assert (result.status, result.detail) == (CheckStatus.FAIL, OBS_NOT_CONFIGURED)
+
+
+def test_a_configured_obs_that_does_not_respond_is_no_answer(playout: PlayoutStudio) -> None:
+    # Address and password set, but nothing listens there.
+    playout.network.unplug(OBS_HOST, OBS_PORT)
+    playout.configure(obs=playout.obs_settings())
+    playout.soon(lambda: playout.state("obs.connection") == "offline")
+
+    result = run_module_checks(playout.services, "playout", playout.clock)["obs"]
+
+    assert result.status == CheckStatus.FAIL
+    assert result.detail == f"no answer from OBS at {OBS_HOST}:{OBS_PORT}"
+    assert_fix_given(result)
 
 
 def test_missing_scenes_sources_and_transition_are_named(playout: PlayoutStudio) -> None:

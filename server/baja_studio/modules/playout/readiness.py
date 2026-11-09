@@ -17,7 +17,7 @@ from baja_studio.adapters.obs_websocket import ObsWebsocketClient
 from baja_studio.core.readiness import CheckOutcome, ReadinessCheck, failed, passed, warning
 from baja_studio.core.system_probes import disk_space_outcome, writable_problem
 from baja_studio.modules.playout.controller import PlayoutController
-from baja_studio.playout.config import PlayoutSettings
+from baja_studio.playout.config import OBS_NOT_CONFIGURED, PlayoutSettings
 
 PLAYOUT_SETTINGS_LINK = "/playout/settings"
 PLAYOUT_PAGE_LINK = "/playout"
@@ -39,7 +39,7 @@ def playout_checks(
         ReadinessCheck(
             "obs",
             "OBS is connected",
-            lambda: _obs_connected(playout_state.get("obs") or {}),
+            lambda: _obs_connected(settings, playout_state.get("obs") or {}),
             fix=(
                 f"Start OBS on {obs.host or 'the streaming PC'} with its WebSocket server on "
                 f"(Tools → WebSocket Server Settings, port {obs.port}); the password must match "
@@ -113,10 +113,22 @@ def _disk(where: str, path: Path, free_disk_bytes: Callable[[Path], int]) -> Che
     return disk_space_outcome(f"{where} ({path})", free_disk_bytes(path))
 
 
-def _obs_connected(obs: dict[str, Any]) -> CheckOutcome:
-    if obs.get("connection") == "connected":
-        return passed(f"connected to {obs.get('address', 'OBS')}")
-    return failed(f"{obs.get('connection')}: {obs.get('message') or 'no answer'}")
+def _obs_connected(settings: PlayoutSettings, state: dict[str, Any]) -> CheckOutcome:
+    """Not configured is read from the settings, so it never depends on the worker's timing.
+
+    Only a configured OBS is asked about; the worker's message (which changes
+    with each attempt) is left out, so the same situation gives the same line.
+    """
+    obs = settings.obs
+    if not obs.is_configured:
+        return failed(OBS_NOT_CONFIGURED)
+    where = f"{obs.host}:{obs.port}"
+    connection = state.get("connection")
+    if connection == "connected":
+        return passed(f"connected to OBS at {where}")
+    if connection == "auth_failed":
+        return failed(f"OBS at {where} refused the password")
+    return failed(f"no answer from OBS at {where}")
 
 
 def _obs_scenes(

@@ -9,7 +9,7 @@ line, e.g. `web:3fa1c2d4`; the command log names that page's actions with
 the same id.
 
 Without OBS: `python -m baja_studio.fakes.fake_obs --port 4455` plays an OBS
-already set up as below (host `127.0.0.1`; `--password P` to require one,
+already set up as below (host `127.0.0.1`; `--password P` is required since WP5b, which never connects without one;
 `--duration 8` for 8 s clips). Without the VPS:
 `python -m baja_studio.fakes.fake_orchestrator --token T --from-folder <clips folder>`
 announces every `<prova>/<car>/<passagem>.mp4` under that folder (base URL

@@ -40,6 +40,8 @@ from tests.core.fake_system_probes import FakeSystemProbes
 
 OBS_HOST = "obs.test"
 OBS_PORT = 4455
+# Playout never connects without a password, so the fake OBS asks for one.
+OBS_PASSWORD = "obs-secret"
 ORCHESTRATOR_URL = "http://orchestrator.test:8080"
 ORCHESTRATOR_TOKEN = "studio-token"
 HOOK_URL = "http://overlay.test/hook"
@@ -98,7 +100,7 @@ class PlayoutStudio:
         self.services.settings.update("playout", sections)
 
     def obs_settings(self, **overrides: Any) -> dict[str, Any]:
-        return {"host": OBS_HOST, "port": OBS_PORT, **overrides}
+        return {"host": OBS_HOST, "port": OBS_PORT, "password": OBS_PASSWORD, **overrides}
 
     def connect_obs(self, **overrides: Any) -> None:
         """Point playout at the fake OBS and wait until it reports `connected`."""
@@ -171,7 +173,9 @@ def playout(
     playout_extra_modules: list[Module],
 ) -> Iterator[PlayoutStudio]:
     network = InProcessObsNetwork()
-    obs = FakeObs.with_playout_scenes(fake_clock, duration_for=lambda _file: CLIP_SECONDS)
+    obs = FakeObs.with_playout_scenes(
+        fake_clock, password=OBS_PASSWORD, duration_for=lambda _file: CLIP_SECONDS
+    )
     network.plug(OBS_HOST, OBS_PORT, obs)
     orchestrator = FakeOrchestrator(ORCHESTRATOR_TOKEN)
     prober = FakeProber()
