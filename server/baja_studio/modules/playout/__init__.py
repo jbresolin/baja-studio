@@ -50,11 +50,13 @@ from baja_studio.playout.probe import MediaProber, Prober, tools_status
 from baja_studio.playout.queue_store import QueueStore
 from baja_studio.playout.schema import create_playout_tables
 from baja_studio.playout.switcher import ProgramSwitcher
+from baja_studio.playout.tools import resolve_tools
 
 
 def real_prober(tools: ToolsSettings) -> Prober:
-    """ffprobe/ffmpeg at the configured paths."""
-    return MediaProber(tools.ffprobe_path, tools.ffmpeg_path)
+    """ffprobe/ffmpeg: the installer's copies, or the configured paths (`playout/tools.py`)."""
+    ffprobe, ffmpeg = resolve_tools(tools)
+    return MediaProber(ffprobe.command, ffmpeg.command)
 
 
 class PlayoutModule(Module):

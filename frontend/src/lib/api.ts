@@ -35,6 +35,8 @@ export interface JsonSchemaProperty {
   $ref?: string;
   anyOf?: JsonSchemaProperty[];
   secret?: boolean;
+  /** Example values; the first is shown greyed out in an empty text box. */
+  examples?: unknown[];
   /** Edited on the module's own page (e.g. the agents list), so the form skips it. */
   managed_elsewhere?: boolean;
   /** The fields of a nested model (`type: "object"`). */

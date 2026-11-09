@@ -12,7 +12,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 
 from baja_studio.core.settings import ModuleSettings
 
-DEFAULT_HOSTNAME = "live.bajasaebrasil.net"
+# No default name: which one phones open is João's choice (ADR 0010); until then, the LAN address.
+DEFAULT_HOSTNAME = ""
+HOSTNAME_EXAMPLE = "live.bajasaebrasil.net"
 DEFAULT_STUDIO_UPSTREAM = "127.0.0.1:8888"
 DEFAULT_ADMIN_API = "127.0.0.1:2019"
 
@@ -101,7 +103,11 @@ class GatewaySettings(ModuleSettings):
 
     hostname: str = Field(
         default=DEFAULT_HOSTNAME,
-        description="The name phones open; its DNS A record points at this PC's LAN address.",
+        description=(
+            "The name phones open; its DNS A record points at this PC's LAN address. "
+            "Empty: phones use the PC's address."
+        ),
+        examples=[HOSTNAME_EXAMPLE],
     )
     tls: GatewayTls = Field(default_factory=GatewayTls)
     studio_upstream: str = Field(

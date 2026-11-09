@@ -294,6 +294,7 @@ frontend/src/
   components/      shared UI pieces (badges, the schema-driven form)
 frontend/tests/    Vitest tests
 installer/         build.ps1, the Inno Setup script, pins, the smoke test
+tray/              the status icon in the taskbar (baja_studio_tray, its own tests)
 ```
 
 To add a module, see "Modules" in [docs/conventions.md](docs/conventions.md).

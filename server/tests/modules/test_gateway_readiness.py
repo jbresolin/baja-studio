@@ -27,11 +27,25 @@ OVERLAY = {"path_prefix": "/overlay", "upstream": "127.0.0.1:5000", "label": "Ba
 
 @pytest.fixture
 def services(make_app: AppFactory, gateway_fakes: GatewayFakes) -> Iterator[StudioServices]:
-    """An app with just the gateway module; its name resolves to this PC."""
+    """An app with just the gateway module; its name is set and resolves to this PC."""
     gateway_fakes.dns_records[HOSTNAME] = [LAN_ADDRESS]
     app = make_app(lambda registry: [GatewayModule(gateway_fakes.services, gateway_fakes.system())])
     with TestClient(app):
-        yield app.state.services
+        services: StudioServices = app.state.services
+        services.settings.update("gateway", {"hostname": HOSTNAME})
+        yield services
+
+
+def test_no_hostname_yet_says_not_set(services: StudioServices, fake_clock: FakeClock) -> None:
+    # A fresh install has no hostname until João picks the studio's name.
+    services.settings.update("gateway", {"hostname": ""})
+
+    result = run_module_checks(services, "gateway", fake_clock)["dns"]
+
+    # A warning, not a failure: phones can still open the PC's address.
+    assert result.status == CheckStatus.WARN
+    assert result.detail.startswith("not set")
+    assert_fix_given(result)
 
 
 def certificate_expiring(fake_clock: FakeClock, days: int) -> CertificateInfo:

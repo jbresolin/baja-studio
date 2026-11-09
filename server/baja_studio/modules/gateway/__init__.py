@@ -28,6 +28,12 @@ from baja_studio.core.readiness import ReadinessCheck
 from baja_studio.core.supervisor import DeviceOfflineError, HealthState, WorkerContext, WorkerSpec
 from baja_studio.core.system_services import NotInstalledServiceControl, ServiceControl
 from baja_studio.modules.gateway.admin_api import CaddyAdminClient, CaddyUnreachableError
+from baja_studio.modules.gateway.caddyfile import (
+    caddyfile_path,
+    certificate_storage,
+    render_caddyfile,
+    write_caddyfile,
+)
 from baja_studio.modules.gateway.config import GatewaySettings, TlsMode
 from baja_studio.modules.gateway.controller import GatewayApplyError, GatewayController
 from baja_studio.modules.gateway.probes import TlsProbeError, check_dns, check_upstream
@@ -102,6 +108,7 @@ class GatewayModule(Module):
             context.logger,
         )
         self._tls_checked_at = None
+        self._write_caddyfile_if_missing(context)
         self._apply_requested.set()
         self._publish_settings(self._settings())
         if not self._subscribed:
@@ -168,6 +175,19 @@ class GatewayModule(Module):
                 HealthState.DEGRADED if problems else HealthState.OK, "; ".join(problems)
             )
             worker.sleep(POLL_SECONDS)
+
+    def _write_caddyfile_if_missing(self, context: ModuleContext) -> None:
+        """Make sure Caddy has a config before this service first answers `/api/health`.
+
+        Modules start before the service listens, and the installer starts the
+        gateway service only once `/api/health` answers (ADR 0010), so Caddy's
+        first start always finds a file. An existing file is left alone: it is
+        the last config Caddy accepted, and the worker's apply replaces it.
+        """
+        path = caddyfile_path(context.data_directory)
+        if not path.is_file():
+            text = render_caddyfile(self._settings(), certificate_storage(context.data_directory))
+            write_caddyfile(path, text)
 
     def _why_caddy_is_down(self, settings: GatewaySettings) -> str:
         """Another program on Caddy's ports is the usual cause; publish it with the fix."""

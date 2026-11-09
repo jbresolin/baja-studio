@@ -1,0 +1,57 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "baja_studio_tray"
+# Shipped only inside the installer, next to the service; the version the
+# menu shows is the service's (from /api/health), so this one never changes.
+version = "1.0.0"
+description = "Baja Studio tray icon: the service's status at a glance, and shortcuts"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    # The tray icon and its menu (Win32 shell API underneath); see ADR 0010.
+    "pystray==0.19.5",
+    "six==1.17.0",
+    # The icon frames and the status dot.
+    "pillow==13.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest==9.2.0",
+    "ruff==0.17.3",
+    "mypy==2.4.1",
+]
+
+[project.scripts]
+baja-studio-tray = "baja_studio_tray.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["baja_studio_tray*"]
+
+[tool.setuptools.package-data]
+baja_studio_tray = ["assets/*.ico"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"
+faulthandler_timeout = 60
+filterwarnings = ["error"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP", "N", "SIM", "RUF"]
+
+[tool.mypy]
+strict = true
+python_version = "3.12"
+files = ["baja_studio_tray", "tests"]
+
+[[tool.mypy.overrides]]
+# pystray ships no type information; only app.py touches it.
+module = ["pystray", "pystray.*"]
+ignore_missing_imports = true

@@ -220,6 +220,13 @@ reading its tests.
   `core/system_services.py` (`InstallLayout`, `ServiceControl`), never a
   hard-coded path. Run from a checkout there is no service, and
   `NotInstalledServiceControl` says so.
+- A program the installer bundles for a module (ffmpeg) is found at use time
+  from `InstallLayout` while the setting keeps its default bare name; never
+  write install paths into settings as defaults (`playout/tools.py`).
+- Anything on the desktop (the tray icon, `tray/`) is only a client of the
+  service: it reads `/api/health`, runs commands through `/api/commands`,
+  keeps no state, never imports `baja_studio`, and nothing breaks when it is
+  closed.
 - **Secrets never go to a file.** A secret a program needs (the Cloudflare
   token for Caddy) reaches it through the service's environment
   (`nssm set <service> AppEnvironmentExtra`), set by the module that owns it;

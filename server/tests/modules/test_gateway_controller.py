@@ -30,7 +30,10 @@ def settings_with(**values: Any) -> GatewaySettings:
     return GatewaySettings.model_validate(values)
 
 
-TLS_ON = {"tls": {"mode": "dns01", "cloudflare_api_token": TOKEN}}
+TLS_ON = {
+    "hostname": "live.bajasaebrasil.net",
+    "tls": {"mode": "dns01", "cloudflare_api_token": TOKEN},
+}
 
 
 @pytest.fixture
@@ -153,7 +156,12 @@ def test_nssm_failing_is_reported_as_an_apply_error(
 
 def test_the_environment_holds_the_token_only_when_tls_uses_it() -> None:
     assert desired_gateway_environment(settings_with(**TLS_ON)) == {"CLOUDFLARE_API_TOKEN": TOKEN}
-    assert desired_gateway_environment(settings_with(tls={"mode": "dns01"})) == {}
+    assert (
+        desired_gateway_environment(
+            settings_with(hostname="live.example.net", tls={"mode": "dns01"})
+        )
+        == {}
+    )
     assert (
         desired_gateway_environment(settings_with(tls={"mode": "off", "cloudflare_api_token": "x"}))
         == {}

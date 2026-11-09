@@ -2,12 +2,13 @@
 
 This is for the streaming PC (Windows 10 or 11, 64-bit). You need an
 administrator account. Nothing has to be installed first: the installer
-brings its own Python, Caddy and NSSM.
+brings its own Python, Caddy, NSSM, and ffmpeg/ffprobe for playout.
 
 ## What the installer does
 
 - Copies the program to `C:\Program Files\BajaStudio\` (Python, the web
-  pages, Caddy, NSSM).
+  pages, Caddy, NSSM, and `ffmpeg\` with ffmpeg and ffprobe, which playout
+  uses for clip durations and thumbnails).
 - Keeps the data in `C:\ProgramData\BajaStudio\` (you can pick another folder
   on the first install): the settings and playout queue (`baja-studio.sqlite3`),
   `logs\`, `diagnostics\`, and `caddy\` (Caddy's config and certificates).
@@ -15,12 +16,15 @@ brings its own Python, Caddy and NSSM.
   themselves if they stop:
   - **Baja Studio** (`BajaStudio`): the studio, on port 8888;
   - **Baja Studio gateway** (`BajaStudioGateway`): Caddy, on ports 80 and 443.
-    It starts after the studio.
+    It starts once the studio answers, because the studio writes its config.
+- Shows the **Baja Studio status icon** in the taskbar for everyone who logs
+  on (an option, ticked by default; see *The status icon* below).
 - Opens the firewall for TCP 80, 443 and 8888 on **private and domain**
   networks only (one rule, "Baja Studio (LAN)"). Untick the option if you do
   not want that.
 - Adds a Start-menu folder **Baja Studio**: *Baja Studio* (opens the page),
-  *Baja Studio logs* (opens the logs folder), *Uninstall Baja Studio*.
+  *Baja Studio logs* (opens the logs folder), *Baja Studio status icon*
+  (starts the icon if it was closed), *Uninstall Baja Studio*.
 
 No file is ever edited by hand: everything is set in the web page, including
 the gateway (Settings → Gateway).
@@ -32,19 +36,54 @@ the gateway (Settings → Gateway).
 2. Run it. Windows shows **"Windows protected your PC"** (SmartScreen),
    because the installer is not signed yet: click **More info**, then
    **Run anyway**. Accept the administrator prompt.
-3. Click through: welcome → data folder → firewall option → install.
+3. Click through: welcome → data folder → options (firewall, status icon) →
+   install. Near the end the installer shows *Waiting for Baja Studio to
+   start…*: **the first start takes about 10 s** before the studio answers
+   and the gateway (port 80) is up.
 4. At the end, leave *Open Baja Studio in the browser* ticked: the home page
    opens at `http://localhost:8888`, with every module and the version at the
-   bottom.
+   bottom. *Show the Baja Studio status icon now* puts the icon in the
+   taskbar without logging off.
 
 From a phone on the same network, open `http://<PC's LAN address>:8888`.
 
+## The status icon
+
+The Baja car in the taskbar (by the clock; Windows may tuck it under the
+**^** arrow: drag it out to keep it visible) shows the service's state with
+a dot, checked every 5 seconds:
+
+- **green**: every module is fine;
+- **amber**: a module has a problem; hover for which (on a PC where playout
+  or audio is not set up yet, they count as problems);
+- **red**: the service is not answering.
+
+Right-click (or double-click to open the page): *Abrir o Baja Studio*,
+*Verificação antes do evento (Readiness)*, *Reiniciar os serviços* (asks for
+administrator rights, then restarts the gateway and the studio in order),
+*Abrir a pasta de logs*, *Gerar pacote de diagnóstico* (saved to your
+Downloads folder and opened), the version, *Fechar este ícone*. On a Windows
+that is not in Portuguese the menu is in English.
+
+The icon only shows and asks; closing it changes nothing. It starts again at
+the next logon, or from Start menu → Baja Studio → *Baja Studio status icon*.
+
+## ffmpeg and ffprobe
+
+Playout uses the copies in `C:\Program Files\BajaStudio\ffmpeg\` (ffmpeg
+9.0.2, gyan.dev "essentials" build, GPL; its `LICENSE.txt` and `README.txt`
+are in the same folder). Nothing needs installing. Playout → Settings → Tools
+say `ffprobe` and `ffmpeg`, which means "the bundled copies, or PATH if
+there are none". A full path typed there is used instead. The readiness
+check says which copy is in use.
+
 ## Upgrade
 
-Run the newer installer. It stops both services, replaces the program folder,
-and starts them again. The data folder is not touched: settings, the queue,
-logs and certificates survive. The version at the bottom of the home page
-changes.
+Run the newer installer. It closes the status icons, stops both services,
+replaces the program folder, and starts them again. The data folder is not
+touched: settings, the queue, logs and certificates survive. The version at
+the bottom of the home page changes. The release notes say whether an upgrade
+needs anything more (from v0.1.0 to v0.2.0: nothing).
 
 ## Uninstall
 
@@ -63,6 +102,11 @@ BajaStudio-Setup-<version>.exe /VERYSILENT /SUPPRESSMSGBOXES [/DATADIR=D:\Studio
 A silent uninstall keeps the data unless given `/PURGEDATA=1`.
 
 ## HTTPS on live.bajasaebrasil.net
+
+A fresh install has **no hostname**: phones use the PC's address, and the
+readiness check says *not set* until one is chosen. This section uses
+`live.bajasaebrasil.net`; use the same name in every step (Cloudflare, the
+gateway settings, the hEX).
 
 Phones only treat the page as a secure context (needed for some browser
 features) over HTTPS without warnings. The gateway gets a real Let's Encrypt
