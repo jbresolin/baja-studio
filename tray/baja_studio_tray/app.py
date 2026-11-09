@@ -156,6 +156,11 @@ def _multi_size_icon_class(pystray: Any) -> Any:
     from pystray._util import win32
 
     class MultiSizeIcon(pystray.Icon):  # type: ignore[misc,unused-ignore]
+        # Overrides pystray's private `_assert_icon_handle` and sets its private
+        # `_icon_handle`, which is why pystray is pinned to exactly 0.19.5. The
+        # handle is declared here because pystray has no types: the win32 backend
+        # sets it to None, then to LoadImage's HANDLE (c_void_p, so an int).
+        _icon_handle: int | None
         ico_path: Path | None = None
 
         def _assert_icon_handle(self) -> None:
