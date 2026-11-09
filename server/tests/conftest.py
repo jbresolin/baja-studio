@@ -159,6 +159,11 @@ class FakeClock:
         sleeping = self.sleeping_threads()
         return all(ident in sleeping or ident not in alive for ident in thread_ids)
 
+    def wake_up_time_of(self, thread_id: int | None) -> float | None:
+        """When one thread blocked in `wait` will wake, or None if it is not waiting."""
+        with self._condition:
+            return self._sleeper_deadlines.get(thread_id) if thread_id is not None else None
+
     def wake_up_times(self) -> list[float]:
         """The fake times at which the currently sleeping threads will wake, earliest first."""
         with self._condition:

@@ -63,3 +63,83 @@ def test_post_clip_accepts_only_return_hold_or_fade() -> None:
     # The three behaviours the brief lists; anything else is refused.
     with pytest.raises(ValidationError):
         PlayoutSettings.model_validate({"obs": {"post_clip": "loop"}})
+
+
+def test_a_folder_given_as_a_plain_string_is_refused_naming_the_field() -> None:
+    # Regression, bench 2026-11-08: ["D:/clips"] was saved, and the module then
+    # said "no delivery folder". The save must fail and say what shape is wanted.
+    with pytest.raises(ValidationError) as refused:
+        PlayoutSettings.model_validate({"sources": {"local_folders": ["D:/clips"]}})
+
+    message = str(refused.value)
+    assert "local_folders[0] must be an object like" in message
+    assert "'D:/clips'" in message
+
+
+def test_a_folder_needs_a_path() -> None:
+    with pytest.raises(ValidationError):
+        PlayoutSettings.model_validate({"sources": {"local_folders": [{"path": "  "}]}})
+
+
+def test_the_receiver_root_is_the_marked_folder_else_the_first() -> None:
+    marked = PlayoutSettings.model_validate(
+        {
+            "sources": {
+                "local_folders": [
+                    {"path": "/sponsors", "label": "Patrocinadores"},
+                    {"path": "/clips", "receiver_root": True},
+                ]
+            }
+        }
+    )
+    unmarked = PlayoutSettings.model_validate(
+        {"sources": {"local_folders": [{"path": "/clips"}, {"path": "/sponsors"}]}}
+    )
+
+    root = marked.sources.receiver_root()
+    assert root is not None and root.path == "/clips"
+    # WP5 settings had no flag: the first folder stays the delivery folder.
+    root = unmarked.sources.receiver_root()
+    assert root is not None and root.path == "/clips"
+    assert PlayoutSettings().sources.receiver_root() is None
+
+
+def test_only_one_folder_can_be_the_receiver_root() -> None:
+    with pytest.raises(ValidationError, match="only one folder can be the receiver root"):
+        PlayoutSettings.model_validate(
+            {
+                "sources": {
+                    "local_folders": [
+                        {"path": "/a", "receiver_root": True},
+                        {"path": "/b", "receiver_root": True},
+                    ]
+                }
+            }
+        )
+
+
+def test_settings_saved_before_wp5b_still_load_without_their_return_scene() -> None:
+    # The return scene moved to a control on the playout page; an old saved
+    # document (or export) still carrying it must load, and drops it.
+    settings = PlayoutSettings.model_validate({"obs": {"host": "pc", "return_scene": "Main"}})
+
+    assert settings.obs.host == "pc"
+    assert "return_scene" not in settings.obs.model_dump()
+    assert PlayoutSettings.settings_version == 2
+
+
+def test_on_air_actions_default_to_none_and_name_module_command_and_args() -> None:
+    assert PlayoutSettings().on_air_actions.on_clip_start == []
+
+    settings = PlayoutSettings.model_validate(
+        {
+            "on_air_actions": {
+                "on_clip_start": [
+                    {"module": "audio", "command": "run_macro", "args": {"macro": "mute"}}
+                ]
+            }
+        }
+    )
+
+    (action,) = settings.on_air_actions.on_clip_start
+    assert (action.module, action.command, action.args) == ("audio", "run_macro", {"macro": "mute"})

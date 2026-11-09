@@ -6,6 +6,7 @@ Each call has a timeout, so a file on a dead network share cannot hang the
 probe worker.
 """
 
+import shutil
 import subprocess
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -100,6 +101,30 @@ class MediaProber:
             message = (completed.stderr or "").strip().splitlines()
             raise ProbeError(message[-1] if message else f"{command[0]} failed")
         return completed.stdout or ""
+
+
+def tools_status(
+    ffprobe_path: str, ffmpeg_path: str, which: Callable[[str], str | None] = shutil.which
+) -> dict[str, str | None]:
+    """Where ffprobe and ffmpeg were found (None if not), and the page's banner text.
+
+    With ffprobe missing nothing gets a duration or a thumbnail; with only
+    ffmpeg missing, durations work but thumbnails do not. Bundling both is
+    the installer's job (WP7b); until then the page says what to do.
+    """
+    ffprobe, ffmpeg = which(ffprobe_path), which(ffmpeg_path)
+    missing = [name for name, found in (("ffprobe", ffprobe), ("ffmpeg", ffmpeg)) if not found]
+    problem = None
+    if ffprobe is None:
+        problem = (
+            f"durations and thumbnails unavailable — {' and '.join(missing)} not found; "
+            "set the path in Settings or install ffmpeg"
+        )
+    elif ffmpeg is None:
+        problem = (
+            "thumbnails unavailable — ffmpeg not found; set its path in Settings or install ffmpeg"
+        )
+    return {"ffprobe": ffprobe, "ffmpeg": ffmpeg, "problem": problem}
 
 
 def thumbnail_at(duration_s: float) -> float:

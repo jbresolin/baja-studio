@@ -73,6 +73,13 @@ reading its tests.
   tables, so the settings export never carries it. When a settings change
   makes older exported files mean something different, raise the model's
   `settings_version`.
+- **A module that drives another module** (playout's on-air actions running
+  audio macros) does it through the registry's command path: `main.py`
+  hands it `registry.dispatch_command`, and it sends with a source naming
+  itself (`playout:on_air`), so the command log shows who did what. It
+  queues the commands and sends them from its own worker, never under its
+  lock and never in the middle of a take; a refusal (the other module is
+  off) is logged and shown, and never stops what the module was doing.
 - Log with `context.logger` (it tags records with the module). When using a
   plain logger, pass `extra={"studio_module": name}` — `module` is reserved
   by Python's `LogRecord`.

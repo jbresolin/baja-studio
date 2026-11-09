@@ -63,7 +63,8 @@ class LibraryWorkers:
     def run_scanner(self, worker: WorkerContext) -> None:
         """Worker body: scan, apply, report unreadable folders, sleep 5 s."""
         while not worker.should_stop:
-            scan = scan_folders(self._settings().sources.local_folders)
+            sources = self._settings().sources
+            scan = scan_folders(sources.local_folders, sources.receiver_root())
             changed = self._library.apply_scan(scan.files)
             self._publisher.publish_clips(changed)
             self._publisher.publish_folder_errors(scan.errors)
@@ -122,8 +123,12 @@ class LibraryWorkers:
                     worker.report_health(HealthState.OK)
                     worker.sleep(SYNC_IDLE_SECONDS)
                     continue
-                if not settings.local_folders:
-                    message = "no delivery folder: add the receiver's clip root as the first folder"
+                delivery = settings.receiver_root()
+                if delivery is None:
+                    message = (
+                        "no delivery folder: add the receiver's clip root in the playout "
+                        "settings and mark it as the receiver root"
+                    )
                     self._publisher.publish_sync(_sync_status("error", last_success_at, message))
                     worker.report_health(HealthState.DEGRADED, message)
                     worker.sleep(orchestrator.poll_interval_s)
@@ -145,7 +150,6 @@ class LibraryWorkers:
                     worker.report_health(HealthState.DEGRADED, f"orchestrator: {error}")
                     worker.sleep(orchestrator.poll_interval_s)
                     continue
-                delivery = settings.local_folders[0]
                 changed = self._library.merge_manifest(
                     [entry.as_manifest_clip() for entry in manifest.clips],
                     delivery.path,

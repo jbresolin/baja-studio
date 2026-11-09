@@ -17,6 +17,7 @@ from baja_studio.playout.probe import (
     MediaProber,
     ProbeError,
     thumbnail_at,
+    tools_status,
 )
 
 
@@ -141,3 +142,31 @@ def test_ffmpeg_writing_no_file_is_a_probe_error(tmp_path: Path) -> None:
 def test_the_thumbnail_is_taken_one_second_in_or_halfway_through_a_short_clip() -> None:
     assert thumbnail_at(30.0) == 1.0
     assert thumbnail_at(1.2) == pytest.approx(0.6)
+
+
+def test_with_both_tools_found_there_is_no_banner() -> None:
+    status = tools_status("ffprobe", "ffmpeg", which=lambda name: f"/usr/bin/{name}")
+
+    assert status == {"ffprobe": "/usr/bin/ffprobe", "ffmpeg": "/usr/bin/ffmpeg", "problem": None}
+
+
+def test_without_ffprobe_the_banner_says_durations_and_thumbnails_are_unavailable() -> None:
+    # Regression, bench 2026-11-09: ffprobe was not on PATH and the page showed
+    # dashes and grey boxes with no explanation.
+    status = tools_status(
+        "ffprobe", "ffmpeg", which=lambda name: "/usr/bin/ffmpeg" if name == "ffmpeg" else None
+    )
+
+    assert status["problem"] == (
+        "durations and thumbnails unavailable — ffprobe not found; "
+        "set the path in Settings or install ffmpeg"
+    )
+
+
+def test_without_ffmpeg_only_thumbnails_are_unavailable() -> None:
+    status = tools_status(
+        "ffprobe", "ffmpeg", which=lambda name: "/usr/bin/ffprobe" if name == "ffprobe" else None
+    )
+
+    assert status["problem"] is not None
+    assert status["problem"].startswith("thumbnails unavailable — ffmpeg not found")

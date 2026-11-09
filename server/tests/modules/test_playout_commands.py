@@ -97,11 +97,12 @@ def test_return_without_a_return_scene_is_refused_and_the_clip_stays_on_air(
     playout: PlayoutStudio,
 ) -> None:
     first, _, _ = ready_studio(playout)
-    playout.connect_obs(return_scene="")
+    # "Return to: chosen scene" with no scene picked yet.
+    playout.command("set_return_target", mode="chosen")
     playout.command("queue_add", clip_ids=[first])
     playout.command("take", cue_if_needed=True)
 
-    with pytest.raises(CommandError, match="no return scene"):
+    with pytest.raises(CommandError, match="no return scene chosen"):
         playout.command("return_to_scene")
 
     assert playout.state("program")["clip"]["id"] == first

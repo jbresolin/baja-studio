@@ -25,25 +25,35 @@ class QueueStore:
         self._clock = clock
 
     def entries(self) -> list[dict[str, Any]]:
-        """The queue in play order: entry_id, clip_id, added_by, added_at."""
+        """The queue in play order: entry_id, clip_id, added_by, added_at, playlist_id."""
         with self._database.transaction() as connection:
             rows = connection.execute(
-                "SELECT entry_id, clip_id, added_by, added_at FROM playout_queue "
+                "SELECT entry_id, clip_id, added_by, added_at, playlist_id FROM playout_queue "
                 "ORDER BY position, entry_id"
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def add(self, clip_ids: list[int], added_by: str, at_front: bool = False) -> list[int]:
-        """Append clips (or put them first, in the given order); returns the new entry ids."""
+    def add(
+        self,
+        clip_ids: list[int],
+        added_by: str,
+        at_front: bool = False,
+        playlist_id: int | None = None,
+    ) -> list[int]:
+        """Append clips (or put them first, in the given order); returns the new entry ids.
+
+        `playlist_id` marks entries queued from a playlist (its on-air
+        actions and its name in the aired log follow them).
+        """
         now = self._clock.now_utc().isoformat()
         ids = []
         with self._database.transaction() as connection:
             existing = [row[0] for row in connection.execute(_ORDERED_IDS)]
             for clip_id in clip_ids:
                 cursor = connection.execute(
-                    "INSERT INTO playout_queue (position, clip_id, added_by, added_at) "
-                    "VALUES (0, ?, ?, ?)",
-                    (clip_id, added_by, now),
+                    "INSERT INTO playout_queue (position, clip_id, added_by, added_at, "
+                    "playlist_id) VALUES (0, ?, ?, ?, ?)",
+                    (clip_id, added_by, now, playlist_id),
                 )
                 ids.append(int(cursor.lastrowid or 0))
             order = ids + existing if at_front else existing + ids
@@ -102,12 +112,15 @@ class QueueStore:
                 (key, json.dumps(value)),
             )
 
-    def start_airing(self, clip_id: int, title: str, started_at: str) -> int:
-        """Log that a clip went to air; returns the log entry id."""
+    def start_airing(
+        self, clip_id: int, title: str, started_at: str, playlist: str | None = None
+    ) -> int:
+        """Log that a clip went to air (from `playlist`, if named); returns the log entry id."""
         with self._database.transaction() as connection:
             cursor = connection.execute(
-                "INSERT INTO playout_aired (clip_id, title, started_at) VALUES (?, ?, ?)",
-                (clip_id, title, started_at),
+                "INSERT INTO playout_aired (clip_id, title, started_at, playlist) "
+                "VALUES (?, ?, ?, ?)",
+                (clip_id, title, started_at, playlist),
             )
         return int(cursor.lastrowid or 0)
 
@@ -123,7 +136,8 @@ class QueueStore:
         """Every airing, oldest first."""
         with self._database.transaction() as connection:
             rows = connection.execute(
-                "SELECT id, clip_id, title, started_at, ended_at FROM playout_aired ORDER BY id"
+                "SELECT id, clip_id, title, started_at, ended_at, playlist FROM playout_aired "
+                "ORDER BY id"
             ).fetchall()
         return [dict(row) for row in rows]
 

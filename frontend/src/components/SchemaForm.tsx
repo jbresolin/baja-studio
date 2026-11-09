@@ -8,6 +8,8 @@
  * Later work packages can add field kinds here and every Settings page gains them.
  */
 
+import { useState } from "react";
+
 import type { JsonSchemaProperty, SettingsSchema, SettingsValues } from "../lib/api";
 
 interface SchemaFormProps {
@@ -168,18 +170,29 @@ function NestedFields({ id, schema, property, value, onChange }: FieldInputProps
 }
 
 function JsonFieldInput({ id, value, onChange }: Omit<FieldInputProps, "property" | "schema">) {
+  // Text that is not JSON (yet) changes nothing; say so, since a backslash
+  // in a Windows path ("D:\clips") silently kept the old value on the bench.
+  const [invalid, setInvalid] = useState(false);
   return (
-    <textarea
-      id={id}
-      rows={4}
-      defaultValue={JSON.stringify(value, null, 2)}
-      onChange={(event) => {
-        try {
-          onChange(JSON.parse(event.target.value));
-        } catch {
-          // Not valid JSON yet; wait for the user to finish typing.
-        }
-      }}
-    />
+    <>
+      <textarea
+        id={id}
+        rows={4}
+        defaultValue={JSON.stringify(value, null, 2)}
+        onChange={(event) => {
+          try {
+            onChange(JSON.parse(event.target.value));
+            setInvalid(false);
+          } catch {
+            setInvalid(true);
+          }
+        }}
+      />
+      {invalid && (
+        <div className="field-error">
+          Not valid JSON: this value is not changed (write \\ for a backslash).
+        </div>
+      )}
+    </>
   );
 }

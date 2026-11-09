@@ -158,7 +158,9 @@ def test_events_go_only_to_subscribed_sessions(fake: FakeObs) -> None:
     assert media_only.events() == []
 
 
-def test_loading_a_file_starts_playback_like_real_obs(fake: FakeObs) -> None:
+def test_a_loaded_file_opens_and_starts_on_the_next_tick_like_real_obs(fake: FakeObs) -> None:
+    # Real OBS opens a new file in the background and reports the start as an
+    # event; until then the source is "opening".
     peer = connect(fake)
 
     ask(
@@ -168,17 +170,44 @@ def test_loading_a_file_starts_playback_like_real_obs(fake: FakeObs) -> None:
         inputName="baja_program_a",
         inputSettings={"local_file": "x.mp4"},
     )
+    assert fake.media_of("baja_program_a").state == "OBS_MEDIA_STATE_OPENING"
+    assert peer.events() == []
+
+    fake.tick()
 
     assert fake.media_of("baja_program_a").state == "OBS_MEDIA_STATE_PLAYING"
     assert peer.events() == ["MediaInputPlaybackStarted"]
+
+
+def test_seeking_a_source_that_has_not_started_is_refused_with_obs_words(fake: FakeObs) -> None:
+    # The bench's "media must be playing or paused" (2026-11-08), reproduced.
+    peer = connect(fake)
+    fake.stuck_files.add("x.mp4")  # it stays "opening"
+    ask(
+        fake,
+        peer,
+        "SetInputSettings",
+        inputName="baja_program_a",
+        inputSettings={"local_file": "x.mp4"},
+    )
+
+    status = ask(fake, peer, "SetMediaInputCursor", inputName="baja_program_a", mediaCursor=0)[
+        "requestStatus"
+    ]
+
+    assert status["result"] is False
+    assert status["code"] == RequestStatus.INVALID_RESOURCE_STATE
+    assert "must be playing or paused" in status["comment"]
 
 
 def test_setting_the_same_file_again_does_not_restart_it(fake: FakeObs) -> None:
     peer = connect(fake)
     settings = {"local_file": "x.mp4"}
     ask(fake, peer, "SetInputSettings", inputName="baja_program_a", inputSettings=settings)
+    fake.tick()
 
     ask(fake, peer, "SetInputSettings", inputName="baja_program_a", inputSettings=settings)
+    fake.tick()
 
     assert peer.events() == ["MediaInputPlaybackStarted"]
 
@@ -195,6 +224,7 @@ def test_tick_sends_playback_ended_once_when_a_file_finishes(
         inputName="baja_program_a",
         inputSettings={"local_file": "x.mp4"},
     )
+    fake.tick()  # opened: it plays from now
 
     fake_clock.advance(9.0)
     fake.tick()

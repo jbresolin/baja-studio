@@ -5,9 +5,9 @@ defaults the bench guide (docs/bench/wp5.md) tells the operator to create.
 """
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from baja_studio.core.settings import ModuleSettings
 
@@ -41,18 +41,55 @@ class OrchestratorSettings(StrictModel):
 
 
 class LocalFolder(StrictModel):
-    """A folder whose video files appear in the library."""
+    """A folder whose video files appear in the library, as a group named by its label."""
 
-    path: str = Field(description="Absolute folder path on the streaming PC.")
-    label: str = Field(default="", description="Shown next to clips from this folder.")
+    path: str = Field(min_length=1, description="Absolute folder path on the streaming PC.")
+    label: str = Field(default="", description="The library group of this folder's clips.")
     recursive: bool = Field(default=True, description="Also look inside subfolders.")
+    receiver_root: bool = Field(
+        default=False,
+        description="The receiver's clip root: delivered clips land here (at most one folder).",
+    )
+
+    @field_validator("path", mode="before")
+    @classmethod
+    def _strip_path(cls, value: Any) -> Any:
+        return value.strip() if isinstance(value, str) else value
 
 
 class SourcesSettings(StrictModel):
-    """Clip sources. The first local folder is the delivery folder (the receiver's clip root)."""
+    """Clip sources: the orchestrator's manifest and the local folders."""
 
     orchestrator: OrchestratorSettings = Field(default_factory=OrchestratorSettings)
     local_folders: list[LocalFolder] = Field(default_factory=list)
+
+    @field_validator("local_folders", mode="before")
+    @classmethod
+    def _folders_are_objects(cls, value: Any) -> Any:
+        # The 2026-11-08 bench saved ["D:/clips"]; say what shape is wanted.
+        if isinstance(value, list):
+            for index, item in enumerate(value):
+                if not isinstance(item, dict | LocalFolder):
+                    raise ValueError(
+                        f"local_folders[{index}] must be an object like "
+                        '{"path": "D:\\\\clips", "label": "Delivery"}, '
+                        f"not {type(item).__name__} {item!r}"
+                    )
+        return value
+
+    @model_validator(mode="after")
+    def _one_receiver_root(self) -> "SourcesSettings":
+        roots = [folder.path for folder in self.local_folders if folder.receiver_root]
+        if len(roots) > 1:
+            raise ValueError(f"only one folder can be the receiver root (got {', '.join(roots)})")
+        return self
+
+    def receiver_root(self) -> LocalFolder | None:
+        """The folder delivered clips land in: the one marked, else the first (WP5 layout)."""
+        for folder in self.local_folders:
+            if folder.receiver_root:
+                return folder
+        return self.local_folders[0] if self.local_folders else None
 
 
 class ObsSettings(StrictModel):
@@ -65,16 +102,26 @@ class ObsSettings(StrictModel):
     scene_b: str = Field(default="Playback B", min_length=1)
     source_a: str = Field(default="baja_program_a", min_length=1)
     source_b: str = Field(default="baja_program_b", min_length=1)
-    return_scene: str = Field(
-        default="", description="Scene to go back to after a clip (return and fade)."
-    )
     post_clip: PostClipBehaviour = Field(
-        default="return", description="return: cut back; hold: stay on the last frame; fade."
+        default="return",
+        description=(
+            "return: cut back; hold: stay on the last frame; fade. Where to return to is "
+            "chosen on the playout page (previous scene or a chosen one)."
+        ),
     )
     fade_ms: int = Field(default=1000, ge=100, le=10000)
     # Transition names are localised in OBS (pt-BR: "Corte", "Desvanecer").
     cut_transition: str = Field(default="Cut", min_length=1)
     fade_transition: str = Field(default="Fade", min_length=1)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _drop_return_scene(cls, values: Any) -> Any:
+        # WP5 kept the return scene here; WP5b moved it to a control on the page
+        # (session state), so older saved settings and exports still load.
+        if isinstance(values, dict) and "return_scene" in values:
+            values = {key: value for key, value in values.items() if key != "return_scene"}
+        return values
 
 
 class ToolsSettings(StrictModel):
@@ -108,8 +155,30 @@ class ExportSettings(StrictModel):
     )
 
 
+class OnAirAction(StrictModel):
+    """A command sent to another module when a clip starts or ends.
+
+    Generic so cameras or overlays can be targeted later; today it is
+    `{"module": "audio", "command": "run_macro", "args": {"macro": "<id>"}}`.
+    """
+
+    module: str = Field(min_length=1)
+    command: str = Field(min_length=1)
+    args: dict[str, Any] = Field(default_factory=dict)
+
+
+class OnAirActions(StrictModel):
+    """What runs when a clip goes to air and when it leaves it."""
+
+    on_clip_start: list[OnAirAction] = Field(default_factory=list)
+    on_clip_end: list[OnAirAction] = Field(default_factory=list)
+
+
 class PlayoutSettings(ModuleSettings):
     """Everything playout is configured with, edited in the browser."""
+
+    # 2: obs.return_scene moved to the page; folders gained receiver_root; on_air_actions.
+    settings_version: ClassVar[int] = 2
 
     sources: SourcesSettings = Field(default_factory=SourcesSettings)
     obs: ObsSettings = Field(default_factory=ObsSettings)
@@ -117,3 +186,4 @@ class PlayoutSettings(ModuleSettings):
     operators: OperatorsSettings = Field(default_factory=OperatorsSettings)
     hooks: HooksSettings = Field(default_factory=HooksSettings)
     export: ExportSettings = Field(default_factory=ExportSettings)
+    on_air_actions: OnAirActions = Field(default_factory=OnAirActions)

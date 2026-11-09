@@ -63,6 +63,8 @@ function entry(entryId: number, clipId: number, title: string): QueueEntry {
     clip_id: clipId,
     added_by: "web:desk-pc",
     added_at: "",
+    playlist_id: null,
+    playlist: null,
     title,
     duration_s: 30,
     missing: false,
@@ -108,14 +110,14 @@ beforeEach(() => {
 });
 
 describe("the library", () => {
-  it("groups clips by prova, with manual clips last", () => {
+  it("groups clips by prova, with manual clips last under their folder's label", () => {
     showPlayoutPage();
 
     // One group per prova; the Enduro group lists both of its passes.
     const enduro = screen.getByTestId("group-Enduro");
     expect(within(enduro).getByText("Enduro · carro 7")).toBeInTheDocument();
     expect(within(enduro).getByText("Enduro · carro 42")).toBeInTheDocument();
-    expect(screen.getByTestId("group-Manual")).toHaveTextContent("Intro");
+    expect(screen.getByTestId("group-Clips")).toHaveTextContent("Intro");
   });
 
   it("shows a clip whose file is missing but does not let it be picked", () => {
@@ -240,6 +242,186 @@ describe("the program strip", () => {
 
     const countdown = screen.getByTestId("countdown");
     expect(countdown).toHaveClass("countdown-red");
-    expect(countdown).toHaveTextContent("-0:04");
+    expect(countdown).toHaveTextContent("−0:04");
+  });
+});
+
+describe("the program strip (WP5b)", () => {
+  const onAir = clip({ id: 2, title: "Enduro · carro 42", duration_s: 40 });
+  const program = {
+    clip: onAir,
+    slot: "a" as const,
+    started_at: "",
+    position_s: 10,
+    duration_s: 40,
+    remaining_s: 30,
+  };
+
+  it("fills its background with the clip's progress and shows what is left of the queue", () => {
+    showPlayoutPage(
+      playoutState({
+        program,
+        preview: { clip: clip({ id: 3, duration_s: 20 }), slot: "b" },
+        queue: [entry(10, 1, "Intro"), { ...entry(11, 4, "Unknown"), duration_s: null }],
+      }),
+    );
+
+    // A quarter played: the background is filled to 25 %.
+    expect(screen.getByTestId("program-strip").style.getPropertyValue("--progress")).toBe("25.0%");
+    expect(screen.getByTestId("countdown")).toHaveTextContent("−0:30");
+    // After it: the cued 20 s and the queued 30 s, plus one clip of unknown length.
+    expect(screen.getByTestId("queue-remaining")).toHaveTextContent("queue −0:50 +?");
+  });
+
+  it("warns on the strip when there is nowhere to return to", () => {
+    const warning = "no return scene chosen: pick one under Return to";
+    showPlayoutPage(
+      playoutState({
+        program,
+        return_target: {
+          mode: "chosen",
+          chosen_scene: null,
+          previous_scene: "Main",
+          scene: null,
+          warning,
+        },
+      }),
+    );
+
+    expect(screen.getByTestId("return-warning")).toHaveTextContent(warning);
+  });
+});
+
+describe("the Return to control", () => {
+  it("chooses between the previous scene and a scene picked from OBS's list", () => {
+    // The server says "chosen" is selected, with Main picked.
+    showPlayoutPage(
+      playoutState({
+        return_target: {
+          mode: "chosen",
+          chosen_scene: "Main",
+          previous_scene: null,
+          scene: "Main",
+          warning: null,
+        },
+      }),
+    );
+
+    fireEvent.change(screen.getByLabelText("Chosen return scene"), {
+      target: { value: "Interview" },
+    });
+    expect(lastCommand()).toMatchObject({
+      command: "set_return_target",
+      args: { mode: "chosen", scene: "Interview" },
+    });
+
+    fireEvent.click(screen.getByRole("radio", { name: /previous scene/ }));
+    expect(lastCommand()).toMatchObject({
+      command: "set_return_target",
+      args: { mode: "previous" },
+    });
+  });
+});
+
+describe("tools, unmatched files and playlists", () => {
+  it("shows one banner when ffprobe is missing, and ? for durations", () => {
+    const problem =
+      "durations and thumbnails unavailable — ffprobe not found; set the path in Settings or install ffmpeg";
+    showPlayoutPage(
+      playoutState({
+        library: { "1": clip({ id: 1, duration_s: null }) },
+        tools: { ffprobe: null, ffmpeg: null, problem },
+      }),
+    );
+
+    expect(screen.getByTestId("tools-banner")).toHaveTextContent(problem);
+    const duration = screen.getByTestId("duration-1");
+    expect(duration).toHaveTextContent("?");
+    expect(duration).toHaveAttribute("title", problem);
+  });
+
+  it("marks unmatched files and hides them with one toggle", () => {
+    showPlayoutPage(
+      playoutState({
+        library: {
+          "1": clip({ id: 1, title: "Intro" }),
+          "5": clip({ id: 5, title: "1.v2", kind: "unmatched" }),
+        },
+      }),
+    );
+
+    const unmatched = screen.getByTestId("clip-5");
+    expect(unmatched).toHaveTextContent("unmatched");
+    expect(unmatched).toHaveAttribute("title", "file not in the orchestrator manifest");
+
+    fireEvent.click(screen.getByLabelText("hide unmatched"));
+
+    expect(screen.queryByTestId("clip-5")).toBeNull();
+    expect(screen.getByTestId("clip-1")).toBeInTheDocument();
+  });
+
+  it("queues a whole playlist with one click", () => {
+    showPlayoutPage(
+      playoutState({
+        library: library(),
+        playlists: [
+          {
+            id: 7,
+            name: "Patrocinadores",
+            shuffle: true,
+            on_air: null,
+            clip_ids: [1, 2],
+            created_at: "",
+          },
+        ],
+      }),
+    );
+
+    const row = screen.getByTestId("playlist-7");
+    expect(row).toHaveTextContent("Patrocinadores");
+    expect(row).toHaveTextContent("2 clips · 1:00");
+    fireEvent.click(within(row).getByRole("button", { name: "Queue" }));
+
+    expect(lastCommand()).toMatchObject({ command: "playlist_queue", args: { playlist_id: 7 } });
+  });
+
+  it("makes a playlist of a whole folder group", () => {
+    showPlayoutPage(
+      playoutState({ library: { "2": clip({ id: 2, folder_label: "Patrocinadores" }) } }),
+    );
+
+    fireEvent.click(
+      within(screen.getByTestId("group-Patrocinadores")).getByRole("button", {
+        name: "+ playlist",
+      }),
+    );
+
+    expect(lastCommand()).toMatchObject({
+      command: "playlist_create",
+      args: { group: "Patrocinadores" },
+    });
+  });
+
+  it("says the queue is empty instead of showing 0:00, and +? for unknown lengths", () => {
+    showPlayoutPage();
+    expect(screen.getByLabelText("Queue")).toHaveTextContent("Queue empty");
+    expect(screen.queryByTestId("queue-total")).toBeNull();
+  });
+
+  it("shows a new server notice once as a toast, but not one from before the page opened", () => {
+    showPlayoutPage(playoutState({ notice: { id: 3, message: "old news" } }));
+    expect(screen.queryByText("old news")).toBeNull();
+
+    act(() =>
+      server.receive({
+        type: "patch",
+        seq: 2,
+        module: "playout",
+        path: "notice",
+        value: { id: 4, message: "on-air action audio.run_macro failed" },
+      }),
+    );
+
+    expect(screen.getByText("on-air action audio.run_macro failed")).toBeInTheDocument();
   });
 });

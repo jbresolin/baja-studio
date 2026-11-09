@@ -19,7 +19,7 @@ from baja_studio.core.system_probes import disk_space_outcome, writable_problem
 from baja_studio.modules.playout.controller import PlayoutController
 from baja_studio.playout.config import PlayoutSettings
 
-PLAYOUT_SETTINGS_LINK = "/settings/playout"
+PLAYOUT_SETTINGS_LINK = "/playout/settings"
 PLAYOUT_PAGE_LINK = "/playout"
 
 
@@ -43,18 +43,18 @@ def playout_checks(
             fix=(
                 f"Start OBS on {obs.host or 'the streaming PC'} with its WebSocket server on "
                 f"(Tools → WebSocket Server Settings, port {obs.port}); the password must match "
-                "Settings → Playout."
+                "Playout → Settings."
             ),
             link=PLAYOUT_SETTINGS_LINK,
         ),
         ReadinessCheck(
             "obs_scenes",
             "OBS has playout's scenes, sources and transition",
-            lambda: _obs_scenes(settings, client),
+            lambda: _obs_scenes(settings, client, controller),
             fix=(
                 f"In OBS, create scenes {obs.scene_a!r} and {obs.scene_b!r} holding media sources "
                 f"{obs.source_a!r} and {obs.source_b!r} (docs/bench/wp5.md), or correct the names "
-                "in Settings → Playout."
+                "in Playout → Settings."
             ),
             link=PLAYOUT_SETTINGS_LINK,
         ),
@@ -63,8 +63,8 @@ def playout_checks(
             "Clip folder exists and is writable",
             lambda: _clip_root(settings),
             fix=(
-                "Create the folder (or plug in its drive), or set the delivery folder as the "
-                "first local folder in Settings → Playout."
+                "Create the folder (or plug in its drive), or add the delivery folder and mark "
+                "it as the receiver root in Playout → Settings."
             ),
             link=PLAYOUT_SETTINGS_LINK,
         ),
@@ -74,7 +74,7 @@ def playout_checks(
             lambda: _tools(settings),
             fix=(
                 "Install ffmpeg (it brings ffprobe) and put the full paths of both in "
-                "Settings → Playout → tools."
+                "Playout → Settings → Tools."
             ),
             link=PLAYOUT_SETTINGS_LINK,
         ),
@@ -84,7 +84,7 @@ def playout_checks(
             lambda: _orchestrator(settings, playout_state.get("sync_status") or {}),
             fix=(
                 "Check the PC is online and on the tailnet, and the orchestrator's address and "
-                "token in Settings → Playout; local clips play meanwhile."
+                "token in Playout → Settings; local clips play meanwhile."
             ),
             link=PLAYOUT_SETTINGS_LINK,
         ),
@@ -119,8 +119,11 @@ def _obs_connected(obs: dict[str, Any]) -> CheckOutcome:
     return failed(f"{obs.get('connection')}: {obs.get('message') or 'no answer'}")
 
 
-def _obs_scenes(settings: PlayoutSettings, client: ObsWebsocketClient) -> CheckOutcome:
+def _obs_scenes(
+    settings: PlayoutSettings, client: ObsWebsocketClient, controller: PlayoutController
+) -> CheckOutcome:
     obs = settings.obs
+    return_scene = controller.return_target.scene()
     if not client.is_connected:
         return warning("not checked: OBS is not connected (see the line above)")
     try:
@@ -131,8 +134,8 @@ def _obs_scenes(settings: PlayoutSettings, client: ObsWebsocketClient) -> CheckO
         for scene, source in ((obs.scene_a, obs.source_a), (obs.scene_b, obs.source_b)):
             if scene in scenes and not _scene_has(client, scene, source):
                 problems.append(f"scene {scene!r} has no source {source!r}")
-        if obs.return_scene and obs.return_scene not in scenes:
-            problems.append(f"no return scene {obs.return_scene!r}")
+        if return_scene and return_scene not in scenes:
+            problems.append(f"no return scene {return_scene!r}")
         transitions = client.get_transition_names()
     except ObsError as error:
         return failed(f"OBS did not answer: {error}")
@@ -142,10 +145,11 @@ def _obs_scenes(settings: PlayoutSettings, client: ObsWebsocketClient) -> CheckO
         )
     if problems:
         return failed("; ".join(problems))
-    if not obs.return_scene and obs.post_clip != "hold":
+    if return_scene is None and obs.post_clip != "hold":
+        # "Previous" is only known after the first take; say so, but it is not a fault.
         return warning(
-            "no return scene is set: after a clip the program stays where it is",
-            "Set the return scene in Settings → Playout.",
+            controller.return_target.warning() or "no return scene",
+            "On the playout page, set Return to: previous scene, or choose a scene.",
         )
     return passed(f"{obs.scene_a}, {obs.scene_b}, transition {obs.cut_transition}")
 
@@ -159,11 +163,11 @@ def _scene_has(client: ObsWebsocketClient, scene: str, source: str) -> bool:
 
 
 def _clip_root(settings: PlayoutSettings) -> CheckOutcome:
-    folders = settings.sources.local_folders
-    if not folders:
+    root = settings.sources.receiver_root()
+    if root is None:
         return failed("no local folder is set: delivered clips have nowhere to go")
-    problem = writable_problem(Path(folders[0].path))
-    return failed(problem) if problem else passed(folders[0].path)
+    problem = writable_problem(Path(root.path))
+    return failed(problem) if problem else passed(root.path)
 
 
 def _tools(settings: PlayoutSettings) -> CheckOutcome:

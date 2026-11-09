@@ -26,7 +26,7 @@ from tests.modules.gateway_studio import GatewayFakes
 
 TOKEN = "cf-token-0123456789abcdef"
 # No OBS host: the real module list would try to reach it over the network.
-OBS = {"scene_a": "Replay A", "password": "obs-password", "return_scene": "Main"}
+OBS = {"scene_a": "Replay A", "password": "obs-password", "cut_transition": "Corte"}
 
 
 class Page:
@@ -129,7 +129,7 @@ def test_a_reinstalled_pc_takes_the_file_after_a_dry_run(page: Page, fresh_pc: P
         "gateway.tls.cloudflare_api_token",
     ]
     obs = fresh_pc.services.settings.get("playout").model_dump()["obs"]
-    assert (obs["scene_a"], obs["return_scene"], obs["password"]) == ("Replay A", "Main", "")
+    assert (obs["scene_a"], obs["cut_transition"], obs["password"]) == ("Replay A", "Corte", "")
 
 
 def test_the_command_log_names_the_upload_never_the_file(page: Page, fresh_pc: Page) -> None:

@@ -10,6 +10,7 @@ import { Home } from "./pages/Home";
 import { Logs } from "./pages/Logs";
 import { ModulePage } from "./pages/ModulePage";
 import { PlayoutPage } from "./pages/PlayoutPage";
+import { PlayoutSettingsPage } from "./pages/PlayoutSettingsPage";
 import { ReadinessPage } from "./pages/ReadinessPage";
 import { Settings } from "./pages/Settings";
 
@@ -23,6 +24,7 @@ export const routes = [
       { path: "cameras", element: <CamerasPage /> },
       { path: "cameras/config", element: <CameraConfigPage /> },
       { path: "playout", element: <PlayoutPage /> },
+      { path: "playout/settings", element: <PlayoutSettingsPage /> },
       { path: "audio", element: <AudioPage /> },
       { path: "audio/config", element: <AudioConfigPage /> },
       { path: "readiness", element: <ReadinessPage /> },

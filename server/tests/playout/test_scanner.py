@@ -85,3 +85,19 @@ def test_a_folder_listed_twice_does_not_list_its_files_twice(tmp_path: Path) -> 
     scan = scan_folders([LocalFolder(path=str(root)), LocalFolder(path=str(root / "sub"))])
 
     assert len(scan.files) == 1
+
+
+def test_files_found_through_the_receiver_root_are_flagged(tmp_path: Path) -> None:
+    # The library calls a file from the receiver root with no manifest entry
+    # "unmatched", and a file from any other folder "manual".
+    (tmp_path / "root").mkdir()
+    (tmp_path / "root" / "old.mp4").write_bytes(b"v")
+    (tmp_path / "inst").mkdir()
+    (tmp_path / "inst" / "sae.mp4").write_bytes(b"v")
+    root = LocalFolder(path=str(tmp_path / "root"), receiver_root=True)
+    other = LocalFolder(path=str(tmp_path / "inst"), label="SAE institucional")
+
+    scan = scan_folders([root, other], root)
+
+    flags = {Path(found.path).name: found.in_receiver_root for found in scan.files}
+    assert flags == {"old.mp4": True, "sae.mp4": False}

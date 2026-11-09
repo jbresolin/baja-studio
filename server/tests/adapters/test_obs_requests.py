@@ -68,8 +68,10 @@ def test_input_settings_overlay_keeps_settings_not_mentioned(client: ObsWebsocke
 def test_media_status_is_reported_in_seconds(
     client: ObsWebsocketClient, fake_clock: FakeClock
 ) -> None:
-    # Load a file (it starts playing at once, like real OBS), let 2.5 s pass, ask.
+    # Load a file; like real OBS the fake opens it and starts it a moment later
+    # (on the next request). Let 2.5 s pass after that, then ask.
     client.set_input_settings("baja_program_a", {"local_file": "clip.mp4"})
+    client.get_media_input_status("baja_program_a")
     fake_clock.advance(2.5)
 
     status = client.get_media_input_status("baja_program_a")
@@ -102,6 +104,7 @@ def test_media_actions_and_cursor_drive_playback(
 
 def test_a_finished_file_reports_ended(client: ObsWebsocketClient, fake_clock: FakeClock) -> None:
     client.set_input_settings("baja_program_a", {"local_file": "clip.mp4"})
+    client.get_media_input_status("baja_program_a")  # it starts here
     fake_clock.advance(10.0)
 
     assert client.get_media_input_status("baja_program_a").has_ended

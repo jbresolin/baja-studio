@@ -28,8 +28,14 @@ class FolderScan:
     errors: dict[str, str] = field(default_factory=dict)
 
 
-def scan_folders(folders: list[LocalFolder]) -> FolderScan:
-    """Walk each folder and list its video files (subfolders too when `recursive`)."""
+def scan_folders(
+    folders: list[LocalFolder], receiver_root: LocalFolder | None = None
+) -> FolderScan:
+    """Walk each folder and list its video files (subfolders too when `recursive`).
+
+    Files found through `receiver_root` are flagged, so the library can tell
+    an unmatched delivery from a manual clip.
+    """
     result = FolderScan()
     seen: set[str] = set()
     for folder in folders:
@@ -38,6 +44,7 @@ def scan_folders(folders: list[LocalFolder]) -> FolderScan:
             result.errors[folder.path] = "folder not found"
             continue
         label = folder.label or root.name
+        in_receiver_root = folder == receiver_root
         try:
             for path in _video_files(root, folder.recursive):
                 if str(path) in seen:
@@ -51,6 +58,7 @@ def scan_folders(folders: list[LocalFolder]) -> FolderScan:
                         folder_label=label,
                         size=stat.st_size,
                         mtime=stat.st_mtime,
+                        in_receiver_root=in_receiver_root,
                     )
                 )
         except OSError as error:

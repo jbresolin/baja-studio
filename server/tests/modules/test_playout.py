@@ -8,6 +8,8 @@ sends them, and the checks read the module's state (what browsers see), the
 fake OBS (what went to air), the webhook posts and the database.
 """
 
+import threading
+
 import pytest
 
 from baja_studio.adapters.obs_protocol import MediaState
@@ -87,6 +89,77 @@ def test_take_is_one_cut_and_the_clip_plays_on_air(playout: PlayoutStudio) -> No
     assert playout.obs.media_of("baja_program_a").state == MediaState.PLAYING
     assert playout.state("program")["clip"]["id"] == first
     assert playout.state("preview") is None
+
+
+def test_the_first_take_of_the_day_works_first_time(playout: PlayoutStudio) -> None:
+    # Regression, bench 2026-11-08: on a freshly started OBS the first Take
+    # failed with "media must be playing or paused" and only the second one
+    # worked. The fake OBS now refuses a seek on a source that has not started,
+    # as real OBS does, so the old cue sequence fails here.
+    first, _, _ = ready_studio(playout)
+    playout.command("queue_add", clip_ids=[first])
+
+    result = playout.command("take", cue_if_needed=True)
+
+    assert result["status"] == "on_air"
+    assert playout.obs.program_scene == "Playback A"
+    assert playout.state("cue_problem") is None
+    # Nothing was refused on the way.
+    assert all(result == "ok" for _, _, result in playout.log())
+
+
+def test_a_cue_obs_cannot_start_is_refused_with_obs_words_and_the_module_is_degraded(
+    playout: PlayoutStudio,
+) -> None:
+    first, second, _ = ready_studio(playout)
+    playout.obs.stuck_files.add(str(playout.clips_folder / "a.mp4"))
+    playout.command("queue_add", clip_ids=[first, second])
+    failures: list[Exception] = []
+
+    def cue() -> None:
+        try:
+            playout.command("cue_next")
+        except CommandError as error:
+            failures.append(error)
+
+    # The cue waits up to 3 s of fake time for OBS to start the file, so it
+    # runs on its own thread while fake time passes. It holds playout's lock
+    # meanwhile (the OBS worker waits for it), so time is moved whenever the
+    # cue thread is in its 0.1 s wait between two status questions (not while
+    # it waits for OBS to answer one).
+    worker = threading.Thread(target=cue)
+    worker.start()
+
+    def between_polls() -> bool:
+        wakes_at = playout.clock.wake_up_time_of(worker.ident)
+        return wakes_at is not None and wakes_at <= playout.clock.monotonic() + 0.1 + 1e-6
+
+    for _ in range(40):
+        eventually(lambda: between_polls() or not worker.is_alive())
+        if not worker.is_alive():
+            break
+        playout.clock.advance(0.1)
+    worker.join(timeout=5)
+
+    # Refused, saying what OBS reported; the clip is back at the head of the
+    # queue; and the module is degraded with the same words until a cue works.
+    assert len(failures) == 1
+    assert "did not start" in str(failures[0])
+    assert "OBS_MEDIA_STATE_OPENING" in str(failures[0])
+    assert [entry["clip_id"] for entry in playout.state("queue")] == [first, second]
+    assert "did not start" in playout.state("cue_problem")
+    playout.soon(
+        lambda: playout.services.supervisor.module_health("playout").state == HealthState.DEGRADED
+    )
+
+    # The operator drops the bad clip; the next one cues, and all is well again.
+    playout.obs.stuck_files.clear()
+    playout.command("queue_remove", entry_ids=[playout.state("queue")[0]["entry_id"]])
+    playout.command("cue_next")
+    assert playout.state("cue_problem") is None
+    playout.soon(
+        lambda: playout.services.supervisor.module_health("playout").state == HealthState.OK
+    )
 
 
 def test_the_second_clip_goes_into_the_other_source_and_the_first_is_never_reloaded(
@@ -180,6 +253,66 @@ def test_a_cued_next_clip_does_not_play_by_itself_unless_auto_play_next_is_on(
         within_seconds=CLIP_SECONDS + 2,
     )
     assert playout.obs.program_scene in ("Playback A", "Playback B")
+
+
+def test_a_clip_ending_with_auto_play_on_and_a_cued_next_puts_it_on_air_in_one_cut(
+    playout: PlayoutStudio,
+) -> None:
+    # Regression, bench 2026-11-09: auto-play next never fired. The clip on air
+    # ends by itself (the fake OBS plays it to the end) with the next one cued.
+    first, second, _ = ready_studio(playout)
+    playout.command("set_auto_play_next", enabled=True)
+    playout.command("queue_add", clip_ids=[first, second])
+    playout.command("take", cue_if_needed=True)
+    playout.command("cue_next")
+    cuts_before = list(playout.obs.program_history)
+
+    playout.soon(
+        lambda: (playout.state("program") or {}).get("clip", {}).get("id") == second,
+        within_seconds=CLIP_SECONDS + 2,
+    )
+
+    # Exactly one scene change, straight to the next clip's scene (no return
+    # scene in between), and the clip plays.
+    assert playout.obs.program_history[len(cuts_before) :] == ["Playback B"]
+    assert playout.obs.media_of("baja_program_b").state == MediaState.PLAYING
+
+
+def test_an_auto_play_chain_of_three_clips_returns_to_the_scene_before_the_first(
+    playout: PlayoutStudio,
+) -> None:
+    # Bench step: auto-play chain of three. Program was on "Main" before the
+    # first clip, so that is where it goes after the third.
+    first, second, third = ready_studio(playout)
+    playout.command("set_auto_play_next", enabled=True)
+    playout.command("queue_add", clip_ids=[first, second, third])
+
+    playout.command("take", cue_if_needed=True)
+    # Generous: fake time also passes while playout waits for each OBS answer.
+    playout.soon(lambda: playout.state("program") is None, within_seconds=3 * CLIP_SECONDS + 15)
+
+    aired = [entry["clip_id"] for entry in playout.command("export_aired")["entries"]]
+    assert aired == [first, second, third]
+    assert playout.obs.program_scene == "Main"
+    assert playout.obs.program_history[-1] == "Main"
+
+
+def test_when_auto_play_cannot_cue_the_next_clip_post_clip_applies_with_a_notice(
+    playout: PlayoutStudio,
+) -> None:
+    # The next clip's file vanished after it was queued: auto-play must not
+    # leave program sitting on a finished clip.
+    first, second, _ = ready_studio(playout)
+    playout.command("set_auto_play_next", enabled=True)
+    playout.command("queue_add", clip_ids=[first, second])
+    playout.command("take", cue_if_needed=True)
+    (playout.clips_folder / "b.mp4").unlink()
+    playout.soon(lambda: (playout.clip("b.mp4") or {}).get("missing") is True)
+
+    play_through(playout)
+
+    assert playout.obs.program_scene == "Main"
+    assert "auto-play next failed" in playout.state("notice")["message"]
 
 
 # --- replay, skip, return ------------------------------------------------------------------
@@ -392,3 +525,26 @@ def test_queue_cue_and_program_survive_a_module_restart(playout: PlayoutStudio) 
     assert playout.state("program")["clip"]["id"] == first
     assert playout.state("preview")["clip"]["id"] == second
     assert [entry["clip_id"] for entry in playout.state("queue")] == [third]
+
+
+# --- tools ----------------------------------------------------------------------------------
+
+
+def test_missing_ffprobe_shows_one_banner_and_a_fixed_path_clears_it(
+    playout: PlayoutStudio,
+) -> None:
+    # Regression, bench 2026-11-09: ffprobe was not on PATH, and the page
+    # showed dashes and grey boxes without saying why.
+    playout.tools_found.discard("ffprobe")
+    playout.configure(tools={"ffprobe_path": "ffprobe-missing", "ffmpeg_path": "ffmpeg"})
+
+    assert playout.state("tools.problem") == (
+        "durations and thumbnails unavailable — ffprobe not found; "
+        "set the path in Settings or install ffmpeg"
+    )
+
+    playout.tools_found.add("ffprobe")
+    playout.configure(tools={"ffprobe_path": "ffprobe", "ffmpeg_path": "ffmpeg"})
+
+    assert playout.state("tools.problem") is None
+    assert playout.state("tools.ffprobe") == "/opt/ffmpeg/ffprobe"

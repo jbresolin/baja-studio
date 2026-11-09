@@ -4,21 +4,30 @@
   preview card's `<video>` can scrub it without touching OBS.
 - `GET /clips/{id}/thumbnail`: the cached JPEG still.
 
+- `GET /browse?path=`: subfolders of a folder on this PC (drives when
+  empty), for the folders form's "browse" button. Folder names only.
+
 Only files the library knows are served, never an arbitrary path.
 """
 
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse
 
+from baja_studio.playout.browse import browse
 from baja_studio.playout.library import LibraryStore
 
 
 def playout_routes(library: Callable[[], LibraryStore | None]) -> APIRouter:
     """The router; `library` returns the running module's library (None when stopped)."""
     router = APIRouter()
+
+    @router.get("/browse")
+    def browse_folders(path: str = "") -> dict[str, Any]:
+        return browse(path)
 
     def running_library() -> LibraryStore:
         store = library()

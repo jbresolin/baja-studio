@@ -1,15 +1,21 @@
 /**
  * Tests for the Playout page's pure helpers (src/lib/playout.ts): the
- * countdown colours, the keyboard map and the library grouping.
+ * countdown colours, the keyboard map, the library grouping and the strip's
+ * remaining times.
  */
 
 import { describe, expect, it } from "vitest";
 
 import {
+  clipDetails,
   countdownColour,
   formatDuration,
+  formatKnownDuration,
+  formatRemaining,
   groupLibrary,
   playoutKeyAction,
+  programProgress,
+  remainingAfterOnAir,
 } from "../src/lib/playout";
 import { clip } from "./playoutFixtures";
 
@@ -101,7 +107,7 @@ describe("groupLibrary", () => {
   it("groups by prova alphabetically, manual clips last, cars in number order", () => {
     const groups = groupLibrary(library, "", "all");
 
-    expect(groups.map((group) => group.prova)).toEqual(["Enduro", "Suspensão", "Manual"]);
+    expect(groups.map((group) => group.name)).toEqual(["Enduro", "Suspensão", "Clips"]);
     expect(groups[0]!.clips.map((item) => item.id)).toEqual([3, 2]);
   });
 
@@ -119,5 +125,74 @@ describe("groupLibrary", () => {
     const groups = groupLibrary(library, "enduro 42", "all");
 
     expect(groups.flatMap((group) => group.clips.map((item) => item.id))).toEqual([2]);
+  });
+});
+
+describe("groups by kind", () => {
+  // A delivered pass, a sponsor clip, and an old file in the receiver root
+  // that the manifest does not know.
+  const mixed = {
+    "1": clip({ id: 1, source: "orchestrator", title: "Enduro · carro 42", prova: "Enduro" }),
+    "2": clip({ id: 2, title: "Logo", folder_label: "Patrocinadores" }),
+    "3": clip({ id: 3, title: "manobrabilidade-001-p2-v2", kind: "unmatched" }),
+  };
+
+  it("lists provas, then labelled folders, then Unmatched", () => {
+    expect(groupLibrary(mixed, "", "all").map((group) => group.name)).toEqual([
+      "Enduro",
+      "Patrocinadores",
+      "Unmatched",
+    ]);
+  });
+
+  it("leaves the unmatched files out when asked", () => {
+    expect(groupLibrary(mixed, "", "all", true).map((group) => group.name)).toEqual([
+      "Enduro",
+      "Patrocinadores",
+    ]);
+  });
+
+  it("gives a second line only when the title does not already say it", () => {
+    // The pipeline title already names prova and car; a labelled one does not.
+    expect(clipDetails(mixed["1"])).toBeNull();
+    expect(clipDetails({ ...mixed["1"], title: "Melhor passagem" })).toBe("Enduro");
+    expect(clipDetails(mixed["2"])).toBe("Patrocinadores");
+  });
+});
+
+describe("the strip's remaining times", () => {
+  it("adds the cued clip and the queue, counting unknown durations apart", () => {
+    const preview = { clip: clip({ duration_s: 30 }), slot: "b" as const };
+    const queue = [{ duration_s: 45 }, { duration_s: null }];
+
+    const after = remainingAfterOnAir(preview, queue);
+
+    expect(after).toEqual({ seconds: 75, unknown: 1 });
+    expect(formatRemaining(after.seconds, after.unknown)).toBe("−1:15 +?");
+  });
+
+  it("says +? when nothing after the clip has a known duration", () => {
+    expect(formatRemaining(0, 2)).toBe("+?");
+    expect(formatRemaining(0, 0)).toBe("−0:00");
+  });
+
+  it("is the share of the clip already played, for the strip's background", () => {
+    const program = {
+      clip: clip(),
+      slot: "a" as const,
+      started_at: "",
+      position_s: 15,
+      duration_s: 60,
+      remaining_s: 45,
+    };
+
+    expect(programProgress(program)).toBe(0.25);
+    expect(programProgress({ ...program, duration_s: null })).toBe(0);
+    expect(programProgress(null)).toBe(0);
+  });
+
+  it("shows ? for a duration ffprobe could not measure", () => {
+    expect(formatKnownDuration(null)).toBe("?");
+    expect(formatKnownDuration(61)).toBe("1:01");
   });
 });

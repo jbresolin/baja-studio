@@ -41,6 +41,7 @@ def checks(playout: PlayoutStudio) -> dict[str, CheckStatus]:
 def test_a_ready_studio_passes_every_check(playout: PlayoutStudio, tmp_path: Path) -> None:
     ready_studio(playout)
     playout.configure(tools=fake_tools(tmp_path))
+    playout.command("set_return_target", mode="chosen", scene="Main")
 
     results = run_module_checks(playout.services, "playout", playout.clock)
 
@@ -84,9 +85,8 @@ def test_obs_not_configured_fails(playout: PlayoutStudio) -> None:
 
 def test_missing_scenes_sources_and_transition_are_named(playout: PlayoutStudio) -> None:
     # OBS is reachable, but the profile on this PC is not the bench one.
-    playout.connect_obs(
-        scene_b="Playback Z", source_a="wrong_source", return_scene="Gone", cut_transition="Corte"
-    )
+    playout.connect_obs(scene_b="Playback Z", source_a="wrong_source", cut_transition="Corte")
+    playout.command("set_return_target", mode="chosen", scene="Gone")
 
     result = run_module_checks(playout.services, "playout", playout.clock)["obs_scenes"]
 
@@ -98,13 +98,16 @@ def test_missing_scenes_sources_and_transition_are_named(playout: PlayoutStudio)
     assert_fix_given(result)
 
 
-def test_no_return_scene_with_return_after_a_clip_warns(playout: PlayoutStudio) -> None:
-    playout.connect_obs(return_scene="")
+def test_no_return_target_with_return_after_a_clip_warns(playout: PlayoutStudio) -> None:
+    # "Return to: previous scene", but nothing has been taken yet, so no
+    # previous scene is known: a warning (it becomes known at the first take).
+    playout.connect_obs()
 
     result = run_module_checks(playout.services, "playout", playout.clock)["obs_scenes"]
 
     assert result.status == CheckStatus.WARN
-    assert result.fix == "Set the return scene in Settings → Playout."
+    assert result.detail.startswith("no previous scene yet")
+    assert result.fix == "On the playout page, set Return to: previous scene, or choose a scene."
 
 
 def test_no_clip_folder_fails_and_a_missing_one_says_so(
