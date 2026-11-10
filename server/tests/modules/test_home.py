@@ -33,6 +33,7 @@ def test_home_lists_every_module_with_title_and_health(make_app: AppFactory) -> 
         "cameras",
         "playout",
         "audio",
+        "hosts",
         "gateway",
         "agents",
         "heartbeat",

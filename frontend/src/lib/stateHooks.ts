@@ -8,7 +8,7 @@
 
 import { createContext, useCallback, useContext, useSyncExternalStore } from "react";
 
-import type { ConnectionStatus, StateSocket } from "./stateSocket";
+import type { ConnectionStatus, StateSocket, StateTree } from "./stateSocket";
 
 export const StateSocketContext = createContext<StateSocket | null>(null);
 
@@ -25,6 +25,15 @@ export function useModuleState<T = Record<string, unknown>>(module: string): T |
   return useSyncExternalStore(
     (listener) => socket.subscribe(listener),
     () => socket.getState()[module] as T | undefined,
+  );
+}
+
+/** The whole live state tree, for pages that read other modules' state by path (hosts cards). */
+export function useStateTree(): StateTree {
+  const socket = useStateSocket();
+  return useSyncExternalStore(
+    (listener) => socket.subscribe(listener),
+    () => socket.getState(),
   );
 }
 

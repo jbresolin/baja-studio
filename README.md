@@ -26,7 +26,12 @@ for installing on the streaming PC and [installer/](installer/) for building
 it. WP8 added the **readiness** page (`/readiness`: every module's pre-event
 checks in one green/amber/red list, with the fix for each problem) and
 settings **export/import** (Settings → Export / import); see
-[docs/install.md](docs/install.md), *Before an event*. Two demo modules remain:
+[docs/install.md](docs/install.md), *Before an event*. WP9 added the
+**hosts** module: the hosts screen (`/hosts`, a full-screen display for the
+monitor in front of the hosts, built from cards that modules declare) and a
+production → hosts chat with four named seats, reactions and canned
+messages, run from **Hosts** (`/hosts/control`) or the playout page; see
+[docs/bench/wp9.md](docs/bench/wp9.md). Two demo modules remain:
 
 - **heartbeat** counts up once per second. You can change the interval in
   Settings, reset it, or make its worker crash once to watch it recover.

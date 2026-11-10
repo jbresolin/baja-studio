@@ -52,6 +52,7 @@ def test_create_app_registers_every_module_in_home_page_order(
         "cameras",
         "playout",
         "audio",
+        "hosts",
         "gateway",
         "agents",
         "heartbeat",

@@ -21,12 +21,14 @@ from baja_studio.audio import defaults
 from baja_studio.audio.config import AudioSettings
 from baja_studio.audio.stores import LinkStore, StoredLevels, create_audio_tables
 from baja_studio.core.childproc import EventCallback
+from baja_studio.core.hosts_cards import HostsCard
 from baja_studio.core.module import CommandError, Module, ModuleContext
 from baja_studio.core.readiness import ReadinessCheck
 from baja_studio.core.supervisor import Health, HealthState, WorkerSpec
 from baja_studio.modules.audio.commands import DRAG_COMMANDS, run_command
 from baja_studio.modules.audio.controller import AudioController
 from baja_studio.modules.audio.d200_routes import d200_routes
+from baja_studio.modules.audio.hosts_card import audio_hosts_card
 from baja_studio.modules.audio.midi_worker import MidiChildHost, MidiWorker
 from baja_studio.modules.audio.mixer_worker import MixerWorker
 from baja_studio.modules.audio.publisher import AudioPublisher, initial_audio_state
@@ -191,6 +193,10 @@ class AudioModule(Module):
             self.context.state,
             self.controller.links.matrix(),
         )
+
+    def hosts_cards(self) -> list[HostsCard]:
+        """The audio card: seat microphones and talkback (see `hosts_card.py`)."""
+        return [audio_hosts_card(self.settings())]
 
     def root_routes(self) -> APIRouter:
         """The D200 contract (`/action/...`)."""

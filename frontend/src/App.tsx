@@ -22,6 +22,7 @@ export function App() {
             Audio
           </NavLink>
           <NavLink to="/audio/config">Audio setup</NavLink>
+          <NavLink to="/hosts/control">Hosts</NavLink>
           <NavLink to="/readiness">Readiness</NavLink>
           <NavLink to="/settings">Settings</NavLink>
           <NavLink to="/logs">Logs</NavLink>

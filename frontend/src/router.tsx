@@ -7,6 +7,8 @@ import { AudioPage } from "./pages/AudioPage";
 import { CameraConfigPage } from "./pages/CameraConfigPage";
 import { CamerasPage } from "./pages/CamerasPage";
 import { Home } from "./pages/Home";
+import { HostsControlPage } from "./pages/HostsControlPage";
+import { HostsScreen } from "./pages/HostsScreen";
 import { Logs } from "./pages/Logs";
 import { ModulePage } from "./pages/ModulePage";
 import { PlayoutPage } from "./pages/PlayoutPage";
@@ -28,17 +30,21 @@ export const routes = [
       { path: "audio", element: <AudioPage /> },
       { path: "audio/config", element: <AudioConfigPage /> },
       { path: "readiness", element: <ReadinessPage /> },
+      { path: "hosts/control", element: <HostsControlPage /> },
       // A module with its own page is listed before the generic one.
       { path: "modules/agents", element: <AgentsPage /> },
       { path: "modules/playout", element: <PlayoutPage /> },
       { path: "modules/audio", element: <AudioPage /> },
       { path: "modules/readiness", element: <ReadinessPage /> },
+      { path: "modules/hosts", element: <HostsControlPage /> },
       { path: "modules/:name", element: <ModulePage /> },
       { path: "settings", element: <Settings /> },
       { path: "settings/:section", element: <Settings /> },
       { path: "logs", element: <Logs /> },
     ],
   },
+  // The hosts screen fills the window on its own, without the navigation bar.
+  { path: "/hosts", element: <HostsScreen /> },
 ];
 
 export function createRouter() {

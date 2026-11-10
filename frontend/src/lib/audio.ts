@@ -120,6 +120,7 @@ export interface AudioSettingsValues {
   macros: MacroConfig[];
   scenes: SceneConfig[];
   d200: { enabled: boolean; state_poll_hint_s: number };
+  talkback_bus: AuxBus;
 }
 
 // --- the XR18 fader law ------------------------------------------------------------
