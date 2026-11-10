@@ -18,8 +18,17 @@ import {
   streamTime,
   toggledLayout,
   valueAt,
+  isExpanded,
+  isFromHost,
+  isHiddenOn,
+  messageColor,
+  senderSeat,
+  senderTag,
+  targetName,
+  unreadFromHosts,
 } from "../src/lib/hosts";
-import { hostsState, layout, message } from "./hostsFixtures";
+import { formatOffset, seatStateWord } from "../src/lib/seatAudio";
+import { hostMessage, hostsState, layout, message } from "./hostsFixtures";
 
 const NOON = Date.parse("2026-10-01T12:00:00Z");
 
@@ -131,5 +140,76 @@ describe("the screen's seats and clocks", () => {
   it("counts stream time from the marker as h:mm:ss", () => {
     expect(streamTime("2026-10-01T12:00:00Z", NOON + 3_725_000)).toBe("1:02:05");
     expect(streamTime(null, NOON)).toBeNull();
+  });
+});
+
+describe("compact chat, hiding and hosts' messages (WP9b)", () => {
+  it("grows a message for this screen until it is answered, then for four seconds more", () => {
+    const cue = message({ id: 1, to: 1 });
+    expect(isExpanded(cue, [1], NOON + 30_000)).toBe(true);
+
+    const answered = {
+      ...cue,
+      reactions: [{ seat_id: 1 as const, reaction: "👍", ts: "2026-10-01T12:00:10+00:00" }],
+    };
+    expect(isExpanded(answered, [1], NOON + 13_000)).toBe(true);
+    expect(isExpanded(answered, [1], NOON + 14_000)).toBe(false);
+  });
+
+  it("never grows a colleague's message, an expired one or one production waved away", () => {
+    expect(isExpanded(message({ id: 1, to: 2 }), [1], NOON)).toBe(false);
+    const expiring = message({ id: 2, to: 1, expires_at: "2026-10-01T12:01:00+00:00" });
+    expect(isExpanded(expiring, [1], NOON + 61_000)).toBe(false);
+    expect(isExpanded(message({ id: 3, to: 1, dismissed_at: "x" }), [1], NOON)).toBe(false);
+  });
+
+  it("grows a host's own message for a moment when production answers it", () => {
+    const own = hostMessage({ id: 4, seat: 1, reply_text: "ok", reply_at: "2026-10-01T12:00:00Z" });
+    expect(isExpanded(own, [1], NOON + 1_000)).toBe(true);
+    expect(isExpanded(own, [1], NOON + 5_000)).toBe(false);
+    // A colleague's message to production never grows on this screen.
+    expect(isExpanded(own, [2], NOON + 1_000)).toBe(false);
+  });
+
+  it("hides a message on a screen when one of its seats pressed ✕", () => {
+    const hidden = message({ id: 1, dismissed_by: [{ seat_id: 2, ts: "" }] });
+    expect(isHiddenOn(hidden, [2])).toBe(true);
+    expect(isHiddenOn(hidden, [1, 2])).toBe(true);
+    expect(isHiddenOn(hidden, [1])).toBe(false);
+  });
+
+  it("knows a host's message by its sender and target, and which are unread", () => {
+    const fromBruno = hostMessage({ id: 2, seat: 2 });
+    const read = hostMessage({ id: 3, seat: 1, read_at: "x" });
+    expect(senderSeat(fromBruno)).toBe(2);
+    expect(senderSeat(message({ id: 1 }))).toBeNull();
+    expect(isFromHost(fromBruno)).toBe(true);
+    // Production's messages are never "unread".
+    expect(unreadFromHosts([message({ id: 1 }), fromBruno, read])).toEqual([fromBruno]);
+    // A host's message is for production: no seat on a screen is addressed by it.
+    expect(addressedSeats(fromBruno, [1, 2])).toEqual([]);
+  });
+
+  it("names and colours a host's message after its sender seat", () => {
+    const seats = hostsState().seats;
+    const fromBruno = hostMessage({ id: 2, seat: 2 });
+    expect(senderTag(fromBruno.from, seats)).toBe("Bruno");
+    expect(messageColor(fromBruno, seats)).toBe("#e67e22");
+    expect(targetName("production", seats)).toBe("production");
+  });
+});
+
+describe("personal mix helpers (WP9b)", () => {
+  it("writes offsets with a sign and a real minus", () => {
+    expect(formatOffset(2)).toBe("+2 dB");
+    expect(formatOffset(-1.5)).toBe("−1.5 dB");
+    expect(formatOffset(0)).toBe("0 dB");
+    expect(formatOffset(0.04)).toBe("0 dB");
+  });
+
+  it("says what the card shows for each state, and … while unknown", () => {
+    expect(seatStateWord("to_production")).toBe("TO PRODUCTION");
+    expect(seatStateWord("not_mapped")).toBe("not mapped");
+    expect(seatStateWord(null)).toBe("…");
   });
 });

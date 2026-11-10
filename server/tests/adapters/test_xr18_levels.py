@@ -13,6 +13,7 @@ from baja_studio.adapters.xr18_levels import (
     format_db,
     level_to_db,
     nudge_level,
+    offset_level,
 )
 
 
@@ -64,3 +65,21 @@ def test_a_nudge_of_an_unknown_level_starts_from_unity_as_in_2026() -> None:
 def test_a_nudge_up_from_off_starts_at_the_bottom() -> None:
     # Off counts as -90 dB: +3 is -87 dB, nearly silent, not a jump to unity.
     assert level_to_db(nudge_level(0.0, 3.0)) == pytest.approx(-87.0)
+
+
+def test_an_offset_moves_a_send_above_or_below_its_fader() -> None:
+    assert level_to_db(offset_level(UNITY_LEVEL, 2.0)) == pytest.approx(2.0)
+    assert level_to_db(offset_level(UNITY_LEVEL, -6.0)) == pytest.approx(-6.0)
+
+
+def test_no_offset_gives_exactly_the_faders_value() -> None:
+    # Not a round trip through dB: mirroring compares exact values.
+    assert offset_level(0.6123, 0.0) == 0.6123
+
+
+def test_an_offset_never_opens_a_closed_fader_and_is_clamped_to_the_law() -> None:
+    assert offset_level(0.0, 10.0) == 0.0
+    # +10 dB is the top of the fader law.
+    assert offset_level(1.0, 5.0) == 1.0
+    # Far below the bottom is off (-90 dB).
+    assert offset_level(0.01, -30.0) == 0.0

@@ -43,7 +43,8 @@ export interface AudioSettingsHandle {
   /** A newer version saved elsewhere while this page has unsaved edits. */
   newerVersion: number | null;
   edit: (change: (draft: AudioSettingsValues) => AudioSettingsValues) => void;
-  save: () => Promise<boolean>;
+  /** The saved version, or null when nothing was saved (a conflict or an error). */
+  save: () => Promise<number | null>;
   discard: () => void;
   loadLatest: () => void;
 }
@@ -94,8 +95,8 @@ export function useAudioSettings(liveVersion: number | undefined): AudioSettings
     };
   }, [newer, dirty, saving]);
 
-  const save = useCallback(async (): Promise<boolean> => {
-    if (!document || !draft) return false;
+  const save = useCallback(async (): Promise<number | null> => {
+    if (!document || !draft) return null;
     setSaving(true);
     setNotice(null);
     try {
@@ -107,7 +108,7 @@ export function useAudioSettings(liveVersion: number | undefined): AudioSettings
       setDocument(result);
       setDraft(clone(result.values) as unknown as AudioSettingsValues);
       setNotice({ kind: "saved", text: "Saved and applied." });
-      return true;
+      return result.version;
     } catch (error) {
       if (error instanceof SettingsConflictError) {
         setNotice({
@@ -121,7 +122,7 @@ export function useAudioSettings(liveVersion: number | undefined): AudioSettings
       } else {
         setNotice({ kind: "error", text: (error as Error).message });
       }
-      return false;
+      return null;
     } finally {
       setSaving(false);
     }

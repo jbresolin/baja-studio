@@ -8,7 +8,8 @@ dry-run and the active state on every button (page, M-VAVE LED, D200 image).
 silences it ("closes the route"); `restore_levels` opens it again:
 
 - to the main fader's level when the send is *linked* to it (so a reopened
-  IEM send is in step with the fader it follows),
+  IEM send is in step with the fader it follows), plus the pair's offset
+  (a seat's personal mix, WP9b),
 - else to the stored level,
 - else to unity (0 dB), as in 2026.
 
@@ -20,16 +21,23 @@ double press can never store "off" and make the route impossible to reopen
 restart or a change in Mixing Station left D200 images wrong): a toggle
 macro is active when the mixer already looks the way its `on_steps` would
 leave it: each level it sets is there, each route it closes is silent,
-each route it opens is open, each mute is as it says. Snapshot recalls and
-`store_levels` without silencing cannot be seen, so they do not count; a
-macro with nothing visible is never active.
+each route it opens is open, each mute is as it says. Snapshot recalls,
+link changes and `store_levels` without silencing cannot be seen, so they
+do not count; a macro with nothing visible is never active. A macro that
+sets LR assigns ("talk to production", WP9b) is active exactly when those
+LR assigns are as it says: taking a host off air is what it is for.
+
+**Links and LR assigns.** `set_link` pauses or resumes a send's link, as
+the link matrix does (resuming brings an open send to its fader plus
+offset); `set_lr_assign` takes a strip off the main mix, or puts it back,
+without touching its fader.
 """
 
 from dataclasses import dataclass
 from typing import Protocol
 
 from baja_studio.adapters.xr18_addresses import MAIN_POINT
-from baja_studio.adapters.xr18_levels import UNITY_LEVEL
+from baja_studio.adapters.xr18_levels import UNITY_LEVEL, offset_level
 from baja_studio.audio.config import (
     MacroConfig,
     MacroStep,
@@ -37,6 +45,8 @@ from baja_studio.audio.config import (
     RestoreLevelsStep,
     SetAuxStep,
     SetFaderStep,
+    SetLinkStep,
+    SetLrAssignStep,
     SetMuteStep,
     StoreLevelsStep,
 )
@@ -59,6 +69,12 @@ class MixerView(Protocol):
     def link_state(self, channel: str, bus: str) -> str:
         """ "linked", "paused" or "unlinked"."""
 
+    def offset_db(self, channel: str, bus: str) -> float:
+        """How far a linked send sits above or below its main fader (0 dB: none)."""
+
+    def lr_assign(self, channel: str) -> bool | None:
+        """Whether a strip is assigned to the main mix (LR), None if unknown."""
+
 
 @dataclass(frozen=True)
 class PlannedChange:
@@ -66,14 +82,15 @@ class PlannedChange:
 
     `kind` is "level" (a fader or a send; `bus` is "main" or "busN"),
     "mute", "store" (remember `value` for the point), "forget" (drop the
-    stored level) or "snapshot" (`value` is its number).
+    stored level), "snapshot" (`value` is its number), "link" (`value` is
+    the new link state of channel → bus) or "lr_assign" (`value` is on).
     """
 
     kind: str
     channel: str = ""
     bus: str = MAIN_POINT
-    value: float | bool | int | None = None
-    previous: float | bool | None = None
+    value: float | bool | int | str | None = None
+    previous: float | bool | str | None = None
     # Set on aux writes made directly (set_aux): they pause a linked send.
     pauses_link: bool = False
 
@@ -91,12 +108,17 @@ class _Overlay:
         self.levels: dict[tuple[str, str], float] = {}
         self.mutes: dict[str, bool] = {}
         self.stored: dict[str, float | None] = {}
+        self.links: dict[tuple[str, str], str] = {}
+        self.lr_assigns: dict[str, bool] = {}
 
     def level(self, channel: str, bus: str) -> float | None:
         return self.levels.get((channel, bus), self.view.level(channel, bus))
 
     def stored_level(self, point: str) -> float | None:
         return self.stored[point] if point in self.stored else self.view.stored(point)
+
+    def link_state(self, channel: str, bus: str) -> str:
+        return self.links.get((channel, bus), self.view.link_state(channel, bus))
 
 
 def plan_steps(steps: list[MacroStep], view: MixerView) -> list[PlannedChange]:
@@ -129,6 +151,12 @@ def _plan_step(step: MacroStep, overlay: _Overlay) -> list[PlannedChange]:
             for point in step.points
             for change in plan_open(overlay, point.channel, point.bus)
         ]
+    if isinstance(step, SetLinkStep):
+        return _plan_link(overlay, step.channel, step.bus, step.state)
+    if isinstance(step, SetLrAssignStep):
+        previous = overlay.lr_assigns.get(step.channel, overlay.view.lr_assign(step.channel))
+        overlay.lr_assigns[step.channel] = step.on
+        return [PlannedChange("lr_assign", step.channel, value=step.on, previous=previous)]
     assert isinstance(step, RecallSnapshotStep)
     return [PlannedChange("snapshot", value=step.snapshot)]
 
@@ -163,15 +191,33 @@ def plan_open(view: MixerView | _Overlay, channel: str, bus: str) -> list[Planne
     point = f"{channel}:{bus}"
     stored = overlay.stored_level(point)
     target = stored if stored is not None else UNITY_LEVEL
-    if bus != MAIN_POINT and overlay.view.link_state(channel, bus) == "linked":
+    if bus != MAIN_POINT and overlay.link_state(channel, bus) == "linked":
         main = overlay.level(channel, MAIN_POINT)
         if main is not None:
-            target = main
+            target = offset_level(main, overlay.view.offset_db(channel, bus))
     changes = []
     if stored is not None:
         overlay.stored[point] = None
         changes.append(PlannedChange("forget", channel, bus, None, stored))
     changes.append(_level(overlay, channel, bus, target))
+    return changes
+
+
+def _plan_link(overlay: _Overlay, channel: str, bus: str, state: str) -> list[PlannedChange]:
+    """Change a link; linking brings an open send to its fader plus offset, as the matrix does.
+
+    A send a macro closed (it has a stored level) stays closed: restore it
+    first, then link, to have it follow its fader again.
+    """
+    previous = overlay.link_state(channel, bus)
+    overlay.links[(channel, bus)] = state
+    changes = [PlannedChange("link", channel, bus, state, previous)]
+    main = overlay.level(channel, MAIN_POINT)
+    held = overlay.stored_level(f"{channel}:{bus}") is not None
+    if state == "linked" and main is not None and not held:
+        changes.append(
+            _level(overlay, channel, bus, offset_level(main, overlay.view.offset_db(channel, bus)))
+        )
     return changes
 
 
@@ -185,11 +231,20 @@ def is_active(macro: MacroConfig, view: MixerView) -> bool:
     if macro.mode != "toggle":
         return False
     expectations = _expectations(macro.on_steps)
+    # A macro that takes strips off (or on) the main mix is about that: the
+    # LR assigns alone decide, whatever else it does around them (ADR 0013).
+    lr_only = {key: value for key, value in expectations.items() if key[0] == "lr"}
+    if lr_only:
+        expectations = lr_only
     if not expectations:
         return False
     for (kind, channel, bus), expected in expectations.items():
         if kind == "mute":
             if view.muted(channel) is not expected:
+                return False
+            continue
+        if kind == "lr":
+            if view.lr_assign(channel) is not expected:
                 return False
             continue
         level = view.level(channel, bus)
@@ -223,6 +278,8 @@ def _expectations(steps: list[MacroStep]) -> dict[tuple[str, str, str], Expectat
         elif isinstance(step, RestoreLevelsStep):
             for point in step.points:
                 expected[("level", point.channel, point.bus)] = "open"
+        elif isinstance(step, SetLrAssignStep):
+            expected[("lr", step.channel, "")] = step.on
     return expected
 
 

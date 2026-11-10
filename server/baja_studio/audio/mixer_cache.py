@@ -10,6 +10,7 @@ every use.
 """
 
 from dataclasses import dataclass
+from typing import Any
 
 from baja_studio.adapters.osc import OscArgument
 from baja_studio.adapters.xr18_addresses import MAIN_POINT, ParsedAddress
@@ -27,7 +28,12 @@ class CacheChange:
 
 
 class MixerCache:
-    """Faders, mutes, names, pans and sends, by channel id."""
+    """Faders, mutes, names, pans and sends, by channel id.
+
+    Also what the hosts' audio card needs to tell where a microphone is
+    heard (`audio/seat_states.py`): each strip's LR assign, and each send's
+    on switch and tap.
+    """
 
     def __init__(self) -> None:
         """Nothing known yet."""
@@ -36,6 +42,9 @@ class MixerCache:
         self.names: dict[str, str] = {}
         self.pans: dict[str, float] = {}
         self.sends: dict[tuple[str, str], float] = {}
+        self.lr_assigns: dict[str, bool] = {}
+        self.send_ons: dict[tuple[str, str], bool] = {}
+        self.send_taps: dict[tuple[str, str], int] = {}
 
     def apply(self, parsed: ParsedAddress, value: OscArgument) -> CacheChange | None:
         """Take a value from the mixer; returns the change, or None if nothing changed.
@@ -56,6 +65,12 @@ class MixerCache:
                 return None
             self.sends[key] = float(value)
             return CacheChange("send", parsed.channel, parsed.bus, old_send, float(value))
+        if parsed.kind == "lr_assign" and isinstance(value, int | float):
+            return _set(self.lr_assigns, parsed.channel, parsed, int(value) != 0)
+        if parsed.kind == "send_on" and parsed.bus is not None and isinstance(value, int | float):
+            return _set(self.send_ons, (parsed.channel, parsed.bus), parsed, int(value) != 0)
+        if parsed.kind == "send_tap" and parsed.bus is not None and isinstance(value, int | float):
+            return _set(self.send_taps, (parsed.channel, parsed.bus), parsed, int(value))
         if parsed.kind == "mute" and isinstance(value, int | float):
             muted = int(value) == 0
             old = self.mutes.get(parsed.channel)
@@ -91,6 +106,20 @@ class MixerCache:
         self.names.clear()
         self.pans.clear()
         self.sends.clear()
+        self.lr_assigns.clear()
+        self.send_ons.clear()
+        self.send_taps.clear()
+
+
+def _set[Key](
+    table: dict[Key, Any], key: Key, parsed: ParsedAddress, value: bool | int
+) -> CacheChange | None:
+    """Store a switch or an enum; the change, or None when it already had that value."""
+    old = table.get(key)
+    if old == value:
+        return None
+    table[key] = value
+    return CacheChange(parsed.kind, parsed.channel, parsed.bus, old, value)
 
 
 def _same(old: float | None, new: float) -> bool:

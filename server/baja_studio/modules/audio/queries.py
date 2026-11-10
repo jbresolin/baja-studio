@@ -5,8 +5,11 @@ pushes every change to subscribers (`/xremote`), so we only *ask* for:
 
 - on connect (and after a snapshot load): each strip's fader, mute and
   name (24 strips, 72 queries), plus the sends something here depends on:
-  linked or paused pairs, points used by macros and M-VAVE buttons, and the
-  strips' sends to the bus selected for the knobs;
+  linked or paused pairs, points used by macros and M-VAVE buttons, the
+  strips' sends to the bus selected for the knobs, and what the hosts'
+  audio card and personal mixes need (seat microphones' LR assign and
+  sends to production, production microphones' sends to the seats'
+  in-ears with their on switch and tap, the personal mixes' sends);
 - on demand: one bus's sends for the visible and M-VAVE strips, when a page
   shows that bus or the knobs select it.
 
@@ -18,13 +21,23 @@ from baja_studio.adapters.xr18_addresses import (
     MAIN_POINT,
     SEND_SOURCES,
     fader_address,
+    lr_assign_address,
     mute_address,
     name_address,
     pan_address,
     send_address,
+    send_on_address,
+    send_tap_address,
 )
-from baja_studio.audio.config import AudioSettings, RestoreLevelsStep, SetAuxStep, StoreLevelsStep
+from baja_studio.audio.config import (
+    AudioSettings,
+    RestoreLevelsStep,
+    SetAuxStep,
+    SetLrAssignStep,
+    StoreLevelsStep,
+)
 from baja_studio.audio.stores import LinkStore
+from baja_studio.modules.audio.hosts_view import mix_sources
 
 
 def interesting_addresses(
@@ -41,6 +54,9 @@ def interesting_addresses(
     points.update(_button_points(settings))
     if selected_bus is not None:
         points.update((channel, selected_bus) for channel in _mvave_channels(settings))
+    heard_sends = _heard_sends(settings)
+    points.update(heard_sends)
+    points.update(_personal_mix_points(settings, links))
     for channel, bus in sorted(points):
         if bus != MAIN_POINT and channel in SEND_SOURCES:
             addresses.append(send_address(channel, bus))
@@ -48,7 +64,48 @@ def interesting_addresses(
         pan_channel = settings.midi.faders.get(strip)
         if knob.target == "pan" and pan_channel in SEND_SOURCES:
             addresses.append(pan_address(str(pan_channel)))
+    # Whether those sends are heard depends on their on switch and tap, and a
+    # seat's microphone on air on its LR assign (`audio/seat_states.py`).
+    for channel, bus in sorted(heard_sends):
+        addresses.append(send_on_address(channel, bus))
+    # Every linked send's tap too: readiness warns when one is post-fader
+    # (the studio already copies the fader into it).
+    linked = {(channel, bus) for channel, buses in links.matrix().items() for bus in buses}
+    for channel, bus in sorted(heard_sends | linked):
+        addresses.append(send_tap_address(channel, bus))
+    # LR assigns the hosts' card and the "talk to production" macros depend on.
+    lr_channels = {seat.channel for seat in settings.seats if seat.channel is not None}
+    lr_channels |= _macro_lr_channels(settings)
+    addresses += [lr_assign_address(channel) for channel in sorted(lr_channels)]
     return addresses
+
+
+def _macro_lr_channels(settings: AudioSettings) -> set[str]:
+    return {
+        step.channel
+        for macro in settings.macros
+        for step in [*macro.on_steps, *macro.off_steps]
+        if isinstance(step, SetLrAssignStep)
+    }
+
+
+def _heard_sends(settings: AudioSettings) -> set[tuple[str, str]]:
+    """Sends the hosts' audio card judges: microphones to production, production to in-ears."""
+    sends: set[tuple[str, str]] = set()
+    for seat in settings.seats:
+        if seat.channel is not None:
+            sends.add((seat.channel, settings.production_bus))
+        sends.update((channel, seat.iem_bus) for channel in settings.production_channels)
+    return sends
+
+
+def _personal_mix_points(settings: AudioSettings, links: LinkStore) -> set[tuple[str, str]]:
+    """Every source each seat's personal-mix overlay shows, on that seat's bus."""
+    return {
+        (channel, seat.iem_bus)
+        for seat in settings.seats
+        for channel in mix_sources(settings, links, seat.iem_bus)
+    }
 
 
 def send_query_addresses(settings: AudioSettings, bus: str) -> list[str]:

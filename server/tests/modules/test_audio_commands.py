@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 
+from baja_studio.adapters.xr18_addresses import lr_assign_address, send_address
 from baja_studio.core.module import CommandError
 from tests.modules.audio_studio import AudioStudio
 
@@ -77,15 +78,25 @@ def test_save_mappings_reports_what_is_invalid(audio: AudioStudio) -> None:
 
 
 def test_a_dry_run_says_what_a_macro_would_change_without_changing_it(audio: AudioStudio) -> None:
+    # HOST 1 is heard in host 2's in-ears; the others' sends are still off.
     audio.connect_mixer()
+    audio.change_on_mixer(send_address("1", "bus2"), 0.75)
+    audio.soon(lambda: audio.state("channels.1")["sends"]["bus2"] == 0.75)
 
     changes = audio.command("dry_run", macro="host1-talk-prod")["changes"]
 
     assert [change["text"] for change in changes] == [
-        "HOST 1: remember 0.0 dB",
-        "HOST 1: 0.0 dB → -inf",
+        "HOST 1: off the main mix (LR)",
+        "HOST 1 → IEM HOST 2: pause the link",
+        "HOST 1 → IEM GUEST 1: pause the link",
+        "HOST 1 → IEM GUEST 2: pause the link",
+        "HOST 1 → IEM HOST 2: remember 0.0 dB",
+        "HOST 1 → IEM HOST 2: 0.0 dB → -inf",
     ]
+    # Nothing changed: the fader, the LR assign and the link are as they were.
     assert audio.state("channels.1")["fader"] == 0.75
+    assert audio.mixer_value(lr_assign_address("1")) == 1
+    assert audio.state("links")["1"]["bus2"] == "linked"
 
 
 def test_a_dry_run_of_unsaved_steps_from_the_editor(audio: AudioStudio) -> None:

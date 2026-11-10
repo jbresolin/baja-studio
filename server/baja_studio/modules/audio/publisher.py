@@ -7,6 +7,8 @@
                        muted, name (typed on the mixer), pan, sends {busN: level}
     audio.links        {channel: {bus: "linked" | "paused"}}
     audio.stored_levels {"5:bus1": level}
+    audio.offsets      {"5:bus1": dB}: linked sends above/below their fader (seat mixes)
+    audio.hosts_view   the hosts screen's audio card and personal mixes (hosts_view.py)
     audio.macros.<id>  {active}
     audio.midi         status ("disabled" | "starting" | "ok" | "offline"),
                        device, message, selected_bus, learn {armed, by, captured}
@@ -45,6 +47,16 @@ def initial_audio_state() -> dict[str, Any]:
         "channels": {channel: empty_channel(channel) for channel in CHANNEL_IDS},
         "links": {},
         "stored_levels": {},
+        "offsets": {},
+        "hosts_view": {
+            "mixer_online": False,
+            "can_adjust": False,
+            "step_db": 1.0,
+            "talkback": {"active": False, "label": ""},
+            "seats": {},
+            "mixes": {},
+            "pad_change": None,
+        },
         "macros": {},
         "midi": {
             "status": "starting",

@@ -11,22 +11,32 @@
  *
  * The screen tells the server which messages it has shown (`mark_shown`),
  * so production sees them delivered.
+ *
+ * WP9b: under the messages, a host can write to production. Tapping the
+ * audio card opens the seat's personal-mix overlay (`SeatMixOverlay`), and
+ * a pad or knob changing one of this screen's seats' mixes shows a short
+ * toast ("Ana: PC AUDIO +2 dB"), so there is feedback with the overlay shut.
  */
 
 import { useEffect, useRef, useState } from "react";
 
 import { HostsCardFrame } from "../components/hosts/cards";
+import { HostComposer } from "../components/hosts/HostComposer";
 import { HostsMessages } from "../components/hosts/HostsMessages";
+import { SeatMixOverlay } from "../components/hosts/SeatMixOverlay";
+import { playChime } from "../lib/chime";
 import {
   addressedSeats,
   cardsToShow,
   loadScreenSeats,
   saveScreenSeats,
+  seatName,
   valueAt,
   type HostsState,
   type Seat,
   type SeatId,
 } from "../lib/hosts";
+import { formatOffset, PAD_TOAST_MS, type SeatAudioView } from "../lib/seatAudio";
 import { useStateTree, useSendCommand } from "../lib/stateHooks";
 import { useHostsLink } from "../lib/useHostsLink";
 
@@ -46,11 +56,17 @@ export function HostsScreen() {
     return () => clearInterval(timer);
   }, []);
 
+  const seatAudio = valueAt(tree, "audio.hosts_view") as SeatAudioView | undefined;
+  const [mixSeat, setMixSeat] = useState<SeatId | null>(null);
+
   useDeliveryReceipts(state, choosing ? null : screenSeats);
   useChime(state, choosing ? null : screenSeats);
+  const padToast = usePadToast(seatAudio, state?.seats ?? [], choosing ? null : screenSeats);
 
   const run = (command: string, args: Record<string, unknown>) =>
     sendCommand("hosts", command, args).catch(() => undefined);
+  const runAudio = (command: string, args: Record<string, unknown>) =>
+    sendCommand("audio", command, args).catch(() => undefined);
 
   const classes = stale ? "hosts-screen hosts-stale" : "hosts-screen";
   if (!state) {
@@ -91,6 +107,8 @@ export function HostsScreen() {
             value={valueAt(tree, card.state_path)}
             seats={state.seats}
             nowMs={nowMs}
+            screenSeats={screenSeats}
+            onOpenSeatMix={setMixSeat}
             pushed={card.id === state.pushed_card?.id}
           />
         ))}
@@ -98,8 +116,24 @@ export function HostsScreen() {
       {pinned.map((card) => (
         <section key={card.id} className="hosts-card hosts-card-messages" aria-label={card.title}>
           <HostsMessages state={state} screenSeats={screenSeats} nowMs={nowMs} run={run} />
+          <HostComposer state={state} screenSeats={screenSeats} run={run} />
         </section>
       ))}
+      {mixSeat !== null && seatAudio && (
+        <SeatMixOverlay
+          seatId={mixSeat}
+          seatName={seatName(mixSeat, state.seats)}
+          color={state.seats.find((seat) => seat.id === mixSeat)?.color ?? "#d8dce2"}
+          view={seatAudio}
+          run={runAudio}
+          onClose={() => setMixSeat(null)}
+        />
+      )}
+      {padToast && (
+        <div className="hosts-pad-toast" role="status" data-testid="pad-toast">
+          {padToast}
+        </div>
+      )}
       <div className="hosts-corner">
         <span className="hosts-subtle">{seatNames(state.seats, screenSeats)}</span>
         <button onClick={() => setChoosing(true)}>Seats</button>
@@ -199,20 +233,36 @@ function useChime(state: HostsState | undefined, seats: SeatId[] | null) {
   }, [state, seats]);
 }
 
-function playChime() {
-  const AudioContextClass = window.AudioContext as typeof AudioContext | undefined;
-  if (AudioContextClass === undefined) return;
-  const context = new AudioContextClass();
-  [660, 880].forEach((frequency, index) => {
-    const oscillator = context.createOscillator();
-    const gain = context.createGain();
-    const start = context.currentTime + index * 0.15;
-    oscillator.frequency.value = frequency;
-    gain.gain.setValueAtTime(0.08, start);
-    gain.gain.exponentialRampToValueAtTime(0.001, start + 0.4);
-    oscillator.connect(gain).connect(context.destination);
-    oscillator.start(start);
-    oscillator.stop(start + 0.4);
-  });
-  setTimeout(() => void context.close(), 1000);
+/**
+ * "Ana: PC AUDIO +2 dB" for a few seconds when a pad or knob (not the
+ * overlay) moved one of this screen's seats' offsets; the first value seen
+ * after opening is not news.
+ */
+function usePadToast(
+  view: SeatAudioView | undefined,
+  seats: Seat[],
+  screenSeats: SeatId[] | null,
+): string | null {
+  const change = view?.pad_change ?? null;
+  const seq = change?.seq ?? 0;
+  // The change already there when audio's view first arrived, and the last one whose
+  // toast timed out: neither shows. `seq` counts every change, so "+2 dB" twice is two toasts.
+  const [baseline, setBaseline] = useState<number | null>(null);
+  const [expiredSeq, setExpiredSeq] = useState<number | null>(null);
+  if (baseline === null && view !== undefined) setBaseline(seq);
+  const visible =
+    change !== null &&
+    baseline !== null &&
+    seq > baseline &&
+    seq !== expiredSeq &&
+    screenSeats !== null &&
+    screenSeats.includes(change.seat_id as SeatId);
+  useEffect(() => {
+    if (!visible) return;
+    const timer = setTimeout(() => setExpiredSeq(seq), PAD_TOAST_MS);
+    return () => clearTimeout(timer);
+  }, [visible, seq]);
+  if (!visible) return null;
+  const name = seatName(change.seat_id as SeatId, seats);
+  return `${name}: ${change.label} ${formatOffset(change.offset_db)}`;
 }

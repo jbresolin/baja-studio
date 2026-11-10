@@ -7,8 +7,10 @@ Each quirk the 2026 tool learned the hard way has a test here, so a
 import pytest
 
 from baja_studio.adapters.xr18_addresses import (
+    POST_FADER_TAPS,
     ParsedAddress,
     fader_address,
+    lr_assign_address,
     mute_address,
     name_address,
     normalise_channel,
@@ -17,6 +19,8 @@ from baja_studio.adapters.xr18_addresses import (
     parse_address,
     point_address,
     send_address,
+    send_on_address,
+    send_tap_address,
 )
 
 
@@ -124,3 +128,34 @@ def test_incoming_addresses_are_recognised(address: str, parsed: ParsedAddress) 
 )
 def test_addresses_we_do_not_use_are_ignored(address: str) -> None:
     assert parse_address(address) is None
+
+
+def test_what_the_hosts_audio_card_reads_has_its_own_addresses() -> None:
+    # LR assign per strip; a send's on switch and tap next to its level.
+    assert lr_assign_address("1") == "/ch/01/mix/lr"
+    assert lr_assign_address("aux") == "/rtn/aux/mix/lr"
+    assert send_on_address("1", "bus5") == "/ch/01/mix/05/on"
+    assert send_tap_address("aux", "bus2") == "/rtn/aux/mix/02/tap"
+    # Taps 4 (post-fader) and 5 (sub-group) follow the fader; the rest do not.
+    assert {4, 5} == POST_FADER_TAPS
+
+
+@pytest.mark.parametrize(
+    ("address", "parsed"),
+    [
+        ("/ch/01/mix/lr", ParsedAddress("lr_assign", "1")),
+        ("/rtn/aux/mix/lr", ParsedAddress("lr_assign", "aux")),
+        ("/ch/01/mix/03/on", ParsedAddress("send_on", "1", "bus3")),
+        ("/ch/16/mix/06/tap", ParsedAddress("send_tap", "16", "bus6")),
+        # The strip's own mix/on is still its mute, not a send's switch.
+        ("/ch/01/mix/on", ParsedAddress("mute", "1")),
+        ("/ch/01/mix/03/level", ParsedAddress("send", "1", "bus3")),
+    ],
+)
+def test_lr_assign_and_send_switches_are_recognised(address: str, parsed: ParsedAddress) -> None:
+    assert parse_address(address) == parsed
+
+
+def test_effects_sends_switches_are_ignored_like_their_levels() -> None:
+    assert parse_address("/ch/01/mix/07/on") is None
+    assert parse_address("/ch/01/mix/08/tap") is None

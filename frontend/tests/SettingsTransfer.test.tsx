@@ -109,37 +109,138 @@ async function answer(server: FakeSocket, result: unknown, ok = true): Promise<S
   return sent;
 }
 
-async function chooseFile(): Promise<void> {
-  const file = new File(['{"format": "baja-studio-settings"}'], "settings.json", {
-    type: "application/json",
+/** Wait until the page sends `command`, then answer it (`ok` false: refuse it with `result`). */
+async function answerNamed(
+  server: FakeSocket,
+  command: string,
+  result: unknown,
+  ok = true,
+): Promise<SentCommand> {
+  let sent: SentCommand | undefined;
+  await vi.waitFor(() => {
+    sent = (server.sent as SentCommand[]).find((message) => message.command === command);
+    expect(sent).toBeDefined();
   });
+  await act(async () =>
+    server.receive(
+      ok
+        ? { type: "reply", request_id: sent!.request_id, ok: true, result }
+        : { type: "reply", request_id: sent!.request_id, ok: false, error: result },
+    ),
+  );
+  return sent!;
+}
+
+async function chooseFile(extra: Record<string, unknown> = {}): Promise<void> {
+  const content = JSON.stringify({ format: "baja-studio-settings", ...extra });
+  const file = new File([content], "settings.json", { type: "application/json" });
   await userEvent.upload(screen.getByLabelText(/choose one/), file);
 }
 
+const ROUTING = { links: { "1": ["bus1", "bus2"] }, offsets: { "9:bus1": 2 } };
+
 describe("Settings export", () => {
-  it("asks the home module for the export and saves it as a file", async () => {
-    const created: string[] = [];
+  it("asks the home module for the export, adds audio's routing and saves it as a file", async () => {
+    const blobs: Blob[] = [];
+    const names: string[] = [];
     vi.stubGlobal("URL", {
       ...URL,
-      createObjectURL: vi.fn(() => "blob:settings"),
+      createObjectURL: vi.fn((blob: Blob) => {
+        blobs.push(blob);
+        return "blob:settings";
+      }),
       revokeObjectURL: vi.fn(),
     });
     const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(function (
       this: HTMLAnchorElement,
     ) {
-      created.push(this.download);
+      names.push(this.download);
     });
     const server = showTransfer();
 
     await userEvent.click(screen.getByRole("button", { name: "Export settings" }));
-    const sent = await answer(server, {
+    const sent = await answerNamed(server, "export_settings", {
       file_name: "BajaStudio-settings-STREAM-PC-20261107-150000.json",
       document: { format: "baja-studio-settings" },
     });
+    // The link matrix and in-ear offsets are audio's tables, not settings (WP9b §4).
+    const routing = await answerNamed(server, "export_routing", ROUTING);
+    await vi.waitFor(() => expect(names).toHaveLength(1));
 
     expect([sent.module, sent.command]).toEqual(["home", "export_settings"]);
-    expect(created).toEqual(["BajaStudio-settings-STREAM-PC-20261107-150000.json"]);
+    expect([routing.module, routing.command]).toEqual(["audio", "export_routing"]);
+    expect(names).toEqual(["BajaStudio-settings-STREAM-PC-20261107-150000.json"]);
+    expect(JSON.parse(await blobs[0]!.text())).toEqual({
+      format: "baja-studio-settings",
+      audio_routing: ROUTING,
+    });
     click.mockRestore();
+  });
+
+  it("saves the settings alone when audio is off", async () => {
+    const blobs: Blob[] = [];
+    vi.stubGlobal("URL", {
+      ...URL,
+      createObjectURL: vi.fn((blob: Blob) => {
+        blobs.push(blob);
+        return "blob:settings";
+      }),
+      revokeObjectURL: vi.fn(),
+    });
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    const server = showTransfer();
+
+    await userEvent.click(screen.getByRole("button", { name: "Export settings" }));
+    await answerNamed(server, "export_settings", {
+      file_name: "settings.json",
+      document: { format: "baja-studio-settings" },
+    });
+    await answerNamed(server, "export_routing", "audio is not running", false);
+    await vi.waitFor(() => expect(blobs).toHaveLength(1));
+
+    expect(JSON.parse(await blobs[0]!.text())).toEqual({ format: "baja-studio-settings" });
+    click.mockRestore();
+  });
+});
+
+describe("Audio routing import (WP9b)", () => {
+  it("previews what the file's link matrix and offsets change, then applies them", async () => {
+    const server = showTransfer();
+    await chooseFile({ audio_routing: ROUTING });
+    await answerNamed(server, "import_settings_dryrun", dryRun());
+    const preview = await answerNamed(server, "import_routing", {
+      added: ["1:bus2"],
+      removed: ["5:bus1"],
+      offsets_changed: ["9:bus1"],
+      applied: false,
+    });
+
+    expect(preview.args).toEqual({ ...ROUTING, dry_run: true });
+    const routing = await screen.findByTestId("import-audio-routing");
+    expect(routing).toHaveTextContent("audio routing (link matrix, in-ear offsets): changes (3)");
+    expect(routing).toHaveTextContent("link 1:bus2");
+    expect(routing).toHaveTextContent("unlink 5:bus1");
+    expect(routing).toHaveTextContent("offset 9:bus1: 2 dB");
+
+    server.sent = [];
+    await userEvent.click(screen.getByRole("button", { name: "Apply" }));
+    await answerNamed(server, "import_settings_apply", { results: [], secrets_to_enter: [] });
+    const applied = await answerNamed(server, "import_routing", { applied: true });
+
+    expect(applied.args).toEqual(ROUTING);
+    expect(await screen.findByTestId("apply-results")).toHaveTextContent("audio routing: applied");
+  });
+
+  it("shows why audio refused the file's routing, and imports the settings anyway", async () => {
+    const server = showTransfer();
+    await chooseFile({ audio_routing: { links: "everything", offsets: {} } });
+    await answerNamed(server, "import_settings_dryrun", dryRun());
+    await answerNamed(server, "import_routing", "the audio routing's 'links' must be ...", false);
+
+    const routing = await screen.findByTestId("import-audio-routing");
+    expect(routing).toHaveTextContent("cannot import");
+    expect(routing).toHaveTextContent("the audio routing's 'links' must be");
+    expect(screen.getByRole("button", { name: "Apply" })).toBeEnabled();
   });
 });
 

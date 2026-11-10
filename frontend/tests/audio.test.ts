@@ -73,8 +73,24 @@ describe("editing helpers", () => {
         { op: "recall_scene", snapshot: 3 },
       ]),
     ).toEqual([
-      { op: "store_levels", points, silence: true },
       { op: "set_mute", channel: "2", muted: false },
+      { op: "store_levels", points, silence: true },
+    ]);
+  });
+
+  it("undoes talk to production in reverse: open, then link, then back on LR (WP9b)", () => {
+    const others = [{ channel: "1", bus: "bus2" }];
+
+    expect(
+      mirrorSteps([
+        { op: "set_lr_assign", channel: "1", on: false },
+        { op: "set_link", channel: "1", bus: "bus2", state: "paused" },
+        { op: "store_levels", points: others, silence: true },
+      ]),
+    ).toEqual([
+      { op: "restore_levels", points: others },
+      { op: "set_link", channel: "1", bus: "bus2", state: "linked" },
+      { op: "set_lr_assign", channel: "1", on: true },
     ]);
   });
 

@@ -1,5 +1,5 @@
 /**
- * Types and pure helpers for the hosts screen and its control page (WP9).
+ * Types and pure helpers for the hosts screen and its control page (WP9, WP9b).
  *
  * Shapes mirror the server: `hosts` state from
  * server/baja_studio/modules/hosts/desk.py, messages from
@@ -8,15 +8,16 @@
  */
 
 export type SeatId = 1 | 2 | 3 | 4;
-export type MessageTarget = SeatId | "all";
+/** Production writes to a seat or to all; a host writes to "production" only. */
+export type MessageTarget = SeatId | "all" | "production";
 export type MessageKind = "info" | "question" | "urgent";
+export type ChatSize = "small" | "medium" | "large";
 
 export interface Seat {
   id: SeatId;
   screen_name: string;
   color: string;
   enabled: boolean;
-  audio_channel: string | null;
   online: boolean;
   screens: number;
 }
@@ -24,17 +25,26 @@ export interface Seat {
 export interface HostsMessage {
   id: number;
   ts: string;
+  /** "production:<client id>" or "seat:<id>". */
   from: string;
   to: MessageTarget;
   text: string;
   kind: MessageKind;
   expires_s: number | null;
   expires_at: string | null;
-  reactions: { seat_id: SeatId; reaction: string; ts: string }[];
+  /** `seat_id` null: production answering a host's message (`by` names the page). */
+  reactions: { seat_id: SeatId | null; reaction: string; ts: string; by?: string }[];
   reply_text: string | null;
   reply_seat_id: SeatId | null;
+  reply_by: string | null;
+  reply_at: string | null;
   shown: { seat_id: SeatId; ts: string }[];
+  /** Production waved it away: it fades everywhere. */
   dismissed_at: string | null;
+  /** Seats whose screen hid it (the ✕ on the hosts screen). */
+  dismissed_by: { seat_id: SeatId; ts: string }[];
+  /** Production has seen this host's message (the unread badge). */
+  read_at: string | null;
 }
 
 export interface CardView {
@@ -62,11 +72,17 @@ export interface HostsState {
     reactions: string[];
     message_expires_s: number;
     chime: boolean;
+    chat_size: ChatSize;
+    host_phrases: string[];
+    production_chime: boolean;
   };
 }
 
 /** The remaining seconds at which the now-playing countdown turns amber (brief §3). */
 export const COUNTDOWN_AMBER_AT_SECONDS = 10;
+
+/** After an answer, a grown message shrinks back to one line after this long (WP9b §1). */
+export const COLLAPSE_AFTER_MS = 4000;
 
 /** Where a hosts screen remembers which seats it represents. */
 export const SEATS_STORAGE_KEY = "baja-studio.hosts-seats";
@@ -97,29 +113,94 @@ export function isPulsing(message: HostsMessage): boolean {
  * they know production is talking to the person next to them.
  */
 export function messageSize(message: HostsMessage, seats: SeatId[]): "large" | "small" {
-  return message.to === "all" || seats.includes(message.to) ? "large" : "small";
+  return addressedSeats(message, seats).length > 0 ? "large" : "small";
 }
 
-/** The seats on this screen a message is for (all of them for "all"). */
+/** The seats on this screen a message is for (all of them for "all"; none for production's). */
 export function addressedSeats(message: HostsMessage, seats: SeatId[]): SeatId[] {
-  return message.to === "all" ? seats : seats.filter((seat) => seat === message.to);
+  if (message.to === "all") return seats;
+  return seats.filter((seat) => seat === message.to);
 }
 
-/** "Ana", "everyone", or "seat 3" when the seat is unknown. */
+/** The seat that sent a host's message ("seat:2" → 2), or null for production's. */
+export function senderSeat(message: HostsMessage): SeatId | null {
+  const match = /^seat:([1-4])$/.exec(message.from);
+  return match ? (Number(match[1]) as SeatId) : null;
+}
+
+/** A host's message to production. */
+export function isFromHost(message: HostsMessage): boolean {
+  return message.to === "production";
+}
+
+/** Whether one of this screen's seats hid the message with its ✕ (it stays hidden). */
+export function isHiddenOn(message: HostsMessage, seats: SeatId[]): boolean {
+  return message.dismissed_by.some((entry) => seats.includes(entry.seat_id));
+}
+
+/** When the message was first answered (a reaction or the reply), or null. */
+export function answeredAtMs(message: HostsMessage): number | null {
+  const times = [
+    ...message.reactions.map((reaction) => Date.parse(reaction.ts)),
+    ...(message.reply_at ? [Date.parse(message.reply_at)] : []),
+  ].filter((time) => !Number.isNaN(time));
+  if (times.length === 0) return isAnswered(message) ? 0 : null;
+  return Math.min(...times);
+}
+
+/**
+ * Whether a message is drawn grown on this screen, not as a compact line
+ * (WP9b §1). A message for this screen grows while it waits for an answer
+ * (an urgent one pulses meanwhile), and shrinks back `COLLAPSE_AFTER_MS`
+ * after the first answer, when it expires or when production waves it
+ * away. A host's own message grows for a moment when production answers it.
+ */
+export function isExpanded(message: HostsMessage, seats: SeatId[], nowMs: number): boolean {
+  if (message.dismissed_at !== null || isExpired(message, nowMs)) return false;
+  const answered = answeredAtMs(message);
+  if (isFromHost(message)) {
+    const sender = senderSeat(message);
+    if (sender === null || !seats.includes(sender) || answered === null) return false;
+    return nowMs < answered + COLLAPSE_AFTER_MS;
+  }
+  if (addressedSeats(message, seats).length === 0) return false;
+  return answered === null || nowMs < answered + COLLAPSE_AFTER_MS;
+}
+
+/** Hosts' messages production has not seen yet, oldest first. */
+export function unreadFromHosts(messages: HostsMessage[]): HostsMessage[] {
+  return messages.filter((message) => isFromHost(message) && message.read_at === null);
+}
+
+/** "Ana", "everyone", "production", or "seat 3" when the seat is unknown. */
 export function targetName(target: MessageTarget, seats: Seat[]): string {
   if (target === "all") return "everyone";
+  if (target === "production") return "production";
   return seats.find((seat) => seat.id === target)?.screen_name || `seat ${target}`;
+}
+
+/** The name of seat `seatId` ("seat 3" when unknown or unnamed). */
+export function seatName(seatId: SeatId | null, seats: Seat[]): string {
+  return seats.find((seat) => seat.id === seatId)?.screen_name || `seat ${seatId}`;
 }
 
 /** The colour messages to this target are drawn in (a neutral one for everyone). */
 export function targetColor(target: MessageTarget, seats: Seat[]): string {
-  if (target === "all") return "#d8dce2";
+  if (target === "all" || target === "production") return "#d8dce2";
   return seats.find((seat) => seat.id === target)?.color ?? "#d8dce2";
 }
 
-/** "production:ab12" → "ab12": the page that sent it, as a short tag. */
-export function senderTag(from: string): string {
-  return from.startsWith("production:") ? from.slice("production:".length) : from;
+/** A message's colour: its sender seat's for a host's message, else its target's. */
+export function messageColor(message: HostsMessage, seats: Seat[]): string {
+  const sender = senderSeat(message);
+  return sender !== null ? targetColor(sender, seats) : targetColor(message.to, seats);
+}
+
+/** "production:ab12" → "ab12", "seat:2" → "Bruno": who sent it, as a short tag. */
+export function senderTag(from: string, seats: Seat[] = []): string {
+  if (from.startsWith("production:")) return from.slice("production:".length);
+  const seat = /^seat:([1-4])$/.exec(from);
+  return seat ? seatName(Number(seat[1]) as SeatId, seats) : from;
 }
 
 /** The cards a hosts screen shows: visible ones in layout order, the pushed one first, pinned last. */

@@ -20,7 +20,9 @@ Without the XR18: `python -m baja_studio.fakes.fake_xr18` (see `wp4.md`).
 ## Setup
 
 On **Hosts → Seats**: switch on seats 1 and 2, name them (e.g. Ana and
-Bruno), and check their mic channels (1 and 2 by default). On **Audio
+Bruno). Since WP9b their mic channels are set on **Audio setup → Seats**
+(map seats 1 and 2 to channels 1 and 2), and the *Audio* card shows LIVE /
+TO PRODUCTION / MUTED (see `wp9b.md`). On **Audio
 setup → Channels**, check that *Camera operator's bus (talkback)* is the
 camera operator's bus on today's patch (bus 6, "CAMERA OP", by default). Open the hosts
 screen and choose **seat 1** only, so that steps 1 and 3 show both sizes.

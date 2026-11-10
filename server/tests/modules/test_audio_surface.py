@@ -142,14 +142,15 @@ def test_knobs_turn_the_selected_buss_send_and_do_nothing_without_one(ready: Aud
     ready.press(knob(3, 2))
     assert ready.state("last_source").get("3:bus2") is None
 
-    ready.press(bus_select("bus2"))
-    assert ready.state("midi.selected_bus") == "bus2"
+    ready.press(bus_select("bus6"))
+    assert ready.state("midi.selected_bus") == "bus6"
     ready.press(knob(3, 2))  # two detents of 1.5 dB
     ready.settle()
 
-    assert ready.state("last_source.3:bus2") == "device:mvave"
-    # A direct send change pauses its link (3 → bus2 was linked).
-    assert ready.state("links")["3"]["bus2"] == "paused"
+    assert ready.state("last_source.3:bus6") == "device:mvave"
+    # A direct send change pauses its link (3 → bus6 was linked). Bus 6 is
+    # the camera operator's; on a seat's in-ear bus the link would stay.
+    assert ready.state("links")["3"]["bus6"] == "paused"
 
 
 def test_pressing_the_selected_bus_again_clears_it(ready: AudioStudio) -> None:

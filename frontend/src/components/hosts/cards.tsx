@@ -5,15 +5,22 @@
  * screen looks the name up in `CARD_COMPONENTS` and hands the component the
  * value at that path. A card from a later work package (standings, team
  * facts) is one more entry here plus its declaration in the module that
- * owns the data. Everything is read-only and drawn large: hosts read it from
- * 1.5 m away.
+ * owns the data. Everything is drawn large (hosts read it from 1.5 m away)
+ * and read-only, except that the audio card opens a seat's personal-mix
+ * overlay (WP9b §3).
  */
 
 import type { ReactElement } from "react";
 
-import type { AudioState } from "../../lib/audio";
-import { COUNTDOWN_AMBER_AT_SECONDS, streamTime, type CardView, type Seat } from "../../lib/hosts";
+import {
+  COUNTDOWN_AMBER_AT_SECONDS,
+  streamTime,
+  type CardView,
+  type Seat,
+  type SeatId,
+} from "../../lib/hosts";
 import { formatDuration, formatKnownDuration, type HostsView } from "../../lib/playout";
+import { seatStateWord, type SeatAudioView } from "../../lib/seatAudio";
 
 export interface CardProps {
   card: CardView;
@@ -21,12 +28,16 @@ export interface CardProps {
   value: unknown;
   seats: Seat[];
   nowMs: number;
+  /** The seats this hosts screen is for. */
+  screenSeats: SeatId[];
+  /** Open a seat's personal-mix overlay (the audio card's one interaction, WP9b §3). */
+  onOpenSeatMix?: (seatId: SeatId) => void;
 }
 
 export const CARD_COMPONENTS: Record<string, (props: CardProps) => ReactElement> = {
   now_playing: NowPlayingCard,
   next_up: NextUpCard,
-  audio_state: AudioCard,
+  seat_audio: SeatAudioCard,
   clock: ClockCard,
   placeholder: PlaceholderCard,
 };
@@ -88,36 +99,67 @@ function NextUpCard({ value }: CardProps) {
   );
 }
 
-function AudioCard({ card, value, seats }: CardProps) {
-  const audio = value as AudioState | undefined;
-  if (!audio) return <div className="hosts-quiet">Audio is off</div>;
-  const mixerUp = audio.mixer.connection === "ok";
-  const talkbackIds = (card.options.talkback_macros as string[] | undefined) ?? [];
-  const talkback = talkbackIds.some((id) => audio.macros[id]?.active);
-  const withMics = seats.filter((seat) => seat.enabled && seat.audio_channel !== null);
+/**
+ * Where each seat's microphone is heard (WP9b §2): LIVE, TO PRODUCTION,
+ * MUTED or "not mapped", in the seat's colour, plus "production → you" when
+ * a production microphone is open into that seat's in-ears. Audio publishes
+ * the facts (`audio.hosts_view`); names and colours are the hosts' seats.
+ * This screen's own seats are buttons that open their personal mix.
+ */
+function SeatAudioCard({ value, seats, screenSeats, onOpenSeatMix }: CardProps) {
+  const view = value as SeatAudioView | undefined;
+  if (!view) return <div className="hosts-quiet">Audio is off</div>;
+  if (!view.mixer_online) {
+    return (
+      <div className="hosts-quiet" role="status">
+        Mixer offline
+      </div>
+    );
+  }
   return (
     <div>
-      {!mixerUp && <div className="hosts-subtle">Mixer {audio.mixer.connection}</div>}
       <ul className="hosts-mics">
-        {withMics.map((seat) => {
-          const muted = audio.channels[seat.audio_channel!]?.muted;
-          const word =
-            !mixerUp || muted === null || muted === undefined ? "?" : muted ? "MUTED" : "LIVE";
-          return (
-            <li
-              key={seat.id}
-              className={word === "LIVE" ? "hosts-mic hosts-mic-live" : "hosts-mic"}
-              style={{ borderColor: seat.color }}
-            >
-              <span style={{ color: seat.color }}>{seat.screen_name || `Seat ${seat.id}`}</span>
-              <strong>{word}</strong>
-            </li>
-          );
-        })}
+        {seats
+          .filter((seat) => seat.enabled)
+          .map((seat) => {
+            const audio = view.seats[String(seat.id)];
+            const state = audio?.state ?? null;
+            const name = seat.screen_name || `Seat ${seat.id}`;
+            const content = (
+              <>
+                <span style={{ color: seat.color }}>{name}</span>
+                <strong>{seatStateWord(state)}</strong>
+                {audio?.production_to_you && (
+                  <span className="hosts-prod-to-you">production → you</span>
+                )}
+              </>
+            );
+            const mine = screenSeats.includes(seat.id) && onOpenSeatMix !== undefined;
+            return (
+              <li
+                key={seat.id}
+                className={`hosts-mic hosts-mic-${state ?? "unknown"}`}
+                style={{ borderColor: seat.color }}
+                data-testid={`seat-audio-${seat.id}`}
+              >
+                {mine ? (
+                  <button
+                    className="hosts-mic-open"
+                    aria-label={`${name}: ${seatStateWord(state)}, open the in-ear mix`}
+                    onClick={() => onOpenSeatMix(seat.id)}
+                  >
+                    {content}
+                  </button>
+                ) : (
+                  content
+                )}
+              </li>
+            );
+          })}
       </ul>
-      {talkback && (
+      {view.talkback.active && (
         <div className="hosts-talkback" role="status">
-          Talkback → {String(card.options.talkback_label ?? "camera op")}
+          Talkback → {view.talkback.label}
         </div>
       )}
     </div>

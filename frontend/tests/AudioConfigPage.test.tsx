@@ -268,6 +268,33 @@ describe("Audio setup page", () => {
     expect(await screen.findByTestId("dry-run")).toHaveTextContent("HOST 1: mute");
   });
 
+  it("edits the LR-assign and link steps of talk to production and dry-runs them (WP9b)", async () => {
+    await showSetup();
+    openSection("Macros");
+    const editor = screen.getByTestId("macro-editor");
+    fireEvent.click(within(editor).getAllByRole("button", { name: "Edit" })[0]!);
+
+    fireEvent.change(screen.getByLabelText("add a step to Turning on"), {
+      target: { value: "set_lr_assign" },
+    });
+    fireEvent.change(screen.getByLabelText("add a step to Turning on"), {
+      target: { value: "set_link" },
+    });
+    fireEvent.change(screen.getByLabelText("Turning on step 3 bus"), {
+      target: { value: "bus3" },
+    });
+    expect(screen.getByLabelText("Turning on step 2 main mix")).toHaveValue("off");
+    expect(screen.getByLabelText("Turning on step 3 link")).toHaveValue("paused");
+
+    fireEvent.click(screen.getByRole("button", { name: "Dry run" }));
+
+    const steps = lastCommand().args.steps as Record<string, unknown>[];
+    expect(steps.slice(1)).toEqual([
+      { op: "set_lr_assign", channel: "1", on: false },
+      { op: "set_link", channel: "1", bus: "bus3", state: "paused" },
+    ]);
+  });
+
   it("the D200 card lists this host's URLs", async () => {
     await showSetup();
     openSection("D200");
@@ -275,5 +302,208 @@ describe("Audio setup page", () => {
     expect(screen.getByTestId("d200-card")).toHaveTextContent(
       `${window.location.origin}/action/macro/host1-talk-prod`,
     );
+  });
+});
+
+describe("Audio setup → Seats (WP9b)", () => {
+  it("maps a seat's microphone and in-ears, the production bus and microphones, and saves", async () => {
+    await showSetup();
+    openSection("Seats");
+    const section = screen.getByTestId("seats-section");
+
+    // Seat 2's microphone is channel 2, and its in-ears move to bus 3.
+    fireEvent.change(within(section).getByLabelText("Seat 2 microphone"), {
+      target: { value: "2" },
+    });
+    fireEvent.change(within(section).getByLabelText("Seat 2 in-ears"), {
+      target: { value: "bus3" },
+    });
+    // Bus 6 becomes the production loop; channel 6 is a production microphone too.
+    fireEvent.change(within(section).getByLabelText("Production bus"), {
+      target: { value: "bus6" },
+    });
+    fireEvent.click(within(section).getByLabelText("Ch 6"));
+    fireEvent.click(
+      within(section).getByLabelText(
+        "Hosts may change their own in-ear mix (otherwise the overlay is view-only)",
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(saves).toHaveLength(1));
+    const values = saves[0]!.values;
+    expect(values.seats[1]).toEqual({ seat_id: 2, channel: "2", iem_bus: "bus3" });
+    expect(values.production_bus).toBe("bus6");
+    expect(values.production_channels).toEqual(["5", "6"]);
+    expect(values.hosts_can_adjust_mix).toBe(false);
+  });
+
+  it("shows an unmapped seat as not mapped, and the hosts' names when hosts is on", async () => {
+    await showSetup();
+    act(() =>
+      server.receive({
+        type: "patch",
+        module: "hosts",
+        path: "",
+        seq: 2,
+        value: { seats: [{ id: 2, screen_name: "Bruno" }] },
+      }),
+    );
+    openSection("Seats");
+
+    expect(screen.getByLabelText("Seat 2 microphone")).toHaveValue("");
+    expect(within(screen.getByTestId("seat-audio-table")).getByText("Bruno")).toBeInTheDocument();
+  });
+});
+
+describe("Restore defaults (WP9b)", () => {
+  const CUSTOM = {
+    id: "jingle-duck",
+    label: "Duck for the jingle",
+    color: "#123456",
+    mode: "toggle" as const,
+    on_steps: [],
+    off_steps: [],
+  };
+  const NEW_HOST1 = {
+    id: "host1-talk-prod",
+    label: "Host 1 → Prod",
+    color: "#e74c3c",
+    mode: "toggle" as const,
+    on_steps: [{ op: "set_lr_assign" as const, channel: "1", on: false }],
+    off_steps: [{ op: "set_lr_assign" as const, channel: "1", on: true }],
+  };
+  const GUEST1 = { ...NEW_HOST1, id: "guest1-talk-prod", label: "Guest 1 → Prod" };
+
+  /** Answers the last command the page sent; returns it. */
+  function reply(command: string, result: unknown, ok = true): SentCommand {
+    const sent = lastCommand();
+    expect(sent.command).toBe(command);
+    act(() =>
+      server.receive(
+        ok
+          ? { type: "reply", request_id: sent.request_id, ok, result }
+          : { type: "reply", request_id: sent.request_id, ok, error: result },
+      ),
+    );
+    return sent;
+  }
+
+  async function previewMacros() {
+    stored.values.macros = [...stored.values.macros, CUSTOM];
+    await showSetup();
+    openSection("Macros");
+    fireEvent.click(screen.getByRole("button", { name: "Restore defaults…" }));
+    const [host1, prod1] = stored.values.macros;
+    const preview = reply("preview_defaults", {
+      macros: [NEW_HOST1, prod1, CUSTOM, GUEST1],
+      changes: [
+        { id: "host1-talk-prod", label: "Host 1 → Prod", change: "replaced" },
+        { id: "prod1-talk-hosts", label: "Prod 1 → Hosts", change: "unchanged" },
+        { id: "jingle-duck", label: "Duck for the jingle", change: "custom" },
+        { id: "guest1-talk-prod", label: "Guest 1 → Prod", change: "added" },
+      ],
+    });
+    expect(preview.args).toMatchObject({ part: "macros" });
+    expect((preview.args.macros as { id: string }[]).map((m) => m.id)).toEqual([
+      host1!.id,
+      "prod1-talk-hosts",
+      "jingle-duck",
+    ]);
+    return await screen.findByTestId("macro-restore");
+  }
+
+  it("lists each macro, saves the restore with the page's version and logs it", async () => {
+    const list = await previewMacros();
+    expect(list).toHaveTextContent("Host 1 → Prod host1-talk-prod: replaced by the default");
+    expect(list).toHaveTextContent("Guest 1 → Prod guest1-talk-prod: added");
+    expect(list).toHaveTextContent("Prod 1 → Hosts prod1-talk-hosts: unchanged");
+    expect(list).toHaveTextContent("Duck for the jingle jingle-duck: kept (not a default)");
+    expect(saves).toHaveLength(0); // nothing saved yet
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(saves).toHaveLength(1));
+    expect(saves[0]!.version).toBe(4);
+    expect(saves[0]!.values.macros.map((macro) => macro.id)).toEqual([
+      "host1-talk-prod",
+      "prod1-talk-hosts",
+      "jingle-duck",
+      "guest1-talk-prod",
+    ]);
+    expect(saves[0]!.values.macros[2]).toEqual(CUSTOM);
+    await waitFor(() => expect(lastCommand().command).toBe("restore_defaults"));
+    expect(lastCommand().args).toMatchObject({ part: "macros", version: 5 });
+    reply("restore_defaults", { version: 5, macros: [] });
+    await waitFor(() => expect(screen.queryByTestId("macro-restore")).toBeNull());
+  });
+
+  it("Discard drops the restore and leaves the macros as they were", async () => {
+    await previewMacros();
+
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+
+    expect(screen.queryByTestId("macro-restore")).toBeNull();
+    expect(screen.getByTestId("save-bar")).toHaveTextContent("No unsaved changes");
+    expect(screen.queryByText("Guest 1 → Prod")).toBeNull();
+    expect(saves).toHaveLength(0);
+  });
+
+  it("a stale save of the restore is still a conflict, and nothing is logged", async () => {
+    await previewMacros();
+    const before = server.sent.length;
+    nextSaveAnswer = Response.json(
+      { detail: { message: "stale", current_version: 5 } },
+      { status: 409 },
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await screen.findByText(/Someone else saved the audio setup \(now version 5\)/);
+    expect(server.sent).toHaveLength(before);
+    expect(screen.getByTestId("macro-restore")).toBeInTheDocument();
+  });
+
+  it("lists the link changes and applies them only on Save", async () => {
+    await showSetup();
+    openSection("Link matrix");
+    fireEvent.click(screen.getByRole("button", { name: "Restore defaults…" }));
+    const current = { "5": { bus1: "linked" } };
+    reply("preview_defaults", {
+      links: {},
+      current,
+      changes: [{ channel: "5", bus: "bus1", before: "linked", after: "unlinked" }],
+    });
+    expect(await screen.findByTestId("link-restore")).toHaveTextContent(
+      "PROD 1 → IEM HOST 1: linked → unlinked",
+    );
+    const sentBefore = server.sent.length;
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(lastCommand().command).toBe("restore_defaults"));
+    expect(server.sent).toHaveLength(sentBefore + 1);
+    expect(lastCommand().args).toEqual({ part: "links", expected: current });
+    expect(saves).toHaveLength(0); // the settings had no edits
+    reply("restore_defaults", { links: {}, changes: [] });
+    await waitFor(() => expect(screen.queryByTestId("link-restore")).toBeNull());
+  });
+
+  it("Discard drops a pending link matrix restore without sending it", async () => {
+    await showSetup();
+    openSection("Link matrix");
+    fireEvent.click(screen.getByRole("button", { name: "Restore defaults…" }));
+    reply("preview_defaults", {
+      links: {},
+      current: {},
+      changes: [{ channel: "5", bus: "bus1", before: "unlinked", after: "linked" }],
+    });
+    await screen.findByTestId("link-restore");
+    const sentBefore = server.sent.length;
+
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+
+    expect(screen.queryByTestId("link-restore")).toBeNull();
+    expect(server.sent).toHaveLength(sentBefore);
   });
 });

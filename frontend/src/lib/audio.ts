@@ -7,6 +7,8 @@
  * server/baja_studio/adapters/xr18_levels.py.
  */
 
+import type { SeatAudioView } from "./seatAudio";
+
 export const INPUTS = Array.from({ length: 16 }, (_, index) => String(index + 1));
 export const AUX_BUSES = ["bus1", "bus2", "bus3", "bus4", "bus5", "bus6"] as const;
 export const CHANNEL_IDS = [...INPUTS, "aux", "lr", ...AUX_BUSES];
@@ -41,6 +43,8 @@ export interface AudioState {
   channels: Record<string, ChannelView>;
   links: Record<string, Record<string, LinkState>>;
   stored_levels: Record<string, number>;
+  offsets: Record<string, number>;
+  hosts_view: SeatAudioView;
   macros: Record<string, { active: boolean }>;
   midi: {
     status: "disabled" | "starting" | "ok" | "offline";
@@ -72,7 +76,9 @@ export type MacroStep =
   | { op: "set_aux"; channel: string; bus: AuxBus; level: number }
   | { op: "store_levels"; points: SendPoint[]; silence: boolean }
   | { op: "restore_levels"; points: SendPoint[] }
-  | { op: "recall_scene"; snapshot: number };
+  | { op: "recall_scene"; snapshot: number }
+  | { op: "set_link"; channel: string; bus: AuxBus; state: LinkState }
+  | { op: "set_lr_assign"; channel: string; on: boolean };
 
 export interface MacroConfig {
   id: string;
@@ -121,6 +127,40 @@ export interface AudioSettingsValues {
   scenes: SceneConfig[];
   d200: { enabled: boolean; state_poll_hint_s: number };
   talkback_bus: AuxBus;
+  production_bus: AuxBus;
+  production_channels: string[];
+  seats: SeatAudioConfig[];
+  hosts_can_adjust_mix: boolean;
+  personal_mix_step_db: number;
+}
+
+/** The audio side of a hosts' seat: its microphone and in-ear bus (WP9b). */
+export interface SeatAudioConfig {
+  seat_id: number;
+  channel: string | null;
+  iem_bus: AuxBus;
+}
+
+/** One macro in a "Restore defaults…" preview (server: modules/audio/restore_commands.py). */
+export interface MacroRestoreChange {
+  id: string;
+  label: string;
+  change: "replaced" | "added" | "unchanged" | "custom";
+}
+
+/** One send whose link state the restored matrix changes. */
+export interface LinkRestoreChange {
+  channel: string;
+  bus: AuxBus;
+  before: LinkState;
+  after: LinkState;
+}
+
+/** The link matrix's "Restore defaults…" preview; `current` is what it was made from. */
+export interface LinkRestore {
+  links: Record<string, Record<string, LinkState>>;
+  current: Record<string, Record<string, LinkState>>;
+  changes: LinkRestoreChange[];
 }
 
 // --- the XR18 fader law ------------------------------------------------------------
@@ -221,6 +261,10 @@ export function newStep(op: MacroStep["op"]): MacroStep {
       return { op, points: [{ channel: "1", bus: "main" }] };
     case "recall_scene":
       return { op, snapshot: 1 };
+    case "set_link":
+      return { op, channel: "1", bus: "bus2", state: "paused" };
+    case "set_lr_assign":
+      return { op, channel: "1", on: false };
   }
 }
 
@@ -233,14 +277,23 @@ export function moveItem<T>(items: T[], from: number, to: number): T[] {
   return copy;
 }
 
-/** The off steps that undo `on`: each close becomes an open and vice versa. */
+/**
+ * The off steps that undo `on`, last step first: each close becomes an open
+ * and vice versa, a mute or LR assign flips, a paused link is linked again.
+ * Undoing in reverse matters: "pause, then close" is undone by "open, then
+ * link", so linking finds the send open and brings it to its fader.
+ */
 export function mirrorSteps(on: MacroStep[]): MacroStep[] {
-  return on.flatMap((step): MacroStep[] => {
+  return [...on].reverse().flatMap((step): MacroStep[] => {
     if (step.op === "store_levels") return [{ op: "restore_levels", points: step.points }];
     if (step.op === "restore_levels") {
       return [{ op: "store_levels", points: step.points, silence: true }];
     }
     if (step.op === "set_mute") return [{ ...step, muted: !step.muted }];
+    if (step.op === "set_lr_assign") return [{ ...step, on: !step.on }];
+    if (step.op === "set_link") {
+      return [{ ...step, state: step.state === "linked" ? "paused" : "linked" }];
+    }
     return [];
   });
 }

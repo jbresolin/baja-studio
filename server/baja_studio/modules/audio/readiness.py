@@ -1,4 +1,12 @@
-"""The audio module's readiness checks: the XR18, the M-VAVE, the D200 endpoint, the links.
+"""The audio module's readiness checks: the XR18, the M-VAVE, the D200, taps, LR, the links.
+
+Two checks read the desk's own configuration, as last reported by the mixer
+(read on connect, kept fresh by its pushes), and never change it:
+
+- the tap of every linked send: the studio copies the fader into a linked
+  send, so one taken after the fader is cut by the fader twice;
+- the LR assign of every mapped seat microphone, which "talk to production"
+  switches (ADR 0013): a mixer that never reports it may not obey it either.
 
 The XR18 is not sent anything: the mixer worker reads `/xinfo` when it
 connects and keeps the link alive within its packet budget, so its published
@@ -9,6 +17,7 @@ the `/action/state/1` body as the route does and checks its shape.
 from datetime import datetime
 from typing import Any
 
+from baja_studio.adapters.xr18_addresses import POST_FADER_TAPS
 from baja_studio.audio.config import AudioSettings
 from baja_studio.core.readiness import CheckOutcome, ReadinessCheck, failed, passed, warning
 from baja_studio.core.state import StateStore
@@ -23,8 +32,16 @@ def audio_checks(
     audio_state: dict[str, Any],
     state: StateStore,
     links: dict[str, dict[str, str]],
+    linked_taps: dict[tuple[str, str], int | None],
+    seat_lr_assigns: dict[str, bool | None],
 ) -> list[ReadinessCheck]:
-    """The four checks; `audio_state` is the module's subtree, read when the run starts."""
+    """The six checks; `audio_state` is the module's subtree, read when the run starts.
+
+    `linked_taps` is the tap of every linked (channel, bus) and
+    `seat_lr_assigns` the LR assign of every mapped seat microphone, as last
+    read from the mixer (None: never reported).
+    """
+    mixer = audio_state.get("mixer") or {}
     host = settings.mixer.host or "its address"
     return [
         ReadinessCheck(
@@ -52,6 +69,28 @@ def audio_checks(
             "D200 endpoint answers",
             lambda: _d200(settings, audio_state.get("d200") or {}, state),
             fix="This is a bug in the studio: send a diagnostics bundle (home page).",
+        ),
+        ReadinessCheck(
+            "linked_taps",
+            "Linked sends are pre-fader",
+            lambda: _linked_taps(settings, mixer, linked_taps),
+            fix=(
+                "On the XR18 (or in Mixing Station), take these sends before the fader "
+                "(pre-fader tap): the studio already copies the fader into a linked send, so "
+                "after the fader it is cut twice. The studio only reads this setting."
+            ),
+            link=AUDIO_SETUP_LINK,
+        ),
+        ReadinessCheck(
+            "lr_assign",
+            "Hosts can be taken off air",
+            lambda: _lr_assigns(settings, mixer, seat_lr_assigns),
+            fix=(
+                "'Talk to production' takes a host off the main mix with the channel's LR "
+                "assign. Check the mixer's firmware answers it (docs/bench/wp9b.md); until "
+                "then do not rely on that macro."
+            ),
+            link=AUDIO_SETUP_LINK,
         ),
         ReadinessCheck(
             "links",
@@ -118,6 +157,47 @@ def _d200_shape_ok(body: dict[str, Any]) -> bool:
         and not isinstance(fader, bool)
         and isinstance(body["db"], str)
     )
+
+
+def _linked_taps(
+    settings: AudioSettings, mixer: dict[str, Any], taps: dict[tuple[str, str], int | None]
+) -> CheckOutcome:
+    """Warn for every linked send taken after the fader, or never reported."""
+    if mixer.get("connection") != "ok":
+        return warning("not checked: the XR18 is not answering")
+    if not taps:
+        return passed("no linked sends")
+
+    def name(pair: tuple[str, str]) -> str:
+        return f"{settings.label(pair[0])} → {settings.label(pair[1])}"
+
+    after = [name(pair) for pair, tap in sorted(taps.items()) if tap in POST_FADER_TAPS]
+    unknown = [name(pair) for pair, tap in sorted(taps.items()) if tap is None]
+    if after:
+        return warning(f"after the fader, so cut twice: {_some(after)}")
+    if unknown:
+        return warning(f"the XR18 has not said where these are taken: {_some(unknown)}")
+    return passed(f"{len(taps)} linked sends, all before the fader")
+
+
+def _lr_assigns(
+    settings: AudioSettings, mixer: dict[str, Any], lr_assigns: dict[str, bool | None]
+) -> CheckOutcome:
+    """Warn when a mapped seat microphone's LR assign was never reported."""
+    if not lr_assigns:
+        return passed("no seat microphone is mapped (Audio setup → Seats)")
+    if mixer.get("connection") != "ok":
+        return warning("not checked: the XR18 is not answering")
+    silent = [settings.label(channel) for channel, on in sorted(lr_assigns.items()) if on is None]
+    if silent:
+        return warning(f"the XR18 has not reported the LR assign of {', '.join(silent)}")
+    return passed(f"LR assign read for {len(lr_assigns)} seat microphones")
+
+
+def _some(names: list[str], shown: int = 6) -> str:
+    """A list for a readiness line: the first few, then how many more."""
+    more = len(names) - shown
+    return ", ".join(names[:shown]) + (f" and {more} more" if more > 0 else "")
 
 
 def _links(settings: AudioSettings, links: dict[str, dict[str, str]]) -> CheckOutcome:

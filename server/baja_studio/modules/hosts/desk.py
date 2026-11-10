@@ -9,7 +9,8 @@
 - `layout`: every declared card in display order with its visibility
   (`core/hosts_cards.py`)
 - `pushed_card`: {id, by, at} forced to the top of every hosts screen, or null
-- `config`: canned_messages, quick_replies, reactions, message_expires_s, chime
+- `config`: canned_messages, quick_replies, reactions, message_expires_s, chime,
+  chat_size, host_phrases, production_chime
 
 Every change runs under one lock and publishes what it changed; the
 `screens` worker calls `tick` once a second to drop silent screens and
@@ -23,7 +24,7 @@ from typing import Any
 from baja_studio.core.clock import Clock
 from baja_studio.core.hosts_cards import HostsCard, LayoutChoice, resolve_layout
 from baja_studio.modules.hosts.config import REACTIONS, HostsSettings
-from baja_studio.modules.hosts.messages import MessageStore
+from baja_studio.modules.hosts.messages import PRODUCTION, MessageStore, seat_sender
 from baja_studio.modules.hosts.screens import ScreenTracker
 
 UpdateState = Callable[[str, Any], None]
@@ -44,6 +45,9 @@ def initial_hosts_state() -> dict[str, Any]:
             "reactions": list(REACTIONS),
             "message_expires_s": 0,
             "chime": False,
+            "chat_size": "small",
+            "host_phrases": [],
+            "production_chime": False,
         },
     }
 
@@ -52,6 +56,11 @@ def production_sender(source: str) -> str:
     """`web:ab12` → `production:ab12`: who sent a message, as the hosts see it."""
     client = source.split(":", 1)[1] if source.startswith("web:") else source
     return f"production:{client}"
+
+
+def _by(seat_id: int | None, source: str) -> str:
+    """Who answered: "seat:2", or the producer ("production:ab12")."""
+    return production_sender(source) if seat_id is None else seat_sender(seat_id)
 
 
 class HostsDesk:
@@ -128,19 +137,43 @@ class HostsDesk:
             self._publish_messages()
         return message
 
-    def react(self, message_id: int, seat_id: int, reaction: str) -> dict[str, Any]:
-        """A host tapped a reaction or a quick reply."""
+    def send_from_seat(self, seat_id: int, text: str, kind: str) -> dict[str, Any]:
+        """Store and publish a host's message to production; it never expires."""
         with self._lock:
-            message = self.store.add_reaction(message_id, seat_id, reaction)
+            message = self.store.add(seat_sender(seat_id), PRODUCTION, text, kind, None)
             self._publish_messages()
         return message
 
-    def reply(self, message_id: int, seat_id: int, text: str) -> dict[str, Any]:
-        """A host typed an answer."""
+    def react(
+        self, message_id: int, seat_id: int | None, reaction: str, source: str
+    ) -> dict[str, Any]:
+        """A host (or, on a host's message, production: `seat_id` None) tapped a reaction.
+
+        Production answering a host's message has read it.
+        """
         with self._lock:
-            message = self.store.set_reply(message_id, seat_id, text)
+            if seat_id is None:
+                self.store.mark_read([message_id])
+            message = self.store.add_reaction(message_id, seat_id, reaction, _by(seat_id, source))
             self._publish_messages()
         return message
+
+    def reply(self, message_id: int, seat_id: int | None, text: str, source: str) -> dict[str, Any]:
+        """A host (or, on a host's message, production: `seat_id` None) typed an answer."""
+        with self._lock:
+            if seat_id is None:
+                self.store.mark_read([message_id])
+            message = self.store.set_reply(message_id, seat_id, text, _by(seat_id, source))
+            self._publish_messages()
+        return message
+
+    def mark_read(self, message_ids: list[int]) -> int:
+        """Production has seen these hosts' messages; publishes only when something was unread."""
+        with self._lock:
+            count = self.store.mark_read(message_ids)
+            if count:
+                self._publish_messages()
+        return count
 
     def mark_shown(self, message_id: int, seat_ids: list[int]) -> dict[str, Any]:
         """A hosts screen showed a message to these seats (delivery)."""
@@ -151,10 +184,15 @@ class HostsDesk:
             self._publish_messages()
         return message
 
-    def dismiss(self, message_id: int) -> dict[str, Any]:
-        """Production or a host waved a message away."""
+    def dismiss(self, message_id: int, seat_ids: list[int] | None = None) -> dict[str, Any]:
+        """Production waved a message away (no seats), or a hosts screen hid it for its seats."""
         with self._lock:
-            message = self.store.dismiss(message_id)
+            if seat_ids is None:
+                message: dict[str, Any] | None = self.store.dismiss(message_id)
+            else:
+                message = self.store.dismiss_for_seats(message_id, seat_ids)
+            if message is None:
+                return self.store.get(message_id)
             self._publish_messages()
         return message
 
@@ -202,6 +240,9 @@ class HostsDesk:
                 "reactions": list(REACTIONS),
                 "message_expires_s": settings.message_expires_s,
                 "chime": settings.chime,
+                "chat_size": settings.chat_size,
+                "host_phrases": list(settings.host_phrases),
+                "production_chime": settings.production_chime,
             },
         )
 

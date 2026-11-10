@@ -1,9 +1,12 @@
 """The audio module's settings: mixer address, labels, M-VAVE mapping, macros, scenes.
 
+The M-VAVE's part is `audio/midi_config.py`; the strict base model and the
+channel id types are in `audio/config_base.py`.
+
 Everything an operator may need to change at the event, edited on the audio
 setup page with explicit Save (WP0 versioning: a stale save is a conflict).
 Live routing that changes during the show (link states, stored levels) is
-not here but in the database (`audio/schema.py`), so a link paused by a knob
+not here but in the database (`audio/stores.py`), so a link paused by a knob
 never conflicts with somebody's unsaved edit on the setup page (ADR 0006).
 
 Ids used throughout: channels as in `adapters/xr18_addresses.py` ("1"…"16",
@@ -13,9 +16,8 @@ Ids used throughout: channels as in `adapters/xr18_addresses.py` ("1"…"16",
 import re
 from typing import Annotated, Literal
 
-from pydantic import AfterValidator, BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import Field, field_validator, model_validator
 
-from baja_studio.adapters.mvave_map import BUTTON_ROWS, STRIP_COUNT, button_key
 from baja_studio.adapters.xr18_addresses import (
     AUX_BUSES,
     CHANNEL_IDS,
@@ -24,34 +26,22 @@ from baja_studio.adapters.xr18_addresses import (
     XR18_PORT,
 )
 from baja_studio.audio import defaults
+from baja_studio.audio.config_base import (
+    AuxBusId,
+    ChannelId,
+    SendSourceId,
+    StrictModel,
+    check_channel,
+)
+from baja_studio.audio.midi_config import MidiSettings
+from baja_studio.audio.seat_config import SeatAudio, check_seats, default_seats
 from baja_studio.core.settings import ModuleSettings
 
 COLOUR_PATTERN = r"^#[0-9a-fA-F]{6}$"
+# PROD 1-4 in the 2026 patch (`audio/defaults.py`).
+DEFAULT_PRODUCTION_CHANNELS = ("5", "6", "7", "8")
 # Macro ids appear in the D200's URLs (/action/macro/<id>), so they stay URL-safe.
 MACRO_ID_PATTERN = r"^[A-Za-z0-9_-]{1,64}$"
-STRIPS = tuple(str(strip) for strip in range(1, STRIP_COUNT + 1))
-
-
-class StrictModel(BaseModel):
-    """Unknown keys are errors, so a typo in a saved document is caught."""
-
-    model_config = ConfigDict(extra="forbid")
-
-
-def _channel(value: str) -> str:
-    if value not in CHANNEL_IDS:
-        raise ValueError(f"unknown channel {value!r}; use 1-16, aux, lr or bus1-bus6")
-    return value
-
-
-def _send_source(value: str) -> str:
-    if value not in SEND_SOURCES:
-        raise ValueError(f"channel {value!r} has no sends; use 1-16 or aux")
-    return value
-
-
-ChannelId = Annotated[str, AfterValidator(_channel)]
-SendSourceId = Annotated[str, AfterValidator(_send_source)]
 
 
 class MixerSettings(StrictModel):
@@ -111,7 +101,7 @@ class SetAuxStep(StrictModel):
 
     op: Literal["set_aux"] = "set_aux"
     channel: SendSourceId
-    bus: Literal["bus1", "bus2", "bus3", "bus4", "bus5", "bus6"]
+    bus: AuxBusId
     level: float = Field(ge=0.0, le=1.0)
 
 
@@ -137,13 +127,36 @@ class RecallSnapshotStep(StrictModel):
     snapshot: int = Field(ge=1, le=64)
 
 
+class SetLinkStep(StrictModel):
+    """Link, pause or unlink an input's send to an aux bus (as the link matrix does).
+
+    Linking brings the send to its fader plus the pair's offset at once,
+    unless a macro closed the send (it has a stored level).
+    """
+
+    op: Literal["set_link"] = "set_link"
+    channel: SendSourceId
+    bus: AuxBusId
+    state: Literal["linked", "paused", "unlinked"]
+
+
+class SetLrAssignStep(StrictModel):
+    """Assign an input to the main mix (LR) or take it off, without touching its fader."""
+
+    op: Literal["set_lr_assign"] = "set_lr_assign"
+    channel: SendSourceId
+    on: bool
+
+
 MacroStep = Annotated[
     SetFaderStep
     | SetMuteStep
     | SetAuxStep
     | StoreLevelsStep
     | RestoreLevelsStep
-    | RecallSnapshotStep,
+    | RecallSnapshotStep
+    | SetLinkStep
+    | SetLrAssignStep,
     Field(discriminator="op"),
 ]
 
@@ -180,82 +193,6 @@ class SceneConfig(StrictModel):
         return self
 
 
-class ButtonAction(StrictModel):
-    """What an M-VAVE strip button does.
-
-    - `mute`: toggle the strip channel's mute.
-    - `send_toggle`: close/open one send point of the strip channel (store
-      and silence, or restore), on `bus` or else the row's bus.
-    - `macro`: run the macro `macro`.
-    """
-
-    type: Literal["none", "mute", "send_toggle", "macro"] = "none"
-    channel: ChannelId | None = Field(
-        default=None, description="Instead of the strip's fader channel."
-    )
-    bus: str | None = None
-    macro: str | None = None
-
-    @model_validator(mode="after")
-    def _check(self) -> "ButtonAction":
-        if self.bus is not None and self.bus not in SEND_POINT_BUSES:
-            raise ValueError(f"bus must be main or bus1-bus6, not {self.bus!r}")
-        if self.type == "macro" and not self.macro:
-            raise ValueError("a macro button needs the macro's id")
-        return self
-
-
-class KnobAction(StrictModel):
-    """What a strip knob turns: its channel's send (to `bus`, else the selected bus) or pan."""
-
-    target: Literal["none", "aux_send", "pan"] = "aux_send"
-    bus: Literal["bus1", "bus2", "bus3", "bus4", "bus5", "bus6"] | None = None
-
-
-class MidiSettings(StrictModel):
-    """The M-VAVE SMC-Mixer: which device, and what each control does."""
-
-    enabled: bool = True
-    device_name_match: str = Field(
-        default="SMC", min_length=1, description="Part of the port name."
-    )
-    faders: dict[str, str | None] = Field(
-        default_factory=defaults.fader_channels, validate_default=True
-    )
-    buttons: dict[str, ButtonAction] = Field(
-        default_factory=defaults.buttons, validate_default=True
-    )
-    knobs: dict[str, KnobAction] = Field(default_factory=defaults.knobs, validate_default=True)
-    row_buses: dict[str, str] = Field(default_factory=defaults.row_buses, validate_default=True)
-    knob_step_db: float = Field(default=1.5, gt=0.0, le=10.0)
-    fader_takeover: Literal["pickup", "jump"] = Field(
-        default="pickup",
-        description="pickup: a fader takes over only once it reaches the mixer's level.",
-    )
-    send_fader_feedback: bool = Field(
-        default=True, description="Send fader positions back to the device (pitch bend)."
-    )
-
-    @model_validator(mode="after")
-    def _check_keys(self) -> "MidiSettings":
-        for strip, channel in self.faders.items():
-            if strip not in STRIPS:
-                raise ValueError(f"no strip {strip!r} on the M-VAVE (1-8)")
-            if channel is not None:
-                _channel(channel)
-        valid_buttons = {button_key(int(strip), row) for strip in STRIPS for row in BUTTON_ROWS}
-        for key in self.buttons:
-            if key not in valid_buttons:
-                raise ValueError(f"no button {key!r} on the M-VAVE (like 3_solo)")
-        for strip in self.knobs:
-            if strip not in STRIPS:
-                raise ValueError(f"no knob {strip!r} on the M-VAVE (1-8)")
-        for row, bus in self.row_buses.items():
-            if row not in BUTTON_ROWS or bus not in SEND_POINT_BUSES:
-                raise ValueError(f"row bus {row}={bus} is not a button row and main/bus1-bus6")
-        return self
-
-
 class D200Settings(StrictModel):
     """The Ulanzi D200 decks' HTTP actions (`/action/...` at the service root)."""
 
@@ -276,18 +213,59 @@ class AudioSettings(ModuleSettings):
     macros: list[MacroConfig] = Field(default_factory=defaults.macros, validate_default=True)
     scenes: list[SceneConfig] = Field(default_factory=list)
     d200: D200Settings = Field(default_factory=D200Settings)
-    talkback_bus: Literal["bus1", "bus2", "bus3", "bus4", "bus5", "bus6"] = Field(
+    talkback_bus: AuxBusId = Field(
         default="bus6",
         description="The camera operator's bus: a macro opening a send to it is talkback.",
+    )
+    production_bus: AuxBusId = Field(
+        default="bus5",
+        description="The production loop: a host heard here but not on LR talks to production.",
+    )
+    production_channels: list[SendSourceId] = Field(
+        default_factory=lambda: list(DEFAULT_PRODUCTION_CHANNELS),
+        description="The production microphones (for the hosts' 'production → you').",
+    )
+    seats: list[SeatAudio] = Field(default_factory=default_seats)
+    hosts_can_adjust_mix: bool = Field(
+        default=True, description="Off: the hosts screen shows the personal mix, read-only."
+    )
+    personal_mix_step_db: float = Field(
+        default=1.0, gt=0.0, le=6.0, description="How much one tap of + or - moves a source."
     )
 
     @field_validator("channels")
     @classmethod
     def _every_channel(cls, channels: dict[str, ChannelConfig]) -> dict[str, ChannelConfig]:
         for channel in channels:
-            _channel(channel)
+            check_channel(channel)
         # Strips missing from a saved document get defaults, in mixer order.
         return {channel: channels.get(channel, ChannelConfig()) for channel in CHANNEL_IDS}
+
+    @field_validator("production_channels")
+    @classmethod
+    def _each_production_channel_once(cls, channels: list[str]) -> list[str]:
+        return sorted(set(channels), key=channels.index)
+
+    @field_validator("seats")
+    @classmethod
+    def _seats_in_order(cls, seats: list[SeatAudio]) -> list[SeatAudio]:
+        return check_seats(seats)
+
+    @model_validator(mode="after")
+    def _seats_off_the_production_bus(self) -> "AudioSettings":
+        if self.seat_on_bus(self.production_bus) is not None:
+            raise ValueError(
+                f"{self.production_bus} is the production bus; it cannot be a seat's in-ears"
+            )
+        return self
+
+    def seat(self, seat_id: int) -> SeatAudio | None:
+        """The audio side of seat `seat_id`, if there is one."""
+        return next((seat for seat in self.seats if seat.seat_id == seat_id), None)
+
+    def seat_on_bus(self, bus: str) -> SeatAudio | None:
+        """The seat whose in-ears `bus` feeds, if any."""
+        return next((seat for seat in self.seats if seat.iem_bus == bus), None)
 
     @model_validator(mode="after")
     def _check_references(self) -> "AudioSettings":

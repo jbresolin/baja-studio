@@ -4,6 +4,7 @@
  * Unlike the rest of the setup this is live routing, changed during the
  * show (a knob pauses a link), so a tap applies at once, like a mute, and
  * is not part of Save. Cells cycle unlinked → linked → paused → unlinked.
+ * Only "Restore defaults…" waits for Save (AudioConfigPage.tsx).
  */
 
 import {

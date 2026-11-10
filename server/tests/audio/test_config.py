@@ -142,3 +142,59 @@ def test_labels_fall_back_to_plain_names() -> None:
 def test_macro_ids_must_be_url_safe() -> None:
     assert is_valid_macro_id("macro-1774581643177")
     assert not is_valid_macro_id("a/b")
+
+
+# --- WP9b: the seats' audio side ------------------------------------------------------
+
+
+def seats(*pairs: tuple[str | None, str]) -> list[dict[str, Any]]:
+    """Seats 1-4 with the given (channel, in-ear bus) each."""
+    return [
+        {"seat_id": number, "channel": channel, "iem_bus": bus}
+        for number, (channel, bus) in enumerate(pairs, start=1)
+    ]
+
+
+def test_seats_start_on_iem_buses_1_to_4_with_no_microphone_mapped() -> None:
+    defaults = AudioSettings()
+
+    assert [(seat.seat_id, seat.channel, seat.iem_bus) for seat in defaults.seats] == [
+        (1, None, "bus1"),
+        (2, None, "bus2"),
+        (3, None, "bus3"),
+        (4, None, "bus4"),
+    ]
+    # Bus 5 is the production loop; PROD 1-4 are channels 5-8 in the 2026 patch.
+    assert defaults.production_bus == "bus5"
+    assert defaults.production_channels == ["5", "6", "7", "8"]
+    assert defaults.hosts_can_adjust_mix is True
+    assert defaults.seat_on_bus("bus2") == defaults.seat(2)
+
+
+def test_two_seats_cannot_share_an_in_ear_bus() -> None:
+    # Each seat's offsets live on its own bus; sharing one would mix them up.
+    with pytest.raises(ValidationError, match="its own in-ear bus; shared: bus1"):
+        settings(seats=seats(("1", "bus1"), ("2", "bus1"), (None, "bus3"), (None, "bus4")))
+
+
+def test_the_production_bus_cannot_be_a_seats_in_ears() -> None:
+    with pytest.raises(ValidationError, match="bus5 is the production bus"):
+        settings(seats=seats((None, "bus5"), (None, "bus2"), (None, "bus3"), (None, "bus4")))
+
+
+def test_seats_must_be_one_to_four_each_once() -> None:
+    with pytest.raises(ValidationError, match="exactly the seats 1, 2, 3 and 4"):
+        settings(seats=seats((None, "bus1"), (None, "bus2")))
+
+
+def test_a_production_microphone_listed_twice_is_kept_once_in_order() -> None:
+    assert settings(production_channels=["6", "5", "6"]).production_channels == ["6", "5"]
+    with pytest.raises(ValidationError, match="has no sends"):
+        settings(production_channels=["lr"])
+
+
+@pytest.mark.parametrize("step", [0.0, -1.0, 6.5])
+def test_the_personal_mix_step_is_more_than_0_and_at_most_6_db(step: float) -> None:
+    assert settings(personal_mix_step_db=6.0).personal_mix_step_db == 6.0
+    with pytest.raises(ValidationError, match="personal_mix_step_db"):
+        settings(personal_mix_step_db=step)

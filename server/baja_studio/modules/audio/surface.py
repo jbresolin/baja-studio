@@ -42,7 +42,7 @@ from baja_studio.adapters.mvave_map import (
     led_message,
 )
 from baja_studio.adapters.xr18_addresses import MAIN_POINT
-from baja_studio.audio.config import ButtonAction
+from baja_studio.audio.midi_config import ButtonAction
 from baja_studio.core.clock import Clock
 from baja_studio.core.commandlog import device_source
 from baja_studio.core.module import CommandError

@@ -70,3 +70,16 @@ def nudge_level(level: float | None, delta_db: float, unknown_level: float = UNI
     """
     start = unknown_level if level is None else level
     return db_to_level(level_to_db(start) + delta_db)
+
+
+def offset_level(main_level: float, offset_db: float) -> float:
+    """A send that follows `main_level` `offset_db` above or below it (WP9b personal mixes).
+
+    Off stays off: an offset never opens a send whose fader is down. The
+    result is clamped to the fader law (+10 dB at most; -90 dB is off).
+    """
+    if clamp_level(main_level) <= 0.0:
+        return 0.0
+    if offset_db == 0.0:
+        return main_level  # exactly the fader's value, as before offsets existed
+    return db_to_level(level_to_db(main_level) + offset_db)

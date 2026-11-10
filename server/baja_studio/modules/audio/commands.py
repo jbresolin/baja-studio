@@ -20,6 +20,12 @@ Levels are 0..1 (`level`) or decibels (`db`), whichever is given.
     list_midi_ports                                → {inputs, outputs}
     simulate_midi {messages}                       → {injected} (fake MIDI backend only)
 
+From the hosts screen's personal-mix overlay (checked against the seat,
+`seat_commands.py`): `set_seat_offset`, `reset_seat_offsets`. From the
+settings export/import page (`routing_commands.py`): `export_routing`,
+`import_routing`. From Audio setup's "Restore defaults…"
+(`restore_commands.py`): `preview_defaults`, `restore_defaults`.
+
 A page dragging a fader marks the in-between values `dragging: true`; only
 the value it lets go at is kept in the command log (`wants_logged`).
 """
@@ -46,9 +52,14 @@ from baja_studio.core.settings import SettingsConflictError, SettingsStore
 from baja_studio.core.worker import DeviceOfflineError
 from baja_studio.modules.audio.controller import AudioController
 from baja_studio.modules.audio.midi_worker import MidiWorker
+from baja_studio.modules.audio.restore_commands import RESTORE_COMMANDS, run_restore_command
+from baja_studio.modules.audio.routing_commands import ROUTING_COMMANDS, run_routing_command
+from baja_studio.modules.audio.seat_commands import SEAT_COMMANDS, run_seat_command
 from baja_studio.modules.audio.surface import MvaveSurface
 
 DRAG_COMMANDS = ("set_fader", "set_aux", "set_pan")
+# Read only, and a macro preview carries the whole draft: not worth a log entry.
+UNLOGGED_COMMANDS = ("preview_defaults",)
 _STEPS = TypeAdapter(list[MacroStep])
 
 
@@ -108,6 +119,11 @@ def describe(change: PlannedChange, label: Callable[[str], str]) -> dict[str, An
         text = f"{where}: remember {format_db(float(change.value or 0.0))}"
     elif change.kind == "forget":
         text = f"{where}: use the remembered level"
+    elif change.kind == "link":
+        verb = {"linked": "link (follow the fader)", "paused": "pause the link"}
+        text = f"{where}: {verb.get(str(change.value), 'unlink')}"
+    elif change.kind == "lr_assign":
+        text = f"{label(change.channel)}: {'on' if change.value else 'off'} the main mix (LR)"
     else:
         text = f"load mixer snapshot {change.value} (replaces the whole mix)"
     return {"kind": change.kind, "point": change.point, "value": change.value, "text": text}
@@ -124,6 +140,12 @@ def run_command(
     source: str,
 ) -> Any:
     """Carry out one audio command; raises `CommandError` with an operator-readable message."""
+    if command in SEAT_COMMANDS:
+        return run_seat_command(controller, command, args, source)
+    if command in ROUTING_COMMANDS:
+        return run_routing_command(controller, command, args, source)
+    if command in RESTORE_COMMANDS:
+        return run_restore_command(controller, command, args, source)
     if command in ("set_fader", "set_aux", "nudge"):
         to_send = command == "set_aux" or (
             command == "nudge" and args.get("bus") not in (None, MAIN_POINT)

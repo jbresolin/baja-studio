@@ -19,13 +19,13 @@ from pydantic import BaseModel
 from baja_studio.adapters.xr18_transport import TransportFactory, open_udp_transport
 from baja_studio.audio import defaults
 from baja_studio.audio.config import AudioSettings
-from baja_studio.audio.stores import LinkStore, StoredLevels, create_audio_tables
+from baja_studio.audio.stores import LinkStore, OffsetStore, StoredLevels, create_audio_tables
 from baja_studio.core.childproc import EventCallback
 from baja_studio.core.hosts_cards import HostsCard
 from baja_studio.core.module import CommandError, Module, ModuleContext
 from baja_studio.core.readiness import ReadinessCheck
 from baja_studio.core.supervisor import Health, HealthState, WorkerSpec
-from baja_studio.modules.audio.commands import DRAG_COMMANDS, run_command
+from baja_studio.modules.audio.commands import DRAG_COMMANDS, UNLOGGED_COMMANDS, run_command
 from baja_studio.modules.audio.controller import AudioController
 from baja_studio.modules.audio.d200_routes import d200_routes
 from baja_studio.modules.audio.hosts_card import audio_hosts_card
@@ -119,6 +119,7 @@ class AudioModule(Module):
             self.settings,
             StoredLevels(context.database, context.clock),
             LinkStore(context.database, defaults.LINKS),
+            OffsetStore(context.database),
             publisher,
             context.logger,
             wake_mixer=lambda: self._mixer_worker.wake() if self._mixer_worker else None,
@@ -145,6 +146,7 @@ class AudioModule(Module):
         self._controller, self._surface = controller, surface
         publisher.publish("links", controller.links.matrix())
         publisher.publish("stored_levels", controller.stored.all())
+        publisher.publish("offsets", controller.offsets.all())
         publisher.publish("settings_version", context.settings.record(self.name).version)
         controller.settings_changed()
         context.supervisor.set_health_summary(self.name, summarise_health)
@@ -182,21 +184,42 @@ class AudioModule(Module):
     def wants_logged(
         self, command: str, args: dict[str, Any], source: str, result: Any, failed: bool
     ) -> bool:
-        """Everything but a dragged fader's in-between values."""
-        return failed or not (command in DRAG_COMMANDS and args.get("dragging") is True)
+        """Everything but a dragged fader's in-between values and the defaults preview."""
+        if failed:
+            return True
+        if command in UNLOGGED_COMMANDS:
+            return False
+        return not (command in DRAG_COMMANDS and args.get("dragging") is True)
 
     def readiness_checks(self) -> list[ReadinessCheck]:
-        """XR18, M-VAVE, the D200 endpoint and the link matrix (see `readiness.py`)."""
+        """XR18, M-VAVE, D200, linked taps, LR assigns, the link matrix (`readiness.py`)."""
+        settings = self.settings()
+        controller = self.controller
+        matrix = controller.links.matrix()
+        with controller.lock:
+            linked_taps = {
+                (channel, bus): controller.cache.send_taps.get((channel, bus))
+                for channel, buses in matrix.items()
+                for bus, state in buses.items()
+                if state == "linked"
+            }
+            seat_lr_assigns = {
+                seat.channel: controller.cache.lr_assigns.get(seat.channel)
+                for seat in settings.seats
+                if seat.channel is not None
+            }
         return audio_checks(
-            self.settings(),
+            settings,
             self.context.state.get(self.name) or {},
             self.context.state,
-            self.controller.links.matrix(),
+            matrix,
+            linked_taps,
+            seat_lr_assigns,
         )
 
     def hosts_cards(self) -> list[HostsCard]:
-        """The audio card: seat microphones and talkback (see `hosts_card.py`)."""
-        return [audio_hosts_card(self.settings())]
+        """The audio card: seat microphones, production → you, talkback (see `hosts_card.py`)."""
+        return [audio_hosts_card()]
 
     def root_routes(self) -> APIRouter:
         """The D200 contract (`/action/...`)."""

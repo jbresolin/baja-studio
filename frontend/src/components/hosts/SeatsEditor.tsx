@@ -1,12 +1,13 @@
 /**
- * The four seats (WP9 §2): screen name, colour, on/off and the mixer
- * channel of the seat's microphone (for the audio card). Each change is
- * saved at once by a command, so it is in the command log.
+ * The four seats (WP9 §2): screen name, colour and on/off. Each change is
+ * saved at once by a command, so it is in the command log. A seat's
+ * microphone and in-ear bus are audio facts, set on Audio setup → Seats
+ * (WP9b §2): one place per setting.
  */
 
 import { useState } from "react";
+import { Link } from "react-router-dom";
 
-import { INPUTS } from "../../lib/audio";
 import type { HostsState, Seat } from "../../lib/hosts";
 
 type Run = (command: string, args?: Record<string, unknown>) => Promise<unknown>;
@@ -15,6 +16,9 @@ export function SeatsEditor({ state, run }: { state: HostsState; run: Run }) {
   return (
     <section aria-label="Seats">
       <h2>Seats</h2>
+      <p className="muted">
+        Microphones and in-ears: <Link to="/audio/config">Audio setup → Seats</Link>.
+      </p>
       <table className="dense-table">
         <thead>
           <tr>
@@ -22,7 +26,6 @@ export function SeatsEditor({ state, run }: { state: HostsState; run: Run }) {
             <th>Screen name</th>
             <th>Colour</th>
             <th>On</th>
-            <th>Mic channel</th>
             <th>Screen</th>
           </tr>
         </thead>
@@ -82,20 +85,6 @@ function SeatRow({ seat, run }: { seat: Seat; run: Run }) {
           checked={seat.enabled}
           onChange={(event) => change({ enabled: event.target.checked })}
         />
-      </td>
-      <td>
-        <select
-          aria-label={`Seat ${seat.id} mic channel`}
-          value={seat.audio_channel ?? ""}
-          onChange={(event) => change({ audio_channel: event.target.value || null })}
-        >
-          <option value="">none</option>
-          {INPUTS.map((channel) => (
-            <option key={channel} value={channel}>
-              {channel}
-            </option>
-          ))}
-        </select>
       </td>
       <td>
         <span className={seat.online ? "badge badge-ok" : "badge badge-offline"}>
