@@ -49,73 +49,119 @@ page "15 — WP9b brief". Read with ADR 0006 (audio) and ADR 0011 (hosts).
    `seat_audio` component at `audio.hosts_view`; WP9's `audio_state` is
    gone, so a screen left open across the upgrade says "reload".
 
-### The "talk to production" macro (reported, not special-cased)
+### The "talk to production" macro
 
-8. **The default "Host 1/2 → Prod" macros classify as MUTED, not TO
-   PRODUCTION.** They close the host's *main fader* (store and silence
-   `1:main`); mirroring copies that -inf into every send linked to the
-   fader, bus 5 included (seeded linked in 2026), and a post-fader send
-   would be silent anyway. The rules read the mixer and the mixer says the
-   host is heard nowhere. A test pins this
-   (`test_the_default_talk_to_production_macro_leaves_the_host_muted_not_to_production`).
-   **For João**: decide how the macro should reach bus 5 (LR assign off
-   instead of the fader; or unlink 1→bus5 with a pre-fader tap; or stop
-   mirroring a fader that a macro closed).
+8. **The 2026 macro, ported, with LR assign instead of the fader.**
+   *What 2026 did* (`macros.js`, `midi.js`): "Host A/B → Prod" stored the
+   host's fader and closed it, and restored it on release. The sends stayed
+   where they were because the macro's own fader write was marked
+   (`_macroSetFaders`) and its echo not mirrored, so production, the
+   camera operator and every in-ear (the host's own and the other seats')
+   kept hearing the host. Nothing protected that: any fader move during
+   the macro (M-VAVE, desk, Mixing Station) was mirrored everywhere and put
+   the host back on air. As first ported here (closing the fader through
+   the normal mirror), the host went silent on bus 5 too and read MUTED.
+   *The design now* (decided with João, 2026-11-10), one macro per seat
+   (`host1-`, `host2-` (2026 ids, called by the D200 profile), `guest1-`,
+   `guest2-talk-prod`): on, the seat channel's **LR assign goes off**
+   (`/ch/NN/mix/lr`; the fader is not touched), its links to the **other
+   seats'** in-ear buses are paused and those sends closed with stored
+   levels (paused first, so nothing re-mirrors them); off, LR assign back
+   on, those sends restored and then linked again (back to the fader plus
+   their offsets). The seat's own in-ear send and buses 5-6 stay linked.
+   The card reads **TO PRODUCTION** (off LR, on bus 5). A fader move during
+   the macro moves only what is still linked (the host's own in-ears,
+   buses 5-6) and never reaches LR or the other seats. Two new step types
+   carry it, shown in the macro editor and the dry-run: `set_link
+   {channel, bus, state}` and `set_lr_assign {channel, on}`; the editor's
+   "mirror" builds the off steps in reverse order (open, then link, then
+   LR on). Pinned by the three `test_talk_to_production_*` /
+   `test_releasing_*` / `test_a_fader_move_*` tests in
+   `test_audio_hosts_view.py`.
+   **Active** is derived from the mixer, as for every macro: a macro that
+   sets LR assigns is active exactly when they are as it says (so a host
+   taken off LR at the desk lights it too).
+   **Trade-off:** the camera operator (bus 6) still hears the host, as in
+   2026; production hears them at the fader level. Unlike 2026 the other
+   seats no longer hear the host in their in-ears meanwhile, and the host
+   now hears themselves, as in 2026.
+9. **The studio reads the desk's configuration, never writes it.** Two
+   readiness checks, both "not checked" while the XR18 is not answering:
+   *Linked sends are pre-fader* (`linked_taps`) warns for every linked
+   send taken after the fader (the studio already copies the fader into
+   it, so the fader would cut it twice) or never reported; *Hosts can be
+   taken off air* (`lr_assign`) warns when a mapped seat microphone's LR
+   assign was never reported, so a mixer that ignores `/mix/lr` does not
+   make the macro fail silently on air. The taps of every link-matrix pair
+   and the LR assigns are read once on connect (about 40 more reads with
+   the default matrix, within the budget).
+10. **The default link seed changed** (`audio/defaults.py`, fresh installs
+    only: the seed is written once, so an existing install keeps its
+    matrix and changes it on Audio setup → Link matrix). The sources of the
+    main mix (HOST 1-2, GUEST 1-2, SHOTGUN, **PC AUDIO**) are linked to the
+    in-ear buses 1-4 (LIVESTACK-34: in-ear = main plus offsets); 2026 left
+    out PC AUDIO and the shotgun on buses 2-3. **Production microphones
+    (PROD 1-4) are never linked into the in-ears** (2026 linked them): they
+    are not main sources, and reach one in-ear bus only when production
+    speaks to a host privately ("Prod N → Hosts", which now reopens them at
+    their stored level instead of a fader that is down while the producer
+    is off air). Buses 5-6 are 2026's: the seats linked to both, the
+    production loop being main plus the production microphones.
 
 ### Personal mixes (§3)
 
-9. **Every adjustment of a linked send on a seat's bus is an offset**:
+11. **Every adjustment of a linked send on a seat's bus is an offset**:
    the D200 `nudge-aux` (the hosts' pads), the M-VAVE knobs, the audio
    page's send faders and the overlay. A level set directly becomes "level
    minus the fader" and is refused while the fader is off (there is
    nothing to be relative to). **Macros' `set_aux` still pause the link**:
    a macro sets a route, not a mix preference. Other buses keep WP4's rule.
-10. **Offsets are stored even when the send cannot be written** (fader
+12. **Offsets are stored even when the send cannot be written** (fader
     unknown, or the send closed by a macro); the next mirror or reopen
     applies them. Offsets stay when a link is paused or removed, so
     relinking restores the seat's mix. Offsets are rounded to 0.1 dB.
-11. **A source's link-matrix row for a bus** is what the setup page's
+13. **A source's link-matrix row for a bus** is what the setup page's
     matrix lists for it: the inputs shown on the audio page, plus any
     linked or paused to that bus. A visible source not linked is
     "independent" in the overlay and its send is set directly (-90…+10 dB).
-12. **The pad toast is any change that is not the overlay** (pad, knob or
+14. **The pad toast is any change that is not the overlay** (pad, knob or
     the audio page), published as `hosts_view.pad_change` with a sequence
     number, so two identical presses are two toasts. The screen ignores
     the one already there when it opens.
-13. **Holding + or −** steps once, then every 250 ms after 400 ms (four
+15. **Holding + or −** steps once, then every 250 ms after 400 ms (four
     writes a second); the link's latest-wins queue would absorb more. A
     test holds + for 60 steps against the fake and checks the budget.
 
 ### Chat (§1)
 
-14. **Dismiss has two meanings now.** Production's Dismiss (no seats)
+16. **Dismiss has two meanings now.** Production's Dismiss (no seats)
     fades the message everywhere, as before (`dismissed_at`). A hosts
     screen's ✕ sends `seat_ids` and the message is hidden on screens of
     those seats, kept in a new `dismissed_by` column, so a reload does not
     bring it back; the screen also hides it at once, before the answer.
-15. **The messages table gains columns in place** (`dismissed_by_json`,
+17. **The messages table gains columns in place** (`dismissed_by_json`,
     `read_at`, `reply_by`, `reply_at`), added on start to a WP9 table, so
     a conversation survives the upgrade.
-16. **Compact chat** is computed by the screen (`isExpanded`): a message
+18. **Compact chat** is computed by the screen (`isExpanded`): a message
     for this screen is grown while unanswered (an urgent one pulses), and
     shrinks 4 s after the first answer, on expiry or when production
     dismisses it; the chat area is `chat_size` at rest and taller while a
     message is grown. Production's size picker applies on change, without
     Save, so it can be tried while watching the screen.
-17. **Host messages** are `from: "seat:<id>"`, `to: "production"`, never
+19. **Host messages** are `from: "seat:<id>"`, `to: "production"`, never
     expire, and are shown on the sender's screen only (with production's
     answer; no host-to-host). Production answers with `react`/`reply`
     *without* `seat_id`; answering marks the message read. `mark_read` is
     the Hosts page's "Mark read" and the playout line's "Read", and is
     kept out of the command log like delivery receipts.
-18. **Hosts-facing commands are checked against the seat** (new
+20. **Hosts-facing commands are checked against the seat** (new
     convention): a seat answers and hides only messages addressed to it or
     to all (or its own), sends only while switched on, and changes only
     its own in-ear bus.
 
 ### Export and import (§4)
 
-19. **No core change.** The settings export (core) carries settings only.
+21. **No core change.** The settings export (core) carries settings only.
     Instead the **Settings → Export / import page** adds an
     `audio_routing` section to the file it saves (`audio.export_routing`)
     and, on import, previews and applies it through
@@ -125,16 +171,19 @@ page "15 — WP9b brief". Read with ADR 0006 (audio) and ADR 0011 (hosts).
     A file without the section (older, or audio off) imports as before.
     A core hook (`Module.export_data`) would make this general; worth a
     follow-up once WP10 (which owns core) has merged.
-20. **`/settings/audio` is JSON-only** with a link to Audio setup, and the
+22. **`/settings/audio` is JSON-only** with a link to Audio setup, and the
     audio page has the ⚙ link (WP5c's rule).
 
 ## Left open
 
-- The "talk to production" macro (decision 8) and the three XR18
-  addresses (decision 6): **bench**.
-- The 2026 link seed does not link PC AUDIO (aux) to any bus, so it is
-  "independent" in every personal mix until linked on Audio setup → Link
-  matrix (João's topology says the IEMs are a copy of main).
+- The XR18 addresses (decision 6), first of all `/ch/NN/mix/lr`, which
+  "talk to production" depends on: **bench**. If the XR18 does not obey it
+  over OSC, the macro cannot work as designed; there is no silent fallback
+  (decision 9's check warns) and the decision comes back to João.
+- Existing installs keep their link matrix (decision 10): on the bench PC,
+  link PC AUDIO to buses 1-4 and unlink PROD 1-4 from buses 1-4 by hand on
+  Audio setup → Link matrix; the macros are settings, so an existing
+  install keeps its old "Host N → Prod" until it is reset or edited.
 - Production can display, not route, a production microphone into one
   host's in-ears (out of scope).
 - The bench (`docs/bench/wp9b.md`) has not been run.

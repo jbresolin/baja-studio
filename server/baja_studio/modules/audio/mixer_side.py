@@ -70,6 +70,9 @@ class _View:
     def offset_db(self, channel: str, bus: str) -> float:
         return self._controller.offsets.get(channel, bus)
 
+    def lr_assign(self, channel: str) -> bool | None:
+        return self._controller.cache.lr_assigns.get(channel)
+
 
 class MixerSide:
     """The link to the mixer, the cache of what it is set to, and the rules every change follows."""

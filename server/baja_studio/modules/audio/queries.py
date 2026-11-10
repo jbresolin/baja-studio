@@ -29,7 +29,13 @@ from baja_studio.adapters.xr18_addresses import (
     send_on_address,
     send_tap_address,
 )
-from baja_studio.audio.config import AudioSettings, RestoreLevelsStep, SetAuxStep, StoreLevelsStep
+from baja_studio.audio.config import (
+    AudioSettings,
+    RestoreLevelsStep,
+    SetAuxStep,
+    SetLrAssignStep,
+    StoreLevelsStep,
+)
 from baja_studio.audio.stores import LinkStore
 from baja_studio.modules.audio.hosts_view import mix_sources
 
@@ -61,11 +67,26 @@ def interesting_addresses(
     # Whether those sends are heard depends on their on switch and tap, and a
     # seat's microphone on air on its LR assign (`audio/seat_states.py`).
     for channel, bus in sorted(heard_sends):
-        addresses += [send_on_address(channel, bus), send_tap_address(channel, bus)]
-    for seat in settings.seats:
-        if seat.channel is not None:
-            addresses.append(lr_assign_address(seat.channel))
+        addresses.append(send_on_address(channel, bus))
+    # Every linked send's tap too: readiness warns when one is post-fader
+    # (the studio already copies the fader into it).
+    linked = {(channel, bus) for channel, buses in links.matrix().items() for bus in buses}
+    for channel, bus in sorted(heard_sends | linked):
+        addresses.append(send_tap_address(channel, bus))
+    # LR assigns the hosts' card and the "talk to production" macros depend on.
+    lr_channels = {seat.channel for seat in settings.seats if seat.channel is not None}
+    lr_channels |= _macro_lr_channels(settings)
+    addresses += [lr_assign_address(channel) for channel in sorted(lr_channels)]
     return addresses
+
+
+def _macro_lr_channels(settings: AudioSettings) -> set[str]:
+    return {
+        step.channel
+        for macro in settings.macros
+        for step in [*macro.on_steps, *macro.off_steps]
+        if isinstance(step, SetLrAssignStep)
+    }
 
 
 def _heard_sends(settings: AudioSettings) -> set[tuple[str, str]]:

@@ -268,6 +268,33 @@ describe("Audio setup page", () => {
     expect(await screen.findByTestId("dry-run")).toHaveTextContent("HOST 1: mute");
   });
 
+  it("edits the LR-assign and link steps of talk to production and dry-runs them (WP9b)", async () => {
+    await showSetup();
+    openSection("Macros");
+    const editor = screen.getByTestId("macro-editor");
+    fireEvent.click(within(editor).getAllByRole("button", { name: "Edit" })[0]!);
+
+    fireEvent.change(screen.getByLabelText("add a step to Turning on"), {
+      target: { value: "set_lr_assign" },
+    });
+    fireEvent.change(screen.getByLabelText("add a step to Turning on"), {
+      target: { value: "set_link" },
+    });
+    fireEvent.change(screen.getByLabelText("Turning on step 3 bus"), {
+      target: { value: "bus3" },
+    });
+    expect(screen.getByLabelText("Turning on step 2 main mix")).toHaveValue("off");
+    expect(screen.getByLabelText("Turning on step 3 link")).toHaveValue("paused");
+
+    fireEvent.click(screen.getByRole("button", { name: "Dry run" }));
+
+    const steps = lastCommand().args.steps as Record<string, unknown>[];
+    expect(steps.slice(1)).toEqual([
+      { op: "set_lr_assign", channel: "1", on: false },
+      { op: "set_link", channel: "1", bus: "bus3", state: "paused" },
+    ]);
+  });
+
   it("the D200 card lists this host's URLs", async () => {
     await showSetup();
     openSection("D200");

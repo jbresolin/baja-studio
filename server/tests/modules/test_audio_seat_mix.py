@@ -53,6 +53,9 @@ def test_moving_the_main_fader_carries_the_offset_even_from_mixing_station(
     audio.command("set_fader", channel="9", level=0.5)
     audio.settle()
     assert audio.mixer_value(send_address("9", "bus1")) == pytest.approx(offset_level(0.5, 2.0))
+    # Write protection ignores the fader's address for 300 ms after the studio
+    # wrote it (a late echo must not undo it); a desk move comes later than that.
+    audio.pass_time(0.5)
 
     # ...and from the desk or Mixing Station.
     audio.change_on_mixer(fader_address("9"), 0.25)
@@ -78,12 +81,12 @@ def test_offsets_stop_at_plus_10_and_minus_30_db(audio: AudioStudio) -> None:
 def test_reset_brings_every_source_back_to_main(audio: AudioStudio) -> None:
     audio.connect_mixer()
     overlay(audio, "9", delta_db=3.0)
-    overlay(audio, "5", delta_db=-4.0)
+    overlay(audio, "aux", delta_db=-4.0)
 
     result = audio.command("reset_seat_offsets", source="web:hosts1", seat_id=1)
     audio.settle()
 
-    assert "9" in result["reset"] and "5" in result["reset"]
+    assert "9" in result["reset"] and "aux" in result["reset"]
     assert audio.state("offsets") == {}
     assert audio.mixer_value(send_address("9", "bus1")) == 0.75
 
@@ -148,19 +151,19 @@ def test_a_bus_that_is_no_seats_in_ears_still_pauses_the_link(audio: AudioStudio
 
 def test_a_send_closed_by_a_macro_keeps_its_offset_for_when_it_reopens(audio: AudioStudio) -> None:
     audio.connect_mixer()
-    overlay(audio, "5", value_db=2.0)
+    overlay(audio, "aux", value_db=2.0)
 
-    # PROD 1's route into host 1's ears is closed (button or macro).
-    assert audio.command("toggle_send", channel="5", bus="bus1")["open"] is False
+    # PC AUDIO's route into host 1's ears is closed (button or macro).
+    assert audio.command("toggle_send", channel="aux", bus="bus1")["open"] is False
     audio.settle()
     # Turned up meanwhile on the overlay: kept, but the closed send stays closed.
-    overlay(audio, "5", delta_db=1.0)
-    assert audio.mixer_value(send_address("5", "bus1")) == 0.0
+    overlay(audio, "aux", delta_db=1.0)
+    assert audio.mixer_value(send_address("aux", "bus1")) == 0.0
 
-    assert audio.command("toggle_send", channel="5", bus="bus1")["open"] is True
+    assert audio.command("toggle_send", channel="aux", bus="bus1")["open"] is True
     audio.settle()
 
-    assert send_db(audio, "5", "bus1") == pytest.approx(3.0)
+    assert send_db(audio, "aux", "bus1") == pytest.approx(3.0)
 
 
 def test_relinking_puts_the_send_at_main_plus_its_offset(audio: AudioStudio) -> None:

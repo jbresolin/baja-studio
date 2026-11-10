@@ -31,6 +31,15 @@ pre-fader, and every send at -inf.
 3. **Hosts → Canned messages and replies**: the hosts' one-tap phrases
    ("preciso de 1 min", "problema no áudio", "repete?", "pronto") and *Chime
    on this page when a host writes* (on).
+4. **Audio setup → Link matrix** (only on a PC that ran an earlier
+   version; a fresh install starts this way, ADR 0013 decision 10): PC
+   AUDIO and SHOTGUN linked to buses 1-4; PROD 1-4 **not** linked to buses
+   1-4.
+5. **Audio setup → Macros** (same PCs): an existing install keeps its old
+   "Host 1/2 → Prod" (they close the fader). Check they now read: *On / off
+   the main mix* off, then *Link / pause* of the other seats' in-ear
+   buses, then *Close* of those sends; the off steps undo them in reverse
+   (dry-run shows it). A fresh install also has "Guest 1/2 → Prod".
 
 ## Steps
 
@@ -39,26 +48,32 @@ pre-fader, and every send at -inf.
 | 1 | On the hosts screen tap **pronto**, then type a message and **Send**. On the Hosts page reply to it. | The Hosts page history shows "← Ana pronto" in Ana's colour marked **new**, the title shows "2 new from the hosts" and a chime plays. The playout page's *Message hosts* line shows the count and the latest text; **Read** clears it. Production's reply appears under Ana's message on the hosts screen, which grows for a few seconds. |
 | 2 | Send Ana a message from production; on the hosts screen press its **✕**. Reload the hosts screen. | The message disappears at once and stays gone after the reload. The Hosts page history says *dismissed by Ana*. Seat 2's screen (if open) still shows it. |
 | 3 | Watch the chat at rest; send a new message to Ana; react 👍. Then **Hosts → Chat area** = large. | At rest each message is one or two lines with small reactions. The new message grows (large text, reply field) and shrinks back about 4 s after the 👍. An **urgent** one stays grown and pulses until answered. *Large* applies at once, without Save. |
-| 4 | Fake console: `mute 1 off` (fader at unity). Then run **Host 1 → Prod**. Then `mute 1 on`. Then `mute 1 off` and `send 5 bus1 0.75`. | Ana: **LIVE**; after the macro: see *Known issue* below (expected **MUTED** with the default macro); `mute 1 on`: **MUTED**; PROD 1 into bus 1: **production → you** on Ana's line. To see **TO PRODUCTION**: `lr 1 off` and `send 1 bus5 0.75` (pre-fader tap) with channel 1 unmuted. |
-| 5 | Tap Ana's line on the audio card. Press **+** twice on a linked source (e.g. SHOTGUN). Move that source's main fader on the audio page. **Reset to main**. Then press the hosts' pad *vol up* (D200 `nudge-aux/<ch>/bus1/+1`). | The overlay lists the sources of bus 1 with *main* level and offset (+2 dB); unlinked sources say *independent*. Moving the main fader moves bus 1's send with the +2 dB kept. Reset puts every offset back to 0 dB. The pad shows a toast "Ana: SHOTGUN +1 dB" with the overlay closed. The overlay closes by itself after ~20 s without a touch. |
-| 6 | Fake console: `drop on` (or unplug the XR18). | Within ~5 s the card says **Mixer offline** (no stale LIVE/MUTED); the overlay's buttons are disabled with "Mixer offline". `drop off`: states come back. |
+| 4 | **First, on the real XR18:** run **Host 1 → Prod** and watch channel 1's LR button in Mixing Station (or the desk); run it again. **If LR does not switch off and back, stop the bench here and report it on LIVESTACK-57**: the macro depends on `/ch/NN/mix/lr` and there is no fallback. Readiness *Hosts can be taken off air* is green when the mixer reports the LR assign. | LR off, then back on: ____. |
+| 5 | Fake console: `mute 1 off` (fader at unity). Run **Host 1 → Prod**; run it again. Then `mute 1 on`. Then `mute 1 off` and `send 5 bus1 0.75`. | Ana: **LIVE**; after the macro: **TO PRODUCTION** (LR assign off, the fader untouched, bus 5 still open); again: **LIVE**. `mute 1 on`: **MUTED**; PROD 1 into bus 1: **production → you** on Ana's line. |
+| 6 | Run **Host 1 → Prod**, then move HOST 1's fader on the **M-VAVE** (strip 1). Listen to the stream and to host 2's in-ears; run the macro again. | The **stream stays silent** for host 1 and **host 2's in-ears stay silent** for host 1 while the fader moves; host 1's own in-ears, production (bus 5) and the camera operator (bus 6) follow the fader. Released: host 1 back on air at the fader's new level, and back in every in-ear at main + offset. |
+| 7 | Tap Ana's line on the audio card. Press **+** twice on **PC AUDIO**. Move PC AUDIO's main fader on the audio page. **Reset to main**. Then press the hosts' pad *vol up* (D200 `nudge-aux/17/bus1/+1`). | The overlay lists the sources of bus 1 with *main* level and offset (PC AUDIO +2 dB); a source unlinked from bus 1 would say *independent*. Moving the main fader moves bus 1's send with the +2 dB kept. Reset puts every offset back to 0 dB. The pad shows a toast "Ana: PC AUDIO +1 dB" with the overlay closed. The overlay closes by itself after ~20 s without a touch. |
+| 8 | Fake console: `tap 2 bus1 post` (HOST 2's linked send to host 1's in-ears, post-fader). Run **Readiness**; then `tap 2 bus1 pre` and run it again. | *Linked sends are pre-fader*: amber, "after the fader, so cut twice: HOST 2 → IEM HOST 1", with the fix at the desk; then green. Nothing is written to the mixer (the tap stays where the console put it). |
+| 9 | Fake console: `drop on` (or unplug the XR18). | Within ~5 s the card says **Mixer offline** (no stale LIVE/MUTED); the overlay's buttons are disabled with "Mixer offline". `drop off`: states come back. |
 
-## Known issue to look at: "talk to production"
+## How "talk to production" works
 
-The default **Host 1 → Prod** macro closes host 1's **main fader**
-(store and silence `1:main`). Mirroring then copies that -inf into every
-send linked to the fader, bus 5 included, so host 1 is not heard on the
-production bus either: the card classifies the result as **MUTED**, not TO
-PRODUCTION (the rules read the mixer, and the mixer says so). This is
-reported, not special-cased (ADR 0013). To decide at the bench: how should
-"talk to production" reach bus 5? For example LR assign off instead of the
-fader, a pre-fader tap on bus 5 with 1→bus5 unlinked, or not mirroring a
-fader closed by a macro.
+The **Host 1 → Prod** macro turns HOST 1's **LR assign off**; the fader is
+not touched. It pauses HOST 1's links to the other seats' in-ear buses
+(2-4) and closes those sends with stored levels. HOST 1's own in-ears
+(bus 1), production (bus 5) and the camera operator (bus 6) stay linked,
+so they keep following the fader: the host hears themselves, production
+hears them, and camera ops hear them as in 2026. A fader move meanwhile
+cannot reach LR (unassigned) or the other seats (paused and closed).
+Released, LR goes back on and the other seats' sends are restored, then
+linked again (main + offset).
+
+Linked sends must be **pre-fader** at the desk: the studio already copies
+the fader into them, so a post-fader one is cut twice. Readiness warns.
 
 ## Also worth noting
 
 - **To confirm on the real XR18** (one line each in
-  `adapters/xr18_addresses.py`): LR assign at `/ch/NN/mix/lr`; a send's tap
+  `adapters/xr18_addresses.py`): LR assign at `/ch/NN/mix/lr` (step 4); a send's tap
   at `/ch/NN/mix/MM/tap` (post-fader values 4 and 5); whether the XR18 has a
   send on switch at `/ch/NN/mix/MM/on` at all (if it never answers, the card
   counts the send as on).

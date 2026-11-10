@@ -188,12 +188,29 @@ class AudioModule(Module):
         return failed or not (command in DRAG_COMMANDS and args.get("dragging") is True)
 
     def readiness_checks(self) -> list[ReadinessCheck]:
-        """XR18, M-VAVE, the D200 endpoint and the link matrix (see `readiness.py`)."""
+        """XR18, M-VAVE, D200, linked taps, LR assigns, the link matrix (`readiness.py`)."""
+        settings = self.settings()
+        controller = self.controller
+        matrix = controller.links.matrix()
+        with controller.lock:
+            linked_taps = {
+                (channel, bus): controller.cache.send_taps.get((channel, bus))
+                for channel, buses in matrix.items()
+                for bus, state in buses.items()
+                if state == "linked"
+            }
+            seat_lr_assigns = {
+                seat.channel: controller.cache.lr_assigns.get(seat.channel)
+                for seat in settings.seats
+                if seat.channel is not None
+            }
         return audio_checks(
-            self.settings(),
+            settings,
             self.context.state.get(self.name) or {},
             self.context.state,
-            self.controller.links.matrix(),
+            matrix,
+            linked_taps,
+            seat_lr_assigns,
         )
 
     def hosts_cards(self) -> list[HostsCard]:

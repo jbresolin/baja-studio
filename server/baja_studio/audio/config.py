@@ -127,13 +127,36 @@ class RecallSnapshotStep(StrictModel):
     snapshot: int = Field(ge=1, le=64)
 
 
+class SetLinkStep(StrictModel):
+    """Link, pause or unlink an input's send to an aux bus (as the link matrix does).
+
+    Linking brings the send to its fader plus the pair's offset at once,
+    unless a macro closed the send (it has a stored level).
+    """
+
+    op: Literal["set_link"] = "set_link"
+    channel: SendSourceId
+    bus: AuxBusId
+    state: Literal["linked", "paused", "unlinked"]
+
+
+class SetLrAssignStep(StrictModel):
+    """Assign an input to the main mix (LR) or take it off, without touching its fader."""
+
+    op: Literal["set_lr_assign"] = "set_lr_assign"
+    channel: SendSourceId
+    on: bool
+
+
 MacroStep = Annotated[
     SetFaderStep
     | SetMuteStep
     | SetAuxStep
     | StoreLevelsStep
     | RestoreLevelsStep
-    | RecallSnapshotStep,
+    | RecallSnapshotStep
+    | SetLinkStep
+    | SetLrAssignStep,
     Field(discriminator="op"),
 ]
 

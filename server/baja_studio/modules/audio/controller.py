@@ -25,6 +25,7 @@ from baja_studio.adapters.xr18_addresses import (
     MAIN_POINT,
     SEND_SOURCES,
     SNAPSHOT_LOAD,
+    lr_assign_address,
     mute_address,
     pan_address,
 )
@@ -215,6 +216,13 @@ class AudioController(SeatMixing):
                     self.stored.store(change.point, change.value)
                 elif change.kind == "forget":
                     self.stored.forget(change.point)
+                elif change.kind == "link" and isinstance(change.value, str):
+                    self.links.set(change.channel, change.bus, change.value)
+                    self._logger.info("link %s %s by %s", change.point, change.value, source)
+                elif change.kind == "lr_assign" and isinstance(change.value, bool):
+                    link.write(lr_assign_address(change.channel), 1 if change.value else 0)
+                    self.cache.lr_assigns[change.channel] = change.value
+                    self.publisher.last_source(f"{change.channel}:lr", source)
                 elif change.kind == "snapshot" and isinstance(change.value, int):
                     link.write(SNAPSHOT_LOAD, change.value)
                     self._logger.warning("snapshot %s loaded by %s", change.value, source)

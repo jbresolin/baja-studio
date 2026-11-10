@@ -9,8 +9,8 @@ from dataclasses import dataclass, field
 
 import pytest
 
-from baja_studio.adapters.xr18_levels import db_to_level
-from baja_studio.audio.config import MacroConfig
+from baja_studio.adapters.xr18_levels import db_to_level, offset_level
+from baja_studio.audio.config import MacroConfig, SetLinkStep
 from baja_studio.audio.macros import (
     PlannedChange,
     is_active,
@@ -28,6 +28,10 @@ class FakeView:
     stored_levels: dict[str, float] = field(default_factory=dict)
     links: dict[tuple[str, str], str] = field(default_factory=dict)
     offsets: dict[tuple[str, str], float] = field(default_factory=dict)
+    lr_assigns: dict[str, bool] = field(default_factory=dict)
+
+    def lr_assign(self, channel: str) -> bool | None:
+        return self.lr_assigns.get(channel)
 
     def level(self, channel: str, bus: str) -> float | None:
         return self.levels.get((channel, bus))
@@ -204,3 +208,80 @@ def test_a_toggle_runs_its_off_steps_when_active_and_on_steps_otherwise() -> Non
 
     assert steps_to_run(TALK_TO_HOSTS, active) == TALK_TO_HOSTS.off_steps
     assert steps_to_run(TALK_TO_HOSTS, inactive) == TALK_TO_HOSTS.on_steps
+
+
+# --- set_link and set_lr_assign (WP9b, "talk to production") ------------------------
+
+
+def lr(channel: str, on: bool) -> dict[str, object]:
+    return {"op": "set_lr_assign", "channel": channel, "on": on}
+
+
+def link(channel: str, bus: str, state: str) -> dict[str, object]:
+    return {"op": "set_link", "channel": channel, "bus": bus, "state": state}
+
+
+TALK_TO_PRODUCTION = macro(
+    on_steps=[lr("1", False), link("1", "bus2", "paused"), close("1", "bus2")],
+    off_steps=[lr("1", True), open_("1", "bus2"), link("1", "bus2", "linked")],
+)
+
+
+def test_taking_a_strip_off_lr_changes_only_its_lr_assign() -> None:
+    view = FakeView(levels={("1", "main"): 0.75}, lr_assigns={"1": True})
+
+    assert plan_steps([TALK_TO_PRODUCTION.on_steps[0]], view) == [
+        PlannedChange("lr_assign", "1", value=False, previous=True)
+    ]
+
+
+def test_pausing_before_closing_leaves_the_send_closed_and_its_level_remembered() -> None:
+    # HOST 1 in host 2's in-ears at 0.8; pause the link, then close the send.
+    view = FakeView(levels={("1", "bus2"): 0.8}, links={("1", "bus2"): "linked"})
+
+    changes = plan_steps(TALK_TO_PRODUCTION.on_steps[1:], view)
+
+    assert changes == [
+        PlannedChange("link", "1", "bus2", "paused", "linked"),
+        PlannedChange("store", "1", "bus2", 0.8, None),
+        PlannedChange("level", "1", "bus2", 0.0, 0.8),
+    ]
+
+
+def test_restoring_then_relinking_ends_at_the_fader_plus_the_offset() -> None:
+    # Released: the send opens at its stored level (its link is still paused,
+    # so not the fader), then relinking brings it to the fader plus host 2's
+    # offset, as the link matrix does.
+    view = FakeView(
+        levels={("1", "main"): 0.5, ("1", "bus2"): 0.0},
+        links={("1", "bus2"): "paused"},
+        stored_levels={"1:bus2": 0.8},
+        offsets={("1", "bus2"): 2.0},
+    )
+
+    changes = plan_steps(TALK_TO_PRODUCTION.off_steps[1:], view)
+
+    assert [change.kind for change in changes] == ["forget", "level", "link", "level"]
+    assert changes[1].value == 0.8
+    assert changes[-1].value == pytest.approx(offset_level(0.5, 2.0))
+
+
+def test_linking_a_send_a_macro_closed_leaves_it_closed() -> None:
+    # Restore first, then link: a held send is not reopened by linking.
+    view = FakeView(levels={("1", "main"): 0.5}, stored_levels={"1:bus2": 0.8})
+
+    changes = plan_steps([SetLinkStep(channel="1", bus="bus2", state="linked")], view)
+
+    assert changes == [PlannedChange("link", "1", "bus2", "linked", "unlinked")]
+
+
+def test_a_macro_setting_lr_assigns_is_active_exactly_when_they_are_as_it_says() -> None:
+    # The other seats' sends being open or closed does not matter: taking the
+    # host off air is what the macro is for (a desk change counts too).
+    off_air = FakeView(lr_assigns={"1": False}, levels={("1", "bus2"): 0.8})
+    on_air = FakeView(lr_assigns={"1": True}, levels={("1", "bus2"): 0.0})
+    unknown = FakeView()
+
+    assert is_active(TALK_TO_PRODUCTION, off_air) is True
+    assert is_active(TALK_TO_PRODUCTION, on_air) is False
+    assert is_active(TALK_TO_PRODUCTION, unknown) is False

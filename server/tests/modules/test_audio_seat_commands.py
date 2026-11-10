@@ -33,7 +33,6 @@ def seat_command(audio: AudioStudio, command: str, **args: Any) -> Any:
         ({"seat_id": 1, "channel": "9", "delta_db": "up"}, "must be a number of dB"),
         ({"seat_id": 1, "channel": "9", "delta_db": 20}, "one step must be between"),
         ({"seat_id": 1, "channel": "9", "value_db": 12}, "an offset must be between -30 and 10"),
-        ({"seat_id": 1, "channel": "aux", "value_db": 11}, "a send must be between -90 and 10"),
     ],
 )
 def test_set_seat_offset_refuses_what_is_not_this_seats_to_change(
@@ -73,9 +72,11 @@ def test_nothing_can_be_changed_while_the_mixer_is_offline(audio: AudioStudio) -
 
 
 def test_an_independent_source_has_its_send_changed_directly(audio: AudioStudio) -> None:
-    # PC AUDIO is in the seat's mix (shown on the audio page) but not linked
-    # to bus 1: + and - change its send itself, and there is no offset.
+    # PC AUDIO is in the seat's mix (shown on the audio page). The default
+    # seed links it to bus 1; production unlinks it here, so + and - change
+    # its send itself, and there is no offset.
     audio.connect_mixer()
+    audio.command("set_link", channel="aux", bus="bus1", state="unlinked")
     audio.change_on_mixer(send_address("aux", "bus1"), 0.75)
     audio.soon(lambda: audio.state("channels.aux")["sends"]["bus1"] == 0.75)
 
@@ -93,3 +94,6 @@ def test_an_independent_source_has_its_send_changed_directly(audio: AudioStudio)
     value = audio.mixer_value(send_address("aux", "bus1"))
     assert isinstance(value, float)
     assert level_to_db(value) == pytest.approx(-10.0)
+    # An independent send's range is the fader law's, not the offsets'.
+    with pytest.raises(CommandError, match="a send must be between -90 and 10"):
+        seat_command(audio, "set_seat_offset", seat_id=1, channel="aux", value_db=11)

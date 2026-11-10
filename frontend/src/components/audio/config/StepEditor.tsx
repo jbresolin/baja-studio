@@ -14,6 +14,7 @@ import {
   POINT_BUSES,
   SEND_SOURCES,
   type ChannelConfig,
+  type LinkState,
   type MacroStep,
   type SendPoint,
 } from "../../../lib/audio";
@@ -25,7 +26,11 @@ const STEP_NAMES: Record<MacroStep["op"], string> = {
   set_aux: "Set send",
   set_mute: "Mute / unmute",
   recall_scene: "Load mixer snapshot",
+  set_link: "Link / pause a send",
+  set_lr_assign: "On / off the main mix (LR)",
 };
+
+const LINK_STATES: LinkState[] = ["linked", "paused", "unlinked"];
 
 interface Props {
   title: string;
@@ -216,6 +221,56 @@ function StepFields({
           value={step.snapshot}
           onChange={(e) => onChange({ ...step, snapshot: Number(e.target.value) })}
         />
+      );
+    case "set_link":
+      return (
+        <>
+          <ChannelSelect
+            label={`${label} channel`}
+            value={step.channel}
+            choices={SEND_SOURCES}
+            channels={channels}
+            onChange={(channel) => onChange({ ...step, channel })}
+          />
+          <ChannelSelect
+            label={`${label} bus`}
+            value={step.bus}
+            choices={[...AUX_BUSES]}
+            channels={channels}
+            onChange={(bus) => onChange({ ...step, bus: bus as typeof step.bus })}
+          />
+          <select
+            aria-label={`${label} link`}
+            value={step.state}
+            onChange={(e) => onChange({ ...step, state: e.target.value as LinkState })}
+          >
+            {LINK_STATES.map((state) => (
+              <option key={state} value={state}>
+                {state}
+              </option>
+            ))}
+          </select>
+        </>
+      );
+    case "set_lr_assign":
+      return (
+        <>
+          <ChannelSelect
+            label={`${label} channel`}
+            value={step.channel}
+            choices={SEND_SOURCES}
+            channels={channels}
+            onChange={(channel) => onChange({ ...step, channel })}
+          />
+          <select
+            aria-label={`${label} main mix`}
+            value={step.on ? "on" : "off"}
+            onChange={(e) => onChange({ ...step, on: e.target.value === "on" })}
+          >
+            <option value="off">off the main mix</option>
+            <option value="on">on the main mix</option>
+          </select>
+        </>
       );
   }
 }

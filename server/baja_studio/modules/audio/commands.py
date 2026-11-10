@@ -115,6 +115,11 @@ def describe(change: PlannedChange, label: Callable[[str], str]) -> dict[str, An
         text = f"{where}: remember {format_db(float(change.value or 0.0))}"
     elif change.kind == "forget":
         text = f"{where}: use the remembered level"
+    elif change.kind == "link":
+        verb = {"linked": "link (follow the fader)", "paused": "pause the link"}
+        text = f"{where}: {verb.get(str(change.value), 'unlink')}"
+    elif change.kind == "lr_assign":
+        text = f"{label(change.channel)}: {'on' if change.value else 'off'} the main mix (LR)"
     else:
         text = f"load mixer snapshot {change.value} (replaces the whole mix)"
     return {"kind": change.kind, "point": change.point, "value": change.value, "text": text}

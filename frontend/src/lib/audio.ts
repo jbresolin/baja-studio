@@ -76,7 +76,9 @@ export type MacroStep =
   | { op: "set_aux"; channel: string; bus: AuxBus; level: number }
   | { op: "store_levels"; points: SendPoint[]; silence: boolean }
   | { op: "restore_levels"; points: SendPoint[] }
-  | { op: "recall_scene"; snapshot: number };
+  | { op: "recall_scene"; snapshot: number }
+  | { op: "set_link"; channel: string; bus: AuxBus; state: LinkState }
+  | { op: "set_lr_assign"; channel: string; on: boolean };
 
 export interface MacroConfig {
   id: string;
@@ -237,6 +239,10 @@ export function newStep(op: MacroStep["op"]): MacroStep {
       return { op, points: [{ channel: "1", bus: "main" }] };
     case "recall_scene":
       return { op, snapshot: 1 };
+    case "set_link":
+      return { op, channel: "1", bus: "bus2", state: "paused" };
+    case "set_lr_assign":
+      return { op, channel: "1", on: false };
   }
 }
 
@@ -249,14 +255,23 @@ export function moveItem<T>(items: T[], from: number, to: number): T[] {
   return copy;
 }
 
-/** The off steps that undo `on`: each close becomes an open and vice versa. */
+/**
+ * The off steps that undo `on`, last step first: each close becomes an open
+ * and vice versa, a mute or LR assign flips, a paused link is linked again.
+ * Undoing in reverse matters: "pause, then close" is undone by "open, then
+ * link", so linking finds the send open and brings it to its fader.
+ */
 export function mirrorSteps(on: MacroStep[]): MacroStep[] {
-  return on.flatMap((step): MacroStep[] => {
+  return [...on].reverse().flatMap((step): MacroStep[] => {
     if (step.op === "store_levels") return [{ op: "restore_levels", points: step.points }];
     if (step.op === "restore_levels") {
       return [{ op: "store_levels", points: step.points, silence: true }];
     }
     if (step.op === "set_mute") return [{ ...step, muted: !step.muted }];
+    if (step.op === "set_lr_assign") return [{ ...step, on: !step.on }];
+    if (step.op === "set_link") {
+      return [{ ...step, state: step.state === "linked" ? "paused" : "linked" }];
+    }
     return [];
   });
 }

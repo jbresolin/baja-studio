@@ -29,6 +29,11 @@ def call(audio: AudioStudio, method: str, path: str) -> Any:
 
 def test_every_recorded_2026_response_is_reproduced_byte_for_byte(audio: AudioStudio) -> None:
     audio.connect_mixer()
+    # The recordings nudge PC AUDIO's send to bus 1 as a plain send (unlinked,
+    # as the WP4 seed had it). The WP9b seed links it (a seat's in-ears follow
+    # main), where a nudge moves the seat's offset instead
+    # (test_a_hosts_pad_nudge_on_a_seat_bus_moves_the_offset_and_keeps_the_link).
+    audio.command("set_link", channel="aux", bus="bus1", state="unlinked")
 
     for case in RECORDED["cases"]:
         response = call(audio, case["method"], case["path"])
