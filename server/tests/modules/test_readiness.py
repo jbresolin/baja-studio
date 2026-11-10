@@ -66,6 +66,7 @@ class Readiness:
     services: StudioServices
     answers: Answers
     clock: FakeClock
+    http: TestClient
 
     def state(self, path: str = "") -> Any:
         return self.services.state.get("readiness", path)
@@ -104,8 +105,8 @@ def readiness(make_app: AppFactory, fake_clock: FakeClock) -> Iterator[Readiness
         ]
 
     app = make_app(modules)
-    with TestClient(app):
-        yield Readiness(app.state.services, answers, fake_clock)
+    with TestClient(app) as http:
+        yield Readiness(app.state.services, answers, fake_clock, http)
 
 
 def test_a_run_collects_every_running_modules_checks_grouped_by_module(
@@ -253,3 +254,50 @@ def test_a_scheduled_run_flags_a_check_that_went_red(readiness: Readiness) -> No
 
     assert readiness.state("last_run.newly_failed") == ["audio.mixer"]
     assert readiness.state("last_run.trigger") == "scheduled"
+
+
+# --- GET /api/readiness/last (the tray's amber badge, WP10) -----------------------
+
+
+def test_the_last_run_route_answers_empty_before_any_run(readiness: Readiness) -> None:
+    # Nothing has been run since the service started: an empty answer, not a 404,
+    # so the tray needs no special case.
+    response = readiness.http.get("/api/readiness/last")
+
+    assert response.status_code == 200
+    assert response.json() == {"last_run": None}
+
+
+def test_the_last_run_route_never_starts_a_run(readiness: Readiness) -> None:
+    # The tray asks every 5 s; asking must not run the checks.
+    for _ in range(3):
+        readiness.http.get("/api/readiness/last")
+
+    assert readiness.state("last_run") is None
+    assert readiness.state("running") is False
+
+
+def test_the_last_run_route_gives_a_passing_run(readiness: Readiness) -> None:
+    # Every check passes this time.
+    readiness.answers.outcomes["mvave"] = passed("connected")
+    published = readiness.run_and_wait()
+
+    last_run = readiness.http.get("/api/readiness/last").json()["last_run"]
+
+    # The same run the page shows: its time, counts and every check's result.
+    assert last_run == published
+    assert last_run["started_at"]
+    assert (last_run["fails"], last_run["warnings"]) == (0, 0)
+    assert [c["status"] for m in last_run["modules"] for c in m["checks"]] == ["ok"] * 3
+
+
+def test_the_last_run_route_counts_warnings_and_failures(readiness: Readiness) -> None:
+    # The fixture's M-VAVE check warns; make the camera fail too.
+    readiness.answers.outcomes["camera"] = failed("offline")
+    readiness.run_and_wait()
+
+    last_run = readiness.http.get("/api/readiness/last").json()["last_run"]
+
+    assert (last_run["fails"], last_run["warnings"]) == (1, 1)
+    checks = {c["key"]: c["status"] for m in last_run["modules"] for c in m["checks"]}
+    assert checks == {"audio.mixer": "ok", "audio.mvave": "warn", "cameras.camera": "fail"}

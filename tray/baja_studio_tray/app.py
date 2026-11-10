@@ -1,4 +1,4 @@
-"""The tray process: the icon, its menu, and the 5-second poll of `/api/health`.
+"""The tray process: the icon, its menu, and the 5-second poll of the service.
 
 `Tray` holds the logic (poll thread, Quit) and talks to the icon through an
 `IconBackend`, so tests drive it with a fake. `PystrayBackend` is the real
@@ -73,8 +73,10 @@ class StatusPoller:
         self.status: TrayStatus | None = None
 
     def poll_once(self) -> TrayStatus:
-        """Ask `/api/health` once; tell `show` if anything visible changed."""
-        status = status_from_health(self._client.health(), self._labels)
+        """Ask `/api/health` and `/api/readiness/last` once; tell `show` if anything changed."""
+        health = self._client.health()
+        last_run = self._client.last_readiness_run() if health is not None else None
+        status = status_from_health(health, self._labels, last_run)
         if status != self.status:
             self.status = status
             self._show(status)

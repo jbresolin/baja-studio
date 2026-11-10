@@ -1,6 +1,6 @@
 """A stand-in for the service's HTTP API, plugged into `StudioClient` as its `fetch`.
 
-It answers `/api/health`, `POST /api/commands` (diagnostics bundle) and the
+It answers `/api/health`, `/api/readiness/last`, `POST /api/commands` (diagnostics bundle) and the
 bundle download from plain attributes a test sets, and records each request.
 Setting `answering = False` makes every request fail like a stopped service.
 """
@@ -32,6 +32,10 @@ class FakeStudio:
     """The service, as the tray sees it."""
 
     health: dict[str, Any] = field(default_factory=health_answer)
+    # `/api/readiness/last`'s run; None: no run yet. `readiness_route = False`
+    # answers 404, as a service older than the route does.
+    last_readiness_run: dict[str, Any] | None = None
+    readiness_route: bool = True
     answering: bool = True
     bundle_status: int = 200
     bundle_content: bytes = b"PK fake zip"
@@ -44,6 +48,8 @@ class FakeStudio:
         path = url.removeprefix(BASE_URL)
         if method == "GET" and path == "/api/health":
             return json.dumps(self.health).encode()
+        if method == "GET" and path == "/api/readiness/last" and self.readiness_route:
+            return json.dumps({"last_run": self.last_readiness_run}).encode()
         if method == "POST" and path == "/api/commands":
             if self.bundle_status != 200:
                 raise urllib.error.HTTPError(url, self.bundle_status, "error", Message(), None)

@@ -1,4 +1,8 @@
-"""Tests for turning a `/api/health` answer into the badge and tooltip (status.py)."""
+"""Tests for turning `/api/health` and the last readiness run into the badge and tooltip."""
+
+from datetime import UTC, timedelta, timezone
+
+import pytest
 
 from baja_studio_tray.labels import EN, PT_BR
 from baja_studio_tray.status import Badge, TrayStatus, status_from_health
@@ -54,3 +58,72 @@ def test_a_long_tooltip_is_cut_to_what_windows_shows() -> None:
     # Windows keeps 127 characters; the cut is marked with an ellipsis.
     assert len(tooltip) == 127
     assert tooltip.endswith("…")
+
+
+# The badge mapping with readiness (brief §2), one row per case: the health
+# answer, the last readiness run's counts (None: no run yet), then the badge
+# and summary expected. Times are given in UTC and shown in UTC here.
+RUN_AT = "2026-11-10T14:32:05+00:00"
+BADGE_TABLE = [
+    ("ok", None, Badge.GREEN, "everything ok"),
+    ("ok", {"fails": 0, "warnings": 0}, Badge.GREEN, "everything ok"),
+    ("ok", {"fails": 0, "warnings": 1}, Badge.AMBER, "readiness at 14:32: 1 warning"),
+    ("ok", {"fails": 0, "warnings": 3}, Badge.AMBER, "readiness at 14:32: 3 warnings"),
+    ("ok", {"fails": 1, "warnings": 0}, Badge.AMBER, "readiness at 14:32: 1 failure"),
+    (
+        "ok",
+        {"fails": 2, "warnings": 4},
+        Badge.AMBER,
+        "readiness at 14:32: 4 warnings, 2 failures",
+    ),
+    ("degraded", None, Badge.AMBER, "attention: Playout"),
+    (
+        "degraded",
+        {"fails": 1, "warnings": 0},
+        Badge.AMBER,
+        "attention: Playout · readiness at 14:32: 1 failure",
+    ),
+    ("fail", {"fails": 1, "warnings": 0}, Badge.RED, "status fail"),
+]
+
+
+@pytest.mark.parametrize(("health_status", "counts", "badge", "summary"), BADGE_TABLE)
+def test_the_badge_follows_health_and_the_last_readiness_run(
+    health_status: str, counts: dict[str, int] | None, badge: Badge, summary: str
+) -> None:
+    last_run = None if counts is None else {"started_at": RUN_AT, **counts}
+
+    status = status_from_health(health_answer(health_status, playout="offline"), EN, last_run, UTC)
+
+    assert (status.badge, status.summary) == (badge, summary)
+
+
+def test_a_service_that_does_not_answer_stays_red_whatever_readiness_said() -> None:
+    status = status_from_health(None, EN, {"started_at": RUN_AT, "fails": 3}, UTC)
+
+    assert status.badge == Badge.RED
+
+
+def test_the_operators_see_the_counts_in_portuguese() -> None:
+    last_run = {"started_at": RUN_AT, "fails": 1, "warnings": 2}
+
+    status = status_from_health(health_answer("ok"), PT_BR, last_run, UTC)
+
+    assert status.tooltip(PT_BR) == "Baja Studio 0.2.0: verificação das 14:32: 2 avisos, 1 falha"
+
+
+def test_the_run_time_is_shown_in_the_pcs_time_zone() -> None:
+    # The service gives UTC; São Paulo is three hours behind.
+    sao_paulo = timezone(timedelta(hours=-3))
+
+    status = status_from_health(
+        health_answer("ok"), EN, {"started_at": RUN_AT, "warnings": 1}, sao_paulo
+    )
+
+    assert status.summary == "readiness at 11:32: 1 warning"
+
+
+def test_an_unreadable_run_time_shows_a_question_mark() -> None:
+    status = status_from_health(health_answer("ok"), EN, {"started_at": None, "warnings": 1}, UTC)
+
+    assert status.summary == "readiness at ?: 1 warning"

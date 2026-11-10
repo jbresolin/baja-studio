@@ -1,7 +1,7 @@
 """The tray's view of the service: its HTTP API, and where the installer put things.
 
-Only the standard library: `urllib` with explicit timeouts (2 s for health,
-60 s for building a diagnostics bundle), and the registry values the
+Only the standard library: `urllib` with explicit timeouts (2 s for health
+and the last readiness run, 60 s for building a diagnostics bundle), and the registry values the
 installer writes under `HKLM\\Software\\BajaStudio`.
 """
 
@@ -65,6 +65,20 @@ class StudioClient:
         except (OSError, ValueError):
             return None
         return health if isinstance(health, dict) else None
+
+    def last_readiness_run(self) -> dict[str, Any] | None:
+        """`/api/readiness/last`: the last finished run, or None (none yet, or no answer).
+
+        Reading it never starts a run. A service older than the endpoint
+        answers 404, which reads as "no run", so the badge follows health alone.
+        """
+        url = f"{self.base_url}/api/readiness/last"
+        try:
+            answer = json.loads(self._fetch("GET", url, None, HEALTH_TIMEOUT_SECONDS))
+        except (OSError, ValueError):
+            return None
+        last_run = answer.get("last_run") if isinstance(answer, dict) else None
+        return last_run if isinstance(last_run, dict) else None
 
     def build_diagnostics_bundle(self) -> DiagnosticsBundle:
         """Ask the home module for a bundle, as the button on the home page does."""

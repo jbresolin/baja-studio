@@ -85,6 +85,30 @@ def test_the_menu_lists_the_briefs_items_in_order() -> None:
     assert quit_calls == [True]
 
 
+def test_the_readiness_counts_reach_the_badge_through_the_poll() -> None:
+    # Health is ok, but the last readiness run had a warning: the poll asks
+    # for both and the badge goes amber with the count.
+    studio = FakeStudio(last_readiness_run={"started_at": "2026-11-10T14:32:00", "warnings": 1})
+    poller = StatusPoller(studio.client(), EN, lambda status: None)
+
+    status = poller.poll_once()
+
+    assert status.badge == Badge.AMBER
+    assert status.summary == "readiness at 14:32: 1 warning"
+    assert [url for _, url, _, _ in studio.requests] == [
+        "http://studio.test/api/health",
+        "http://studio.test/api/readiness/last",
+    ]
+
+
+def test_a_service_that_does_not_answer_is_not_asked_about_readiness() -> None:
+    studio = FakeStudio(answering=False)
+    poller = StatusPoller(studio.client(), EN, lambda status: None)
+
+    assert poller.poll_once().badge == Badge.RED
+    assert len(studio.requests) == 1
+
+
 def run_tray_in_background(icon: FakeIcon) -> tuple[threading.Thread, list[Tray]]:
     """Start `run_tray` on its own thread (it blocks like the real icon loop)."""
     trays: list[Tray] = []
