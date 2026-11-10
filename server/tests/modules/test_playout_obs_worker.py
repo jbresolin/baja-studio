@@ -78,8 +78,10 @@ def test_a_wrong_password_is_degraded_with_a_clear_message(playout: PlayoutStudi
     playout.configure(obs=playout.obs_settings(password="wrong"))
 
     eventually(lambda: playout.state("obs.connection") == "auth_failed")
+    # Connection and message are two updates, and health may already have been degraded
+    # (not configured), so wait for the message itself rather than read it once.
+    eventually(lambda: "password" in playout.state("obs.message"))
     eventually(lambda: health(playout) == HealthState.DEGRADED)
-    assert "password" in playout.state("obs.message")
 
     # Fixing the password in the settings connects without a restart.
     playout.configure(obs=playout.obs_settings(password="right"))

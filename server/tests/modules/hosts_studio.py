@@ -84,7 +84,9 @@ def hosts_studio(make_app: AppFactory, fake_clock: FakeClock) -> Iterator[HostsS
     playout = CardModule("playout", [now_playing_card(), next_up_card()])
 
     def modules(registry: ModuleRegistry) -> list[Module]:
-        return [HostsModule(registry), playout]
+        # Hosts starts after the modules declaring cards, as in main.py, so its first
+        # layout already holds playout's; started first, tests race the first tick.
+        return [playout, HostsModule(registry)]
 
     app = make_app(modules)
     with TestClient(app):
