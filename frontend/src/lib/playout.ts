@@ -21,6 +21,8 @@ export interface PlayoutClip {
   missing: boolean;
   queueable: boolean;
   duration_s: number | null;
+  /** Video frame rate from ffprobe (null: unknown, frame steps use 30). */
+  fps?: number | null;
   probe_error: string | null;
   prova: string | null;
   car_number: number | null;
@@ -49,6 +51,14 @@ export interface QueueEntry {
   missing: boolean;
 }
 
+/** What the media controls need about the clip on air (WP5c). */
+export interface TransportView {
+  state: "playing" | "paused" | "other";
+  position_s: number;
+  fps: number;
+  speed_percent: number;
+}
+
 export interface ProgramView {
   clip: PlayoutClip;
   slot: "a" | "b";
@@ -56,11 +66,15 @@ export interface ProgramView {
   position_s: number;
   duration_s: number | null;
   remaining_s: number | null;
+  /** 100, or slow motion (50, 25). */
+  speed_percent?: number;
+  transport?: TransportView;
 }
 
 export interface PreviewView {
   clip: PlayoutClip;
   slot: "a" | "b";
+  speed_percent?: number;
 }
 
 export interface OnAirAction {
@@ -116,6 +130,8 @@ export interface PlayoutState {
   };
   program: ProgramView | null;
   preview: PreviewView | null;
+  /** The replay speed the next cue gets while nothing is cued. */
+  cue_speed_percent?: number;
   queue: QueueEntry[];
   queue_total_s: number;
   /** Queue entries whose duration is unknown. */
@@ -124,13 +140,21 @@ export interface PlayoutState {
   library_summary: {
     total: number;
     missing: number;
+    /** Present files not measured by ffprobe yet (a rescan counts down from all of them). */
+    pending_probe?: number;
     unplayed: number;
     unmatched: number;
     per_group: Record<string, number>;
   };
   playlists: Playlist[];
   return_target: ReturnTarget | null;
-  tools: { ffprobe: string | null; ffmpeg: string | null; problem: string | null };
+  tools: {
+    ffprobe: string | null;
+    ffmpeg: string | null;
+    /** Where each was found: bundled, settings or PATH. */
+    sources?: Record<string, string>;
+    problem: string | null;
+  };
   cue_problem: string | null;
   /** The latest problem to show once as a toast; a new id each time. */
   notice: { id: number; message: string } | null;
@@ -181,6 +205,12 @@ export function formatDuration(seconds: number | null | undefined): string {
   const minutes = Math.floor((total % 3600) / 60);
   const secs = String(total % 60).padStart(2, "0");
   return hours > 0 ? `${hours}:${String(minutes).padStart(2, "0")}:${secs}` : `${minutes}:${secs}`;
+}
+
+/** `m:ss.t`: a position on the scrub bar, to a tenth of a second. */
+export function formatPosition(seconds: number): string {
+  const tenths = Math.max(0, Math.round(seconds * 10));
+  return `${formatDuration(Math.floor(tenths / 10))}.${tenths % 10}`;
 }
 
 /** A duration, or "?" when it is unknown (ffprobe missing or not run yet). */
@@ -310,6 +340,9 @@ export function groupLibrary(
   }));
 }
 
+export type TransportKeyAction =
+  "transport_toggle" | "transport_back" | "transport_forward" | "frame_back" | "frame_forward";
+
 export type PlayoutKeyAction =
   | "take"
   | "skip"
@@ -318,7 +351,8 @@ export type PlayoutKeyAction =
   | "replay_last"
   | "remove_selected"
   | "focus_search"
-  | "toggle_legend";
+  | "toggle_legend"
+  | TransportKeyAction;
 
 /** The keyboard legend, in the order shown. Same keys as the 2026 tool where it had them. */
 export const PLAYOUT_KEY_LEGEND: [string, string][] = [
@@ -332,9 +366,61 @@ export const PLAYOUT_KEY_LEGEND: [string, string][] = [
   ["?", "Show or hide this legend"],
 ];
 
+/** Keys that work only while the media controls are unlocked (they act on air). */
+export const TRANSPORT_KEY_LEGEND: [string, string][] = [
+  ["K", "Pause / play the clip on air"],
+  ["J / L", "Back / forward 5 s (L is not Replay last while unlocked)"],
+  [", / .", "One frame back / forward (while paused)"],
+];
+
+/** Seconds a −5 s / +5 s press moves. */
+export const NUDGE_SECONDS = 5;
+/** How long the unlock control must be held before the media controls work. */
+export const HOLD_TO_ENABLE_MS = 2000;
+/** The replay speeds offered, in percent of normal. */
+export const REPLAY_SPEEDS = [100, 50, 25] as const;
+
+/** The transport command for a transport key, as `transport` args. */
+export function transportArgs(action: TransportKeyAction): Record<string, unknown> {
+  switch (action) {
+    case "transport_toggle":
+      return { action: "toggle" };
+    case "transport_back":
+      return { action: "nudge", seconds: -NUDGE_SECONDS };
+    case "transport_forward":
+      return { action: "nudge", seconds: NUDGE_SECONDS };
+    case "frame_back":
+      return { action: "step", frames: -1 };
+    case "frame_forward":
+      return { action: "step", frames: 1 };
+  }
+}
+
+function transportKeyAction(key: string): TransportKeyAction | null {
+  switch (key) {
+    case "k":
+    case "K":
+      return "transport_toggle";
+    case "j":
+    case "J":
+      return "transport_back";
+    case "l":
+    case "L":
+      return "transport_forward";
+    case ",":
+      return "frame_back";
+    case ".":
+      return "frame_forward";
+    default:
+      return null;
+  }
+}
+
 /**
  * Which action a key press means, or null. Nothing fires while the operator
- * types in a field (`targetIsEditable`), or with Ctrl/Alt/Meta held.
+ * types in a field (`targetIsEditable`), or with Ctrl/Alt/Meta held. With
+ * the media controls unlocked (`transportEnabled`), K, J, L, "," and "."
+ * drive the clip on air, and L is no longer "Replay last".
  */
 export function playoutKeyAction(event: {
   key: string;
@@ -343,8 +429,13 @@ export function playoutKeyAction(event: {
   ctrlKey?: boolean;
   altKey?: boolean;
   metaKey?: boolean;
+  transportEnabled?: boolean;
 }): PlayoutKeyAction | null {
   if (event.targetIsEditable || event.ctrlKey || event.altKey || event.metaKey) return null;
+  if (event.transportEnabled) {
+    const action = transportKeyAction(event.key);
+    if (action !== null) return action;
+  }
   switch (event.key) {
     case " ":
     case "Spacebar":

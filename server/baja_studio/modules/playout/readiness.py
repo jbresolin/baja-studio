@@ -17,7 +17,7 @@ from baja_studio.core.readiness import CheckOutcome, ReadinessCheck, failed, pas
 from baja_studio.core.system_probes import disk_space_outcome, writable_problem
 from baja_studio.modules.playout.controller import PlayoutController
 from baja_studio.playout.config import OBS_NOT_CONFIGURED, PlayoutSettings
-from baja_studio.playout.tools import resolve_tools
+from baja_studio.playout.tools import ResolvedTools
 
 PLAYOUT_SETTINGS_LINK = "/playout/settings"
 PLAYOUT_PAGE_LINK = "/playout"
@@ -29,10 +29,12 @@ def playout_checks(
     controller: PlayoutController,
     playout_state: dict[str, Any],
     free_disk_bytes: Callable[[Path], int],
+    tools: ResolvedTools,
 ) -> list[ReadinessCheck]:
     """The checks for the settings as they are now (one disk check per local folder).
 
-    `playout_state` is the module's state subtree, read once when the run starts.
+    `playout_state` is the module's state subtree, read once when the run starts;
+    `tools` come from the same resolver as the prober and the page's banner.
     """
     obs = settings.obs
     checks = [
@@ -71,10 +73,10 @@ def playout_checks(
         ReadinessCheck(
             "tools",
             "ffprobe and ffmpeg are found",
-            lambda: _tools(settings),
+            lambda: _tools(tools),
             fix=(
                 "Run the Baja Studio installer again (it brings both), or put the full paths "
-                "of both in Playout → Settings → Tools, or leave them as ffprobe and ffmpeg."
+                "of both in Playout → Settings → Tools, or leave them blank for the bundled copies."
             ),
             link=PLAYOUT_SETTINGS_LINK,
         ),
@@ -182,8 +184,7 @@ def _clip_root(settings: PlayoutSettings) -> CheckOutcome:
     return failed(problem) if problem else passed(root.path)
 
 
-def _tools(settings: PlayoutSettings) -> CheckOutcome:
-    resolved = resolve_tools(settings.tools)
+def _tools(resolved: ResolvedTools) -> CheckOutcome:
     missing = [tool.command for tool in resolved if tool.found_at is None]
     if missing:
         return failed(f"not found: {', '.join(missing)}")

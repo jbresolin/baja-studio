@@ -6,7 +6,9 @@ behaviour, session persistence, the aired log and the on-air webhook.
 
 WP5b added playlists, the "Return to" control, on-air actions (commands to
 other modules when a clip starts or ends, sent through `dispatch`, the
-registry's command path) and the hosts view.
+registry's command path) and the hosts view. WP5c added transport for the
+clip on air, slow motion, and "Rescan library"; ffprobe/ffmpeg are found by
+one resolver (`playout/tools.py`) for the prober, the banner and readiness.
 
 Workers: `obs` (connection, events, 5 Hz position), `scanner` (folders
 every 5 s), `probe` (ffprobe/thumbnails), `sync` (orchestrator manifest),
@@ -18,7 +20,6 @@ and queue work regardless.
 Readiness checks: `readiness.py`.
 """
 
-import shutil
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
@@ -38,7 +39,7 @@ from baja_studio.modules.playout.airing import AiringBookkeeper
 from baja_studio.modules.playout.commands import run_command
 from baja_studio.modules.playout.controller import PlayoutController
 from baja_studio.modules.playout.hosts_cards import playout_hosts_cards
-from baja_studio.modules.playout.library_workers import LibraryWorkers, ProberFactory
+from baja_studio.modules.playout.library_workers import LibraryWorkers
 from baja_studio.modules.playout.obs_worker import ObsConnectionWorker
 from baja_studio.modules.playout.publisher import PlayoutPublisher, initial_playout_state
 from baja_studio.modules.playout.readiness import playout_checks
@@ -48,17 +49,18 @@ from baja_studio.playout.hooks import WebhookNotifier
 from baja_studio.playout.library import LibraryStore
 from baja_studio.playout.on_air import Dispatch, OnAirActionRunner
 from baja_studio.playout.playlists import PlaylistStore
-from baja_studio.playout.probe import MediaProber, Prober, tools_status
+from baja_studio.playout.probe import MediaProber, Prober
 from baja_studio.playout.queue_store import QueueStore
 from baja_studio.playout.schema import create_playout_tables
 from baja_studio.playout.switcher import ProgramSwitcher
-from baja_studio.playout.tools import resolve_tools
+from baja_studio.playout.tools import ResolvedTools, ToolResolver, resolve_tools, tools_status
+
+ProberFactory = Callable[[ResolvedTools], Prober]
 
 
-def real_prober(tools: ToolsSettings) -> Prober:
-    """ffprobe/ffmpeg: the installer's copies, or the configured paths (`playout/tools.py`)."""
-    ffprobe, ffmpeg = resolve_tools(tools)
-    return MediaProber(ffprobe.command, ffmpeg.command)
+def real_prober(tools: ResolvedTools) -> Prober:
+    """The real ffprobe/ffmpeg, as the resolver found them."""
+    return MediaProber(tools.ffprobe.command, tools.ffmpeg.command)
 
 
 class PlayoutModule(Module):
@@ -76,16 +78,17 @@ class PlayoutModule(Module):
         hook_transport: httpx2.BaseTransport | None = None,
         free_disk_bytes: Callable[[Path], int] = real_free_disk_bytes,
         dispatch: Dispatch | None = None,
-        find_tool: Callable[[str], str | None] = shutil.which,
+        tool_resolver: ToolResolver = resolve_tools,
     ) -> None:
         """The defaults are the real network, tools and disks; tests pass fakes.
 
         `dispatch` is the registry's `dispatch_command`, for on-air actions.
+        `tool_resolver` finds ffprobe/ffmpeg for every consumer.
         """
         super().__init__()
         self._free_disk_bytes = free_disk_bytes
         self._dispatch = dispatch
-        self._find_tool = find_tool
+        self._resolve_tools = tool_resolver
         self._actions: OnAirActionRunner | None = None
         self._obs_client: ObsWebsocketClient | None = None
         self._obs_transport_factory = obs_transport_factory
@@ -170,7 +173,7 @@ class PlayoutModule(Module):
             library,
             publisher,
             context.data_directory,
-            self._prober_factory,
+            lambda: self._prober_factory(self.resolved_tools()),
             self._orchestrator_transport,
             context.logger,
             wake_probe=lambda: context.supervisor.wake(self.name, "probe"),
@@ -198,8 +201,14 @@ class PlayoutModule(Module):
         ]
 
     def handle_command(self, command: str, args: dict[str, Any], source: str) -> Any:
-        """See `modules/playout/commands.py` for the list."""
+        """See `modules/playout/commands.py` for the list; `rescan_library` is here."""
+        if command == "rescan_library":
+            return self._rescan_library()
         return run_command(self.controller, self.context.settings, self.name, command, args, source)
+
+    def resolved_tools(self) -> ResolvedTools:
+        """ffprobe and ffmpeg as the one resolver finds them for the current settings."""
+        return self._resolve_tools(self.settings().tools)
 
     def readiness_checks(self) -> list[ReadinessCheck]:
         """OBS, its scenes, folders, tools, orchestrator and queue (see `readiness.py`)."""
@@ -210,6 +219,7 @@ class PlayoutModule(Module):
             self.controller,
             self.context.state.get(self.name) or {},
             self._free_disk_bytes,
+            self.resolved_tools(),
         )
 
     def hosts_cards(self) -> list[HostsCard]:
@@ -230,17 +240,31 @@ class PlayoutModule(Module):
             # A fixed ffprobe path deserves another try at the files that failed.
             controller.library.clear_probe_errors()
             self._last_tools = values.tools
-            self._publish_tools(controller.publisher)
+        # Looked up again on every save, not only a tools edit: the bundled copies
+        # may have appeared since (an installer run), and a lookup is cheap.
+        self._publish_tools(controller.publisher)
         if self._obs_worker is not None:
             self._obs_worker.wake()
         for worker_name in ("scanner", "probe", "sync"):
             self.context.supervisor.wake(self.name, worker_name)
 
+    def _rescan_library(self) -> dict[str, Any]:
+        """Measure every file again: forget durations and thumbnails, scan, probe.
+
+        The tools are looked up again too, so a bundled copy that appeared
+        since (an installer run) clears the banner.
+        """
+        if self._controller is None or self._library_workers is None:
+            raise CommandError("playout is not running")
+        self._publish_tools(self._controller.publisher)
+        with self._controller.lock:
+            pending = self._library_workers.rescan()
+        self.context.supervisor.wake(self.name, "scanner")
+        self.context.logger.info("library rescan: %d files to measure", pending)
+        return {"files": pending}
+
     def _publish_tools(self, publisher: PlayoutPublisher) -> None:
-        tools = self.settings().tools
-        publisher.publish_tools(
-            tools_status(tools.ffprobe_path, tools.ffmpeg_path, self._find_tool)
-        )
+        publisher.publish_tools(tools_status(self.resolved_tools()))
 
     def _publish_export_marker(self, publisher: PlayoutPublisher) -> None:
         marker = self.settings().export.stream_start_marker

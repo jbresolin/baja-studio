@@ -1774,3 +1774,112 @@ button.small {
   background: var(--degraded);
   color: #000;
 }
+
+/* WP5c: media controls under the strip, replay speed, settings gear, playlist editing. */
+
+.media-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.3rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+/* Unlocked, the bar acts on air: say so in red. */
+.media-controls.live {
+  border-color: var(--offline);
+  background: color-mix(in srgb, var(--offline) 10%, var(--surface));
+}
+
+.live-tag {
+  background: var(--offline);
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.75rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+}
+
+/* While held, the unlock button fills from the left over the hold time. */
+.hold-to-unlock {
+  background: linear-gradient(to right, var(--degraded) 50%, var(--surface-raised) 50%) right / 200%
+    100% no-repeat;
+}
+
+.hold-to-unlock.holding {
+  background-position: left;
+  transition: background-position var(--hold-ms, 2000ms) linear;
+  color: #000;
+}
+
+.scrub {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  flex: 1 1 14rem;
+  min-width: 10rem;
+}
+
+.scrub input[type="range"] {
+  flex: 1;
+}
+
+.scrub-position {
+  font-variant-numeric: tabular-nums;
+  min-width: 5.5rem;
+}
+
+.speed-buttons {
+  display: inline-flex;
+  gap: 0.2rem;
+}
+
+.speed-buttons button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.replay-speed {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-top: 0.4rem;
+}
+
+.badge-slow {
+  background: var(--accent);
+  color: #000;
+}
+
+.playout-status-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.playout-status-row .playout-status {
+  flex: 1;
+}
+
+.settings-gear {
+  font-size: 1.4rem;
+  text-decoration: none;
+}
+
+.playlist-clips {
+  margin: 0.3rem 0;
+}
+
+.playlist-add input[type="search"] {
+  width: 100%;
+}
+
+.rescan {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.3rem;
+}

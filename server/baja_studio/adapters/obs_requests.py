@@ -82,6 +82,10 @@ class ObsRequestsMixin:
             {"inputName": input_name, "inputSettings": settings, "overlay": overlay},
         )
 
+    def set_input_mute(self, input_name: str, muted: bool) -> None:
+        """Mute or unmute an input's audio (slow-motion replays are muted)."""
+        self.request("SetInputMute", {"inputName": input_name, "inputMuted": muted})
+
     def trigger_media_input_action(self, input_name: str, action: str) -> None:
         """Play, pause, stop or restart a media source (`MediaAction`)."""
         self.request("TriggerMediaInputAction", {"inputName": input_name, "mediaAction": action})

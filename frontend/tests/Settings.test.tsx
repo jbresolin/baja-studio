@@ -258,6 +258,77 @@ describe("Settings page, nested models", () => {
   });
 });
 
+describe("Settings page, a module with its own settings page (WP5c)", () => {
+  beforeEach(() => vi.unstubAllGlobals());
+  afterEach(() => vi.unstubAllGlobals());
+
+  const PLAYOUT_VALUES = { enabled: true, tools: { ffprobe_path: "", ffmpeg_path: "" } };
+
+  function showPlayoutSection(onSave: (body: unknown) => FakeResponse) {
+    const requests = fakeServer((method, path, body) => {
+      if (path === "/api/settings") {
+        return { status: 200, body: [{ section: "playout", title: "Playout" }] };
+      }
+      if (path === "/api/settings/playout" && method === "PUT") return onSave(body);
+      if (path === "/api/settings/playout") {
+        return {
+          status: 200,
+          body: { section: "playout", version: 4, updated_at: "", values: PLAYOUT_VALUES },
+        };
+      }
+      return { status: 404, body: {} };
+    });
+    render(
+      <MemoryRouter initialEntries={["/settings/playout"]}>
+        <Routes>
+          <Route path="/settings/:section" element={<Settings />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+    return requests;
+  }
+
+  it("links to the module's page and shows its settings as JSON only, never as fields", async () => {
+    const requests = showPlayoutSection(() => ({ status: 200, body: {} }));
+
+    const json = await screen.findByLabelText("playout settings JSON");
+    expect(JSON.parse((json as HTMLTextAreaElement).value)).toEqual(PLAYOUT_VALUES);
+    expect(screen.getByRole("link", { name: "⚙ Playout setup" })).toHaveAttribute(
+      "href",
+      "/playout/settings",
+    );
+    // No form built from the schema: the fields live on the playout page alone.
+    expect(requests.some((request) => request.path.endsWith("/schema"))).toBe(false);
+    expect(screen.queryByRole("checkbox")).toBeNull();
+  });
+
+  it("saves edited JSON with the version it started from, and refuses text that is not JSON", async () => {
+    const user = userEvent.setup();
+    const saves: unknown[] = [];
+    showPlayoutSection((body) => {
+      saves.push(body);
+      return {
+        status: 200,
+        body: { section: "playout", version: 5, updated_at: "", values: body },
+      };
+    });
+    const json = await screen.findByLabelText("playout settings JSON");
+
+    await user.clear(json);
+    await user.type(json, "not json");
+    await user.click(screen.getByRole("button", { name: "Save JSON" }));
+    expect(screen.getByTestId("json-errors")).toHaveTextContent("Not valid JSON, nothing saved");
+    expect(saves).toEqual([]);
+
+    await user.clear(json);
+    await user.paste('{"enabled": false}');
+    await user.click(screen.getByRole("button", { name: "Save JSON" }));
+
+    await waitFor(() => expect(saves).toEqual([{ version: 4, values: { enabled: false } }]));
+    expect(await screen.findByText("Saved.")).toBeInTheDocument();
+  });
+});
+
 describe("fieldErrorsBySection", () => {
   it("shows a problem deep inside a section under that section, with the rest of its path", () => {
     // Regression, bench 2026-11-08: the error for sources.local_folders.0 was

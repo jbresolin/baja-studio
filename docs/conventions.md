@@ -78,6 +78,13 @@ reading its tests.
   orders, hides and pushes them. Never add a module's data to the hosts
   page directly. A placeholder id (`standings`, `team_facts`, `schedule`)
   is taken over by declaring a real card with that id.
+- **One place per setting.** A module with its own settings page
+  (`/<module>/settings`) is configured there alone: the page has a
+  permanent entry in the top bar (*<Module> setup*) and a ⚙ link on the
+  module's page, and the generic Settings page shows that section as JSON
+  only, with a link to the page (`MODULE_SETTINGS_PAGES` in
+  `frontend/src/pages/Settings.tsx`). Never offer the same field on two
+  pages.
 - Settings are only what an operator configures. State that changes during
   the show (queues, link states, played flags) lives in the module's own
   tables, so the settings export never carries it. When a settings change
@@ -231,8 +238,11 @@ reading its tests.
   hard-coded path. Run from a checkout there is no service, and
   `NotInstalledServiceControl` says so.
 - A program the installer bundles for a module (ffmpeg) is found at use time
-  from `InstallLayout` while the setting keeps its default bare name; never
-  write install paths into settings as defaults (`playout/tools.py`).
+  from `InstallLayout` while the setting is blank (or the bare name); never
+  write install paths into settings as defaults (`playout/tools.py`). One
+  resolver per program: everything that runs it or reports on it (the
+  worker, the page's banner, readiness) asks the same function, injected
+  into the module, so they cannot disagree.
 - Anything on the desktop (the tray icon, `tray/`) is only a client of the
   service: it reads `/api/health`, runs commands through `/api/commands`,
   keeps no state, never imports `baja_studio`, and nothing breaks when it is

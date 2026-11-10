@@ -317,7 +317,7 @@ def main(argv: list[str] | None = None) -> None:
             from baja_studio.playout.probe import MediaProber, ProbeError
 
             try:
-                return MediaProber(options.ffprobe, "ffmpeg").probe_duration(file)
+                return MediaProber(options.ffprobe, "ffmpeg").probe(file).duration_s
             except ProbeError:
                 logger.warning("could not probe %s; using %.1f s", file, fixed_duration)
         return fixed_duration

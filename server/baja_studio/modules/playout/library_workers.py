@@ -1,14 +1,17 @@
 """Playout's library workers: folder scanner, ffprobe/thumbnails, orchestrator sync.
 
 - `scanner` walks the local folders every 5 s and updates the library.
-- `probe` gives new files a duration and a thumbnail (cached in the data
-  folder), one at a time; the scanner wakes it when files appear.
+- `probe` gives new files a duration, a frame rate and a thumbnail (cached
+  in the data folder), one at a time; the scanner wakes it when files appear.
+  "Rescan library" (`rescan`) forgets all of that and deletes the cached
+  thumbnails, so every file is measured again.
 - `sync` pulls the orchestrator's manifest every `poll_interval_s`. The first
   pull of a run is a full one; later pulls ask only for clips delivered
   since the newest one seen (minus a minute of overlap; merging is idempotent).
   An unreachable orchestrator is `degraded`; the last merged list stays.
 """
 
+import contextlib
 import logging
 from collections.abc import Callable
 from datetime import datetime, timedelta
@@ -20,7 +23,7 @@ import httpx2
 from baja_studio.core.clock import Clock
 from baja_studio.core.worker import HealthState, WorkerContext
 from baja_studio.modules.playout.publisher import PlayoutPublisher
-from baja_studio.playout.config import OrchestratorSettings, PlayoutSettings, ToolsSettings
+from baja_studio.playout.config import OrchestratorSettings, PlayoutSettings
 from baja_studio.playout.library import LibraryStore
 from baja_studio.playout.orchestrator import OrchestratorClient, OrchestratorError
 from baja_studio.playout.probe import ProbeError, Prober, thumbnail_at
@@ -31,7 +34,8 @@ SYNC_IDLE_SECONDS = 2.0
 SYNC_OVERLAP = timedelta(minutes=1)
 THUMBNAIL_FOLDER_NAME = "playout-thumbnails"
 
-ProberFactory = Callable[[ToolsSettings], Prober]
+# Builds the prober for the tools as resolved now (`playout/tools.py`).
+MakeProber = Callable[[], Prober]
 
 
 class LibraryWorkers:
@@ -44,7 +48,7 @@ class LibraryWorkers:
         library: LibraryStore,
         publisher: PlayoutPublisher,
         data_directory: Path,
-        prober_factory: ProberFactory,
+        make_prober: MakeProber,
         orchestrator_transport: httpx2.BaseTransport | None,
         logger: logging.LoggerAdapter[logging.Logger],
         wake_probe: Callable[[], None],
@@ -55,7 +59,7 @@ class LibraryWorkers:
         self._library = library
         self._publisher = publisher
         self._thumbnail_folder = data_directory / THUMBNAIL_FOLDER_NAME
-        self._prober_factory = prober_factory
+        self._make_prober = make_prober
         self._orchestrator_transport = orchestrator_transport
         self._logger = logger
         self._wake_probe = wake_probe
@@ -88,11 +92,29 @@ class LibraryWorkers:
             if not pending:
                 worker.sleep(PROBE_IDLE_SECONDS)
 
+    def rescan(self) -> int:
+        """Forget durations, frame rates, thumbnails and failures, then measure again.
+
+        Cached thumbnails are deleted (a file the page still asks for answers
+        404 until it is made again). Returns how many present files will be
+        measured; the scanner and the prober are woken by the caller.
+        """
+        changed = self._library.forget_probe_results()
+        if self._thumbnail_folder.is_dir():
+            for thumbnail in self._thumbnail_folder.iterdir():
+                # A file the OS still holds open (Windows) is simply made again later.
+                with contextlib.suppress(OSError):
+                    thumbnail.unlink()
+        self._publisher.publish_clips(changed)
+        self._publisher.publish_library_summary()
+        self._wake_probe()
+        return int(self._library.summary()["pending_probe"])
+
     def probe_one(self, clip: dict[str, Any]) -> None:
-        """Duration (required) and thumbnail (best effort) for one clip."""
-        prober = self._prober_factory(self._settings().tools)
+        """Duration (required), frame rate and thumbnail (best effort) for one clip."""
+        prober = self._make_prober()
         try:
-            duration = prober.probe_duration(clip["file_path"])
+            info = prober.probe(clip["file_path"])
         except ProbeError as error:
             self._logger.warning("cannot probe %s: %s", clip["file_path"], error)
             self._library.set_probe_result(clip["id"], None, None, str(error))
@@ -100,12 +122,12 @@ class LibraryWorkers:
             return
         thumbnail = self._thumbnail_folder / f"{clip['id']}-{int(clip['mtime'] or 0)}.jpg"
         try:
-            prober.make_thumbnail(clip["file_path"], thumbnail, thumbnail_at(duration))
+            prober.make_thumbnail(clip["file_path"], thumbnail, thumbnail_at(info.duration_s))
             thumbnail_path: str | None = str(thumbnail)
         except ProbeError as error:
             self._logger.warning("no thumbnail for %s: %s", clip["file_path"], error)
             thumbnail_path = None
-        self._library.set_probe_result(clip["id"], duration, thumbnail_path, None)
+        self._library.set_probe_result(clip["id"], info.duration_s, thumbnail_path, None, info.fps)
         self._publisher.publish_clips([clip["id"]])
 
     def run_sync(self, worker: WorkerContext) -> None:

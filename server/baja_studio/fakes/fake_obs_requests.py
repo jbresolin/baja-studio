@@ -44,6 +44,7 @@ class FakeInput:
     kind: str
     settings: dict[str, Any] = field(default_factory=dict)
     media: SimulatedMedia = field(default_factory=SimulatedMedia)
+    muted: bool = False
 
 
 class FakeObsRequests:
@@ -112,15 +113,28 @@ class FakeObsRequests:
                 RequestStatus.MISSING_REQUEST_FIELD, "inputSettings missing"
             )
         old_file = source.settings.get("local_file", "")
+        old_speed = source.settings.get("speed_percent", 100)
         source.settings = (
             {**source.settings, **new_settings} if data.get("overlay", True) else dict(new_settings)
         )
         new_file = str(source.settings.get("local_file", ""))
+        new_speed = source.settings.get("speed_percent", 100)
+        source.media.speed = float(new_speed) / 100
         if new_file != old_file:
             # It opens now and starts on the next tick (MediaInputPlaybackStarted then).
             source.media.load(new_file, self.duration_of(new_file), self.now())
             source.media.stuck = new_file in self.stuck_files
+        elif new_speed != old_speed:
+            # A new speed reopens the file from the top (assumed; bench step 6 checks OBS 32).
+            source.media.reload(self.now())
         return {}
+
+    def _request_SetInputMute(self, data: dict[str, Any]) -> dict[str, Any]:  # noqa: N802
+        self._input(data).muted = bool(data.get("inputMuted"))
+        return {}
+
+    def _request_GetInputMute(self, data: dict[str, Any]) -> dict[str, Any]:  # noqa: N802
+        return {"inputMuted": self._input(data).muted}
 
     def _request_TriggerMediaInputAction(self, data: dict[str, Any]) -> dict[str, Any]:  # noqa: N802
         media, now = self._input(data).media, self.now()

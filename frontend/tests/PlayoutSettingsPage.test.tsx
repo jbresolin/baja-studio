@@ -14,7 +14,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { StateSocketContext } from "../src/lib/stateHooks";
 import { StateSocket } from "../src/lib/stateSocket";
 import { PlayoutSettingsPage } from "../src/pages/PlayoutSettingsPage";
-import { fakeSocketFactory } from "./fakeSocket";
+import { fakeSocketFactory, type FakeSocket } from "./fakeSocket";
 import { playoutState } from "./playoutFixtures";
 
 function playoutSettings() {
@@ -81,11 +81,15 @@ beforeEach(() => {
 
 afterEach(() => vi.unstubAllGlobals());
 
+// The fake studio on the other end of the state socket (live state, commands).
+let socketServer: FakeSocket;
+
 async function showSettings() {
   const sockets = fakeSocketFactory();
   const client = new StateSocket({ url: "ws://studio/ws", createSocket: sockets.create });
   client.connect();
   const server = sockets.latest();
+  socketServer = server;
   server.open();
   render(
     <StateSocketContext.Provider value={client}>
@@ -200,5 +204,91 @@ describe("on air actions and advanced JSON", () => {
 
     expect(screen.getByText(/Not valid JSON, nothing applied/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  });
+});
+
+describe("tools, speed changes and rescanning (WP5c)", () => {
+  it("says blank means the bundled copy, and which copy is in use", async () => {
+    await showSettings();
+    act(() =>
+      socketServer.receive({
+        type: "patch",
+        seq: 2,
+        module: "playout",
+        path: "tools",
+        value: {
+          ffprobe: "C:\\Baja Studio\\ffmpeg\\ffprobe.exe",
+          ffmpeg: null,
+          sources: { ffprobe: "bundled", ffmpeg: "PATH" },
+          problem: "thumbnails unavailable — ffmpeg not found",
+        },
+      }),
+    );
+
+    expect(screen.getAllByText(/Leave blank for the bundled copy/)).toHaveLength(2);
+    expect(screen.getByTestId("tool-found-ffprobe")).toHaveTextContent(
+      "In use: bundled (C:\\Baja Studio\\ffmpeg\\ffprobe.exe)",
+    );
+    expect(screen.getByTestId("tool-found-ffmpeg")).toHaveTextContent("In use: not found");
+  });
+
+  it("saves how a speed change on air is made", async () => {
+    await showSettings();
+
+    fireEvent.change(screen.getByLabelText("Speed change on air"), {
+      target: { value: "reload" },
+    });
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    });
+
+    expect(saves[0]!.values.obs).toMatchObject({ live_speed_change: "reload" });
+  });
+
+  it("rescans the library and shows the files measured so far", async () => {
+    await showSettings();
+    let seq = 1;
+    const library = (pending: number) =>
+      act(() =>
+        socketServer.receive({
+          type: "patch",
+          seq: ++seq,
+          module: "playout",
+          path: "library_summary",
+          value: {
+            total: 5,
+            missing: 1,
+            pending_probe: pending,
+            unplayed: 0,
+            unmatched: 0,
+            per_group: {},
+          },
+        }),
+      );
+
+    fireEvent.click(screen.getByRole("button", { name: "Rescan library" }));
+    const command = socketServer.sent[socketServer.sent.length - 1] as {
+      command: string;
+      request_id: string;
+    };
+    expect(command.command).toBe("rescan_library");
+    await act(async () => {
+      socketServer.receive({
+        type: "reply",
+        request_id: command.request_id,
+        ok: true,
+        result: { files: 4 },
+      });
+    });
+    library(3);
+
+    // Four present files (five, one missing); one measured so far.
+    expect(screen.getByTestId("rescan-progress")).toHaveTextContent("1 of 4 files measured");
+    expect(screen.getByRole("button", { name: "Rescan library" })).toBeDisabled();
+
+    library(0);
+    expect(screen.getByTestId("rescan-progress")).toHaveTextContent(
+      "Rescan done: 4 files measured.",
+    );
   });
 });

@@ -190,3 +190,29 @@ def test_later_pulls_ask_only_for_clips_delivered_since_the_newest_one(
     playout.soon(lambda: len(playout.orchestrator_queries) >= 2, within_seconds=3)
     assert "since" not in playout.orchestrator_queries[0]
     assert playout.orchestrator_queries[1]["since"].startswith("2026-11-01T11:59:00")
+
+
+def test_a_labelled_folder_inside_the_clip_root_is_its_own_group_not_unmatched(
+    playout: PlayoutStudio,
+) -> None:
+    # WP5c §1 (v0.2.0 bench): the clip root is the receiver root, and a
+    # folder inside it, "patrocinadores", is configured on its own with the
+    # label "Patrocinadores". Its files belong to that group.
+    playout.add_file("old-output.mp4")
+    playout.add_file("patrocinadores/logo.mp4")
+    playout.configure(
+        sources={
+            "local_folders": [
+                {"path": str(playout.clips_folder), "receiver_root": True},
+                {"path": str(playout.clips_folder / "patrocinadores"), "label": "Patrocinadores"},
+            ]
+        }
+    )
+
+    # Paths are relative to the folder that claimed the file.
+    logo = playout.wait_for_clip("logo.mp4")
+    old = playout.wait_for_clip("old-output.mp4")
+
+    assert (logo["kind"], logo["group"]) == ("manual", "Patrocinadores")
+    # A file of the root itself, with no manifest entry, is still unmatched.
+    assert (old["kind"], old["group"]) == ("unmatched", "Unmatched")

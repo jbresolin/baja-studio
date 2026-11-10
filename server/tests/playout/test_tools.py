@@ -5,13 +5,14 @@ tests build that folder in a temporary directory and replace PATH lookups
 with a small dictionary, so nothing depends on what this computer has.
 """
 
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
 
 from baja_studio.core.system_services import INSTALL_DIRECTORY_ENVIRONMENT_VARIABLE, InstallLayout
 from baja_studio.playout.config import ToolsSettings
-from baja_studio.playout.tools import ToolSource, resolve_tool, resolve_tools
+from baja_studio.playout.tools import ToolSource, resolve_tool, resolve_tools, tools_status
 
 # What `shutil.which` would answer on a PC with ffmpeg installed system-wide.
 ON_PATH = {"ffprobe": "C:\\ffmpeg\\bin\\ffprobe.exe", "ffmpeg": "C:\\ffmpeg\\bin\\ffmpeg.exe"}
@@ -94,3 +95,64 @@ def test_both_tools_use_the_install_folder_the_installer_announced(
 
     assert ffprobe.source == ffmpeg.source == ToolSource.BUNDLED
     assert ffmpeg.describe() == f"ffmpeg: bundled ({tmp_path / 'ffmpeg' / 'ffmpeg.exe'})"
+
+
+@pytest.mark.parametrize("configured", ["", "   ", "ffprobe"])
+def test_a_blank_setting_or_the_bare_name_means_the_bundled_copy(
+    tmp_path: Path, configured: str
+) -> None:
+    # The settings page says "leave blank for the bundled copy"; installs from
+    # before WP5c still hold the bare name. Both mean the same thing.
+    layout = installed_with_ffmpeg(tmp_path)
+
+    tool = resolve_tool("ffprobe", configured, layout, which_nothing)
+
+    assert tool.source == ToolSource.BUNDLED
+    assert tool.found_at == str(tmp_path / "ffmpeg" / "ffprobe.exe")
+
+
+def test_a_blank_setting_without_an_install_is_looked_up_on_path() -> None:
+    tool = resolve_tool("ffmpeg", "", None, which_on_path)
+
+    assert (tool.source, tool.command, tool.found_at) == (
+        ToolSource.PATH,
+        "ffmpeg",
+        ON_PATH["ffmpeg"],
+    )
+
+
+def test_bare_names_with_the_bundled_copies_installed_show_no_banner(tmp_path: Path) -> None:
+    # Regression, v0.2.0 bench (2026-11-09): the page's banner said "ffprobe
+    # and ffmpeg not found" while the scanner and the readiness check used the
+    # bundled copies, because the banner asked PATH alone. The banner is now
+    # built from the same resolver, so nothing on PATH is fine.
+    layout = installed_with_ffmpeg(tmp_path)
+
+    status = tools_status(resolve_tools(ToolsSettings(), layout, which_nothing))
+
+    assert status["problem"] is None
+    assert status["ffprobe"] == str(tmp_path / "ffmpeg" / "ffprobe.exe")
+    assert status["sources"] == {"ffprobe": "bundled", "ffmpeg": "bundled"}
+
+
+def only_on_path(name: str) -> Callable[[str], str | None]:
+    """A PATH lookup that finds `name` and nothing else."""
+    return lambda command: f"/usr/bin/{command}" if command == name else None
+
+
+def test_without_ffprobe_the_banner_says_durations_and_thumbnails_are_unavailable() -> None:
+    # Regression, bench 2026-11-09: ffprobe was not on PATH and the page showed
+    # dashes and grey boxes with no explanation.
+    status = tools_status(resolve_tools(ToolsSettings(), None, only_on_path("ffmpeg")))
+
+    assert status["problem"] == (
+        "durations and thumbnails unavailable — ffprobe not found; "
+        "run the installer again, or set the path in Playout → Settings"
+    )
+
+
+def test_without_ffmpeg_only_thumbnails_are_unavailable() -> None:
+    status = tools_status(resolve_tools(ToolsSettings(), None, only_on_path("ffprobe")))
+
+    assert status["problem"] is not None
+    assert status["problem"].startswith("thumbnails unavailable — ffmpeg not found")

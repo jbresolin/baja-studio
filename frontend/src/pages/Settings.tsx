@@ -4,12 +4,18 @@
  *
  * Saving sends the version the edit started from; if someone else saved in
  * the meantime the server refuses (409) and we say so instead of overwriting.
+ *
+ * A module with its own settings page (`MODULE_SETTINGS_PAGES`) is not
+ * edited field by field here: its section shows a link to that page and the
+ * whole section as JSON (for copying, or a field the page lacks), so no
+ * field is offered in two places (WP5c §1, docs/conventions.md).
  */
 
 import { useEffect, useState } from "react";
-import { NavLink, useNavigate, useParams } from "react-router-dom";
+import { Link, NavLink, useNavigate, useParams } from "react-router-dom";
 
 import { SchemaForm } from "../components/SchemaForm";
+import { SettingsJsonEditor } from "../components/SettingsJsonEditor";
 import {
   getSettings,
   getSettingsSchema,
@@ -26,6 +32,11 @@ import { SettingsTransfer } from "./SettingsTransfer";
 
 // The export/import page lives beside the sections, under a name no module uses.
 const TRANSFER_SECTION = "transfer";
+
+/** Modules configured on their own page: here they get that link and their JSON only. */
+export const MODULE_SETTINGS_PAGES: Record<string, { path: string; title: string }> = {
+  playout: { path: "/playout/settings", title: "Playout setup" },
+};
 
 type Notice = { kind: "saved" | "error" | "conflict"; text: string } | null;
 
@@ -61,10 +72,26 @@ export function Settings() {
         {loadError && <div className="notice notice-error">{loadError}</div>}
         {section === TRANSFER_SECTION ? (
           <SettingsTransfer />
+        ) : section && MODULE_SETTINGS_PAGES[section] ? (
+          <ModulePageSection key={section} section={section} />
         ) : (
           section && <SectionEditor key={section} section={section} />
         )}
       </div>
+    </div>
+  );
+}
+
+/** A module with its own settings page: the link to it, and the section as JSON. */
+function ModulePageSection({ section }: { section: string }) {
+  const page = MODULE_SETTINGS_PAGES[section]!;
+  return (
+    <div>
+      <p className="notice">
+        These settings are edited on <Link to={page.path}>⚙ {page.title}</Link>. Below is the whole
+        section as JSON, for copying or for a value that page does not show.
+      </p>
+      <SettingsJsonEditor section={section} />
     </div>
   );
 }
