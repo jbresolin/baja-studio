@@ -5,11 +5,13 @@ hand-written worker functions and the fake clock, so restarts and backoff
 delays can be checked without waiting in real time.
 """
 
+import logging
 import threading
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 
 import pytest
 
+from baja_studio.core.logging import LogHub
 from baja_studio.core.supervisor import (
     DeviceOfflineError,
     Health,
@@ -428,3 +430,181 @@ def test_a_health_summary_decides_the_module_health_from_every_worker(
     )
     # The listeners (the home page) heard the summarised health, not "offline".
     assert HealthState.OFFLINE not in recorder.states_of("demo")
+
+
+# --- repeated identical failures are logged once (WP10) -------------------------
+
+SUPERVISOR_LOGGER = "baja_studio.core.supervisor"
+
+
+def records_at(caplog: pytest.LogCaptureFixture, level: int) -> list[str]:
+    """The supervisor's messages logged at exactly `level`."""
+    return [
+        record.getMessage()
+        for record in caplog.records
+        if record.name == SUPERVISOR_LOGGER and record.levelno == level
+    ]
+
+
+def backing_off_after(runs: list[int], run: int, fake_clock: FakeClock) -> Callable[[], bool]:
+    """True once run number `run` has failed and the supervisor waits to restart it."""
+    return lambda: len(runs) == run and fake_clock.sleeping_count == 1
+
+
+def fail_n_times(
+    supervisor: Supervisor,
+    fake_clock: FakeClock,
+    failures: int,
+    error_for_run: Callable[[int], Exception],
+) -> list[int]:
+    """Run a worker that fails `failures` times, then stays up; returns its runs.
+
+    `error_for_run(n)` is the error raised on run n (1-based). Fake time is
+    moved past each backoff wait (30 s covers the longest) once the worker is
+    in it, so the next run starts.
+    """
+    runs: list[int] = []
+
+    def flaky(worker: WorkerContext) -> None:
+        runs.append(len(runs) + 1)
+        if len(runs) <= failures:
+            raise error_for_run(len(runs))
+        sleep_until_stopped(worker)
+
+    supervisor.register_module("demo")
+    supervisor.start_module("demo", [WorkerSpec("device", flaky)])
+    for run in range(1, failures + 1):
+        # Wait until run `run` failed and the supervisor is in its backoff wait.
+        eventually(backing_off_after(runs, run, fake_clock))
+        fake_clock.advance(30)
+    eventually(lambda: len(runs) == failures + 1)
+    return runs
+
+
+def test_fifty_identical_failures_log_one_warning(
+    supervisor: Supervisor, fake_clock: FakeClock, caplog: pytest.LogCaptureFixture
+) -> None:
+    # A dev PC without the gateway: the worker fails the same way 50 times.
+    # caplog (a pytest fixture) collects log records; DEBUG captures everything.
+    caplog.set_level(logging.DEBUG, logger=SUPERVISOR_LOGGER)
+
+    fail_n_times(supervisor, fake_clock, 50, lambda run: DeviceOfflineError("no answer from Caddy"))
+
+    # One warning for the first failure, nothing more at WARNING or above...
+    assert records_at(caplog, logging.WARNING) == ["device offline: no answer from Caddy"]
+    assert records_at(caplog, logging.ERROR) == []
+    # ...and only the first "restarting" line at INFO.
+    assert [m for m in records_at(caplog, logging.INFO) if m.startswith("restarting")] == [
+        "restarting worker in 1 s"
+    ]
+    # The other 49 are at DEBUG, with a running count.
+    repeats = [m for m in records_at(caplog, logging.DEBUG) if "again" in m]
+    assert len(repeats) == 49
+    assert repeats[0] == "device offline again (2 in a row): no answer from Caddy"
+    assert repeats[-1] == "device offline again (50 in a row): no answer from Caddy"
+
+
+def test_the_health_still_follows_every_repeated_failure(
+    supervisor: Supervisor, fake_clock: FakeClock, recorder: HealthRecorder
+) -> None:
+    # Logging less must not hide anything from the health: still offline.
+    fail_n_times(supervisor, fake_clock, 5, lambda run: DeviceOfflineError("COM3 not found"))
+
+    assert supervisor.module_health("demo") == Health(HealthState.OFFLINE, "COM3 not found")
+
+
+def test_a_different_error_is_logged_again(
+    supervisor: Supervisor, fake_clock: FakeClock, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.DEBUG, logger=SUPERVISOR_LOGGER)
+
+    # Runs 1-3: cable unplugged. Runs 4-6: the port is there but busy.
+    def error_for_run(run: int) -> Exception:
+        return DeviceOfflineError("COM3 not found" if run <= 3 else "COM3 busy")
+
+    fail_n_times(supervisor, fake_clock, 6, error_for_run)
+
+    assert records_at(caplog, logging.WARNING) == [
+        "device offline: COM3 not found",
+        "device offline: COM3 busy",
+    ]
+
+
+def test_the_same_class_with_a_new_message_is_a_different_error(
+    supervisor: Supervisor, fake_clock: FakeClock, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Unexpected exceptions (bugs) are logged at ERROR with the traceback, once
+    # per distinct message: here two messages, two error lines.
+    caplog.set_level(logging.DEBUG, logger=SUPERVISOR_LOGGER)
+
+    fail_n_times(supervisor, fake_clock, 4, lambda run: ValueError(f"bad frame {run // 3}"))
+
+    errors = [r for r in caplog.records if r.levelno == logging.ERROR]
+    assert [r.getMessage() for r in errors] == ["worker failed", "worker failed"]
+    assert all(r.exc_info is not None for r in errors)
+    assert "bad frame 0" in str(errors[0].exc_info[1])  # type: ignore[index]
+    assert "bad frame 1" in str(errors[1].exc_info[1])  # type: ignore[index]
+
+
+def test_recovery_is_logged_once_with_the_number_of_failures(
+    supervisor: Supervisor, fake_clock: FakeClock, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.DEBUG, logger=SUPERVISOR_LOGGER)
+    fail_n_times(supervisor, fake_clock, 7, lambda run: RuntimeError("socket closed"))
+
+    # The 8th run stays up; after ten stable seconds the worker counts as recovered.
+    eventually(lambda: fake_clock.sleeping_count == 1)
+    fake_clock.advance(10)
+
+    eventually(lambda: "recovered after 7 failures" in records_at(caplog, logging.INFO))
+    assert supervisor.module_health("demo").state == HealthState.OK
+
+
+def test_after_recovery_the_same_error_is_news_again(
+    supervisor: Supervisor, fake_clock: FakeClock, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The device answers between two outages (mark_online), so the second
+    # outage, though worded the same, is warned about again.
+    caplog.set_level(logging.DEBUG, logger=SUPERVISOR_LOGGER)
+    runs: list[int] = []
+
+    def outage_online_outage(worker: WorkerContext) -> None:
+        runs.append(len(runs) + 1)
+        if len(runs) == 2:
+            worker.mark_online()
+        if len(runs) <= 3:
+            raise DeviceOfflineError("XR18 not answering")
+        sleep_until_stopped(worker)
+
+    supervisor.register_module("demo")
+    supervisor.start_module("demo", [WorkerSpec("mixer", outage_online_outage)])
+    for run in (1, 2, 3):
+        eventually(backing_off_after(runs, run, fake_clock))
+        fake_clock.advance(30)
+    eventually(lambda: len(runs) == 4)
+
+    assert records_at(caplog, logging.WARNING) == ["device offline: XR18 not answering"] * 2
+    assert "device back online: recovered after 1 failure" in records_at(caplog, logging.INFO)
+
+
+def test_the_live_log_stream_shows_the_repeated_failure_once(
+    supervisor: Supervisor, fake_clock: FakeClock
+) -> None:
+    # The Logs page streams what the LogHub receives. With the service's
+    # usual INFO level, the repeats (DEBUG) never reach it.
+    hub = LogHub()
+    studio_logger = logging.getLogger("baja_studio")
+    previous_level = studio_logger.level
+    studio_logger.setLevel(logging.INFO)
+    studio_logger.addHandler(hub)
+    try:
+        fail_n_times(supervisor, fake_clock, 10, lambda run: DeviceOfflineError("no gateway"))
+    finally:
+        studio_logger.removeHandler(hub)
+        studio_logger.setLevel(previous_level)
+
+    messages = [(entry["level"], entry["message"]) for entry in hub.recent()]
+    assert messages == [
+        ("WARNING", "device offline: no gateway"),
+        ("INFO", "restarting worker in 1 s"),
+    ]

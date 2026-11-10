@@ -34,6 +34,12 @@ reading its tests.
   device use `starts_offline=True` and call `worker.mark_online()` once the
   device answers. Never catch-and-ignore errors to look healthy; let the
   supervisor see them.
+- **Repeated identical failures log once.** The supervisor logs a worker's
+  failure once at its level (WARNING offline, ERROR with traceback for a
+  bug), then the same error class and message again at DEBUG with a running
+  count, a different error again in full, and "recovered after N failures"
+  at INFO. Code that retries on its own (a reconnect loop) follows the same
+  rule (`core/worker.FailureStreak`); health still follows every failure.
 - Adapters built on native libraries that can crash Python run as child
   processes: write a handler for `childproc_child.run_child(handler)` under
   `baja_studio/childprocs/`, and drive it from a worker with
@@ -83,8 +89,9 @@ reading its tests.
   permanent entry in the top bar (*<Module> setup*) and a ⚙ link on the
   module's page, and the generic Settings page shows that section as JSON
   only, with a link to the page (`MODULE_SETTINGS_PAGES` in
-  `frontend/src/pages/Settings.tsx`). Never offer the same field on two
-  pages.
+  `frontend/src/pages/Settings.tsx`; the generic module page's settings link
+  follows it too). Playout and cameras are listed. Never offer the same
+  field on two pages.
 - Settings are only what an operator configures. State that changes during
   the show (queues, link states, played flags) lives in the module's own
   tables, so the settings export never carries it. When a settings change

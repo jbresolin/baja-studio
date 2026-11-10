@@ -7,6 +7,11 @@ exponential backoff. A worker that then runs for ten seconds without failing
 is considered healthy again. The service process itself never goes down
 because of a worker.
 
+A worker failing again and again with the same error is logged once, at its
+usual level; the repeats go to DEBUG with a running count, a different error
+is logged again, and recovery is logged once with how many failures it ended
+(ADR 0014). Health follows every failure as before.
+
 A worker that looks after several devices and keeps running while some of
 them are away (the agents module, for one) reports its health itself with
 `WorkerContext.report_health` instead of raising.
@@ -27,6 +32,7 @@ from baja_studio.core.worker import (
     HEALTH_SEVERITY,
     MAX_RESTART_DELAY_SECONDS,
     DeviceOfflineError,
+    FailureStreak,
     Health,
     HealthState,
     RestartPolicy,
@@ -67,6 +73,7 @@ class _RunningWorker:
     stability_timer: TimerHandle | None = None
     # True while `health` came from `report_health` rather than from a failure.
     health_was_reported: bool = False
+    failures: FailureStreak = field(default_factory=FailureStreak)
 
 
 HealthListener = Callable[[str, Health], None]
@@ -247,16 +254,10 @@ class Supervisor:
                     break
                 raise RuntimeError("worker returned without being asked to stop")
             except DeviceOfflineError as error:
-                logger.warning(
-                    "device offline: %s",
-                    error,
-                    extra={"studio_module": module, "worker": worker_name},
-                )
+                news = self._log_failure(module, worker, error)
                 self._set_worker_health(module, worker, Health(HealthState.OFFLINE, str(error)))
             except Exception as error:
-                logger.exception(
-                    "worker failed", extra={"studio_module": module, "worker": worker_name}
-                )
+                news = self._log_failure(module, worker, error)
                 message = f"{type(error).__name__}: {error}"
                 self._set_worker_health(module, worker, Health(HealthState.DEGRADED, message))
             finally:
@@ -266,12 +267,30 @@ class Supervisor:
                 break
             with self._lock:
                 delay = worker.policy.next_delay()
-            logger.info(
+            logger.log(
+                logging.INFO if news else logging.DEBUG,
                 "restarting worker in %.0f s",
                 delay,
                 extra={"studio_module": module, "worker": worker_name},
             )
             self._clock.wait(context.stop_requested, delay)
+
+    def _log_failure(self, module: str, worker: _RunningWorker, error: Exception) -> bool:
+        """Log a failure if it is news (see the module docstring); True when it was."""
+        extra = {"studio_module": module, "worker": worker.spec.name}
+        offline = isinstance(error, DeviceOfflineError)
+        with self._lock:
+            news = worker.failures.record(error)
+            in_a_row = worker.failures.same_in_a_row
+        if news and offline:
+            logger.warning("device offline: %s", error, extra=extra)
+        elif news:
+            # An unexpected exception is a bug: ERROR with its traceback, once.
+            logger.error("worker failed", exc_info=error, extra=extra)
+        else:
+            what = "device offline" if offline else f"worker failed: {type(error).__name__}"
+            logger.debug("%s again (%d in a row): %s", what, in_a_row, error, extra=extra)
+        return news
 
     def _begin_run(self, module: str, worker: _RunningWorker) -> None:
         with self._lock:
@@ -287,12 +306,16 @@ class Supervisor:
             if worker.run_number != run_number or worker.context.should_stop:
                 return
             worker.policy.reset()
-            if worker.health_was_reported:
-                return
-        if worker.health.state != HealthState.OK:
+            failures = worker.failures.recover()
+            reported = worker.health_was_reported
+        if failures:
             logger.info(
-                "worker recovered", extra={"studio_module": module, "worker": worker.spec.name}
+                "recovered after %s",
+                _failures(failures),
+                extra={"studio_module": module, "worker": worker.spec.name},
             )
+        if reported:
+            return
         self._set_worker_health(module, worker, Health(HealthState.OK))
 
     def _is_current(self, module: str, worker: _RunningWorker) -> bool:
@@ -301,9 +324,15 @@ class Supervisor:
 
     def _worker_came_online(self, module: str, worker: _RunningWorker) -> None:
         if self._is_current(module, worker) and worker.health.state == HealthState.OFFLINE:
-            logger.info(
-                "device back online", extra={"studio_module": module, "worker": worker.spec.name}
-            )
+            with self._lock:
+                failures = worker.failures.recover()
+            extra = {"studio_module": module, "worker": worker.spec.name}
+            if failures:
+                logger.info(
+                    "device back online: recovered after %s", _failures(failures), extra=extra
+                )
+            else:
+                logger.info("device back online", extra=extra)
             self._set_worker_health(module, worker, Health(HealthState.OK))
 
     def _worker_reported(self, module: str, worker: _RunningWorker, health: Health) -> None:
@@ -330,3 +359,7 @@ class Supervisor:
                 listener(module, health)
             except Exception:
                 logger.exception("health listener failed", extra={"studio_module": module})
+
+
+def _failures(count: int) -> str:
+    return "1 failure" if count == 1 else f"{count} failures"
