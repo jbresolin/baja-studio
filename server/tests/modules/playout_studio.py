@@ -57,7 +57,7 @@ PLAYOUT_WORKERS = module_worker_threads("playout")
 
 @dataclass
 class FakeProber:
-    """Stands in for ffprobe/ffmpeg: every file is CLIP_SECONDS at CLIP_FPS, unless told otherwise."""
+    """Stands in for ffprobe/ffmpeg: every file is CLIP_SECONDS long at CLIP_FPS, unless failing."""
 
     failing: set[str] = field(default_factory=set)
     probed: list[str] = field(default_factory=list)
