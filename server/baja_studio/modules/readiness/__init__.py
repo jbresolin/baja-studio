@@ -13,6 +13,8 @@ State (`state.readiness`):
 - `schedule`: {enabled, interval_minutes, next_run_at}
 
 Command: `run` (returns at once; the run happens on the `runner` worker).
+Route: `GET /api/readiness/last` gives `{last_run}` (null before the first
+run) without starting one; the tray polls it for its badge (WP10).
 A scheduled run (setting, off by default) repeats every N minutes; the page
 toasts the checks in `newly_failed` (green last time, red now). Nothing is
 ever fixed automatically.
@@ -22,6 +24,7 @@ import threading
 from datetime import timedelta
 from typing import Any
 
+from fastapi import APIRouter
 from pydantic import BaseModel, Field
 
 from baja_studio.core.module import CommandError, Module, ModuleContext
@@ -73,6 +76,7 @@ class ReadinessModule(Module):
         self._running = False
         self._run_number = 0
         self._previous: list[CheckResult] = []
+        self._last_run: dict[str, Any] | None = None
         self._next_scheduled_at: float | None = None
         self._subscribed = False
 
@@ -107,6 +111,19 @@ class ReadinessModule(Module):
             self._requested_by = source
         self.context.supervisor.wake(self.name, RUNNER_WORKER)
         return {"started": True}
+
+    def routes(self) -> APIRouter:
+        """`GET /last`: the last finished run, read-only (open like `/api/health`)."""
+        router = APIRouter()
+
+        @router.get("/last")
+        def last_run() -> dict[str, Any]:
+            # Never starts a run: the tray asks every 5 s. Before the first run
+            # the answer is an empty one, not a 404, so callers need no special case.
+            with self._lock:
+                return {"last_run": self._last_run}
+
+        return router
 
     # --- the runner worker -----------------------------------------------------------
 
@@ -172,6 +189,7 @@ class ReadinessModule(Module):
         self.context.update_state("running", False)
         with self._lock:
             self._running = False
+            self._last_run = last_run
         log = self.context.logger.info if summary.ready else self.context.logger.warning
         log("readiness run %d (%s): %s", number, trigger, summary.banner)
         return last_run

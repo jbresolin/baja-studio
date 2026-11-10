@@ -35,6 +35,11 @@ class Labels:
     bundle_building: str
     bundle_ready: str
     bundle_failed: str
+    readiness_at: str
+    warning_one: str
+    warnings_many: str
+    failure_one: str
+    failures_many: str
 
     def modules_with_problems(self, titles: list[str]) -> str:
         """`attention: Playout, Audio`; the count when no title came with the answer."""
@@ -48,6 +53,18 @@ class Labels:
         """For a status the tray does not know (shown red)."""
         return f"{self.status_prefix} {status}"
 
+    def warnings_count(self, count: int) -> str:
+        """`1 warning`, `3 warnings`."""
+        return self.warning_one if count == 1 else self.warnings_many.format(count=count)
+
+    def failures_count(self, count: int) -> str:
+        """`1 failure`, `3 failures`."""
+        return self.failure_one if count == 1 else self.failures_many.format(count=count)
+
+    def readiness_result(self, time: str, counts: list[str]) -> str:
+        """`readiness at 14:32: 2 warnings, 1 failure`, for the tooltip."""
+        return f"{self.readiness_at.format(time=time)}: {', '.join(counts)}"
+
     def version_item(self, version: str | None) -> str:
         """The menu's version line."""
         return f"{self.version} {version or '?'}"
@@ -60,7 +77,7 @@ PT_BR = Labels(
     open_logs="Abrir a pasta de logs",
     diagnostics_bundle="Gerar pacote de diagnóstico",
     version="Versão",
-    quit="Fechar este ícone",
+    quit="Sair",
     all_ok="tudo certo",
     service_unreachable="o serviço não responde",
     problems_one="atenção: {names}",
@@ -71,6 +88,11 @@ PT_BR = Labels(
     bundle_building="Gerando o pacote de diagnóstico…",
     bundle_ready="Pacote salvo em {path}",
     bundle_failed="Não foi possível gerar o pacote: {error}",
+    readiness_at="verificação das {time}",
+    warning_one="1 aviso",
+    warnings_many="{count} avisos",
+    failure_one="1 falha",
+    failures_many="{count} falhas",
 )
 
 EN = Labels(
@@ -91,6 +113,11 @@ EN = Labels(
     bundle_building="Building the diagnostics bundle…",
     bundle_ready="Bundle saved to {path}",
     bundle_failed="The bundle could not be built: {error}",
+    readiness_at="readiness at {time}",
+    warning_one="1 warning",
+    warnings_many="{count} warnings",
+    failure_one="1 failure",
+    failures_many="{count} failures",
 )
 
 

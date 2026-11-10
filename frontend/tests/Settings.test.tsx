@@ -345,3 +345,49 @@ describe("fieldErrorsBySection", () => {
     });
   });
 });
+
+describe("Settings page, the cameras section (WP10)", () => {
+  beforeEach(() => vi.unstubAllGlobals());
+  afterEach(() => vi.unstubAllGlobals());
+
+  const CAMERAS_VALUES = {
+    enabled: true,
+    cameras: [{ id: "smtav", label: "SMTAV", driver: "visca_ip" }],
+    controllers: [],
+    motion: { joystick_deadband: 0.1 },
+  };
+
+  it("shows only the JSON, with a link to Camera setup, and never the camera fields", async () => {
+    const requests = fakeServer((_method, path) => {
+      if (path === "/api/settings") {
+        return { status: 200, body: [{ section: "cameras", title: "Cameras" }] };
+      }
+      if (path === "/api/settings/cameras") {
+        return {
+          status: 200,
+          body: { section: "cameras", version: 9, updated_at: "", values: CAMERAS_VALUES },
+        };
+      }
+      return { status: 404, body: {} };
+    });
+    render(
+      <MemoryRouter initialEntries={["/settings/cameras"]}>
+        <Routes>
+          <Route path="/settings/:section" element={<Settings />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    // The whole section, as the JSON editor shows it...
+    const json = await screen.findByLabelText("cameras settings JSON");
+    expect(JSON.parse((json as HTMLTextAreaElement).value)).toEqual(CAMERAS_VALUES);
+    // ...and the one place where the fields are edited.
+    expect(screen.getByRole("link", { name: "⚙ Camera setup" })).toHaveAttribute(
+      "href",
+      "/cameras/config",
+    );
+    // No schema-built form: the same field is never offered on two pages.
+    expect(requests.some((request) => request.path.endsWith("/schema"))).toBe(false);
+    expect(screen.queryByRole("checkbox")).toBeNull();
+  });
+});

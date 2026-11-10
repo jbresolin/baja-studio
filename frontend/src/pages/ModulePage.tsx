@@ -10,6 +10,7 @@ import { Link, useParams } from "react-router-dom";
 import { HealthBadge } from "../components/HealthBadge";
 import { getCommandLog, type CommandLogEntry } from "../lib/api";
 import { useModuleState, useSendCommand } from "../lib/stateHooks";
+import { MODULE_SETTINGS_PAGES } from "./Settings";
 
 interface QuickCommand {
   label: string;
@@ -50,6 +51,8 @@ export function ModulePage() {
   const [argsText, setArgsText] = useState("{}");
   const [history, setHistory] = useState<CommandLogEntry[]>([]);
   const entry = home?.modules[name];
+  // A module with its own settings page is configured there alone (docs/conventions.md).
+  const settingsPage = MODULE_SETTINGS_PAGES[name];
 
   const refreshHistory = useCallback(() => {
     getCommandLog(name, 10)
@@ -85,7 +88,11 @@ export function ModulePage() {
       <div className="page-header">
         <h1>{entry?.title ?? name}</h1>
         {entry && <HealthBadge state={entry.state} />}
-        <Link to={`/settings/${name}`}>Settings</Link>
+        {settingsPage ? (
+          <Link to={settingsPage.path}>⚙ {settingsPage.title}</Link>
+        ) : (
+          <Link to={`/settings/${name}`}>Settings</Link>
+        )}
       </div>
       {entry?.message && <div className="card-message">{entry.message}</div>}
 

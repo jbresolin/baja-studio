@@ -135,3 +135,39 @@ class RestartPolicy:
     def reset(self) -> None:
         """Go back to the shortest delay after a worker has run stably."""
         self._next_delay = self._first_delay
+
+
+class FailureStreak:
+    """A worker's failures since it last ran well, so the same one is logged only once.
+
+    A device that is simply absent (no gateway on a dev PC) fails the same way
+    at every restart; logging each of them would bury everything else.
+    """
+
+    def __init__(self) -> None:
+        """No failures yet."""
+        self._last: tuple[str, str] | None = None
+        self.same_in_a_row = 0
+        self.total = 0
+
+    def record(self, error: BaseException) -> bool:
+        """Count a failure; True when it is news (the first, or a different error).
+
+        Errors are the same when their class and message are.
+        """
+        signature = (type(error).__name__, str(error))
+        self.total += 1
+        if signature == self._last:
+            self.same_in_a_row += 1
+            return False
+        self._last = signature
+        self.same_in_a_row = 1
+        return True
+
+    def recover(self) -> int:
+        """Forget the streak once the worker runs well; returns how many failures it had."""
+        total = self.total
+        self._last = None
+        self.same_in_a_row = 0
+        self.total = 0
+        return total

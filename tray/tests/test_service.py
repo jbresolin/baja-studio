@@ -28,6 +28,32 @@ def test_a_stopped_service_gives_no_health() -> None:
     assert studio.client().health() is None
 
 
+def test_the_last_readiness_run_is_read_with_the_same_short_timeout() -> None:
+    run = {"started_at": "2026-11-10T14:32:00+00:00", "fails": 0, "warnings": 2}
+    studio = FakeStudio(last_readiness_run=run)
+
+    assert studio.client().last_readiness_run() == run
+    assert studio.requests == [
+        ("GET", f"{BASE_URL}/api/readiness/last", None, HEALTH_TIMEOUT_SECONDS)
+    ]
+
+
+@pytest.mark.parametrize(
+    "studio",
+    [
+        # The service answers, but nothing has been run since it started.
+        FakeStudio(last_readiness_run=None),
+        # A service from before the route answers 404.
+        FakeStudio(readiness_route=False),
+        # The service is stopped.
+        FakeStudio(answering=False),
+    ],
+    ids=["no run yet", "older service", "stopped service"],
+)
+def test_no_readiness_run_reads_as_none(studio: FakeStudio) -> None:
+    assert studio.client().last_readiness_run() is None
+
+
 def test_the_bundle_is_built_like_the_home_page_button_does(tmp_path: Path) -> None:
     studio = FakeStudio()
     client = studio.client()

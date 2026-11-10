@@ -164,6 +164,15 @@ describe("Cameras page", () => {
     expect(screen.getByText("web:desk-pc")).toBeInTheDocument();
   });
 
+  it("has a gear that opens Camera setup, where the cameras are configured (WP10)", () => {
+    showCamerasPage();
+
+    expect(screen.getByRole("link", { name: "Camera settings" })).toHaveAttribute(
+      "href",
+      "/cameras/config",
+    );
+  });
+
   it("shows who owns a camera another source is moving", () => {
     const state = twoCameras();
     state.cameras.smtav!.control.velocity_owner = "joystick:desk";
