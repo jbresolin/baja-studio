@@ -53,19 +53,23 @@ The Baja car in the taskbar (by the clock; Windows may tuck it under the
 **^** arrow: drag it out to keep it visible) shows the service's state with
 a dot, checked every 5 seconds:
 
-- **green**: every module is fine;
-- **amber**: a module has a problem; hover for which (on a PC where playout
-  or audio is not set up yet, they count as problems);
+- **green**: every module is fine, and the last readiness run (if any) found
+  nothing;
+- **amber**: a module has a problem, or the last readiness run had warnings
+  or failures; hover for which ("verificação das 14:32: 2 avisos"; on a PC
+  where playout or audio is not set up yet, they count as problems). Fix the
+  cause and run the checks again: the dot turns green at the next poll;
 - **red**: the service is not answering.
 
 Right-click (or double-click to open the page): *Abrir o Baja Studio*,
 *Verificação antes do evento (Readiness)*, *Reiniciar os serviços* (asks for
 administrator rights, then restarts the gateway and the studio in order),
 *Abrir a pasta de logs*, *Gerar pacote de diagnóstico* (saved to your
-Downloads folder and opened), the version, *Fechar este ícone*. On a Windows
+Downloads folder and opened), the version, *Sair*. On a Windows
 that is not in Portuguese the menu is in English.
 
-The icon only shows and asks; closing it changes nothing. It starts again at
+The icon only shows and asks; *Sair* closes it (the icon goes, and so does its
+process) and changes nothing else. It starts again at
 the next logon, or from Start menu → Baja Studio → *Baja Studio status icon*.
 
 ## ffmpeg and ffprobe
