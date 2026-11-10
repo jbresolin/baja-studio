@@ -276,6 +276,10 @@ class AudioSettings(ModuleSettings):
     macros: list[MacroConfig] = Field(default_factory=defaults.macros, validate_default=True)
     scenes: list[SceneConfig] = Field(default_factory=list)
     d200: D200Settings = Field(default_factory=D200Settings)
+    talkback_bus: Literal["bus1", "bus2", "bus3", "bus4", "bus5", "bus6"] = Field(
+        default="bus6",
+        description="The camera operator's bus: a macro opening a send to it is talkback.",
+    )
 
     @field_validator("channels")
     @classmethod

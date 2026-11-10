@@ -16,6 +16,7 @@ import { StateSocketContext } from "../src/lib/stateHooks";
 import { StateSocket } from "../src/lib/stateSocket";
 import { PlayoutPage } from "../src/pages/PlayoutPage";
 import { fakeSocketFactory, type FakeSocket } from "./fakeSocket";
+import { hostsState, message } from "./hostsFixtures";
 import { clip, playoutState } from "./playoutFixtures";
 
 interface SentCommand {
@@ -423,5 +424,45 @@ describe("tools, unmatched files and playlists", () => {
     );
 
     expect(screen.getByText("on-air action audio.run_macro failed")).toBeInTheDocument();
+  });
+});
+
+describe("messaging the hosts (WP9)", () => {
+  it("has no message box while the hosts module is off", () => {
+    showPlayoutPage();
+
+    expect(screen.queryByRole("form", { name: "Message hosts" })).toBeNull();
+  });
+
+  it("sends a message to a seat from the strip without leaving the page", () => {
+    showPlayoutPage();
+    act(() =>
+      server.receive({ type: "patch", seq: 2, module: "hosts", path: "", value: hostsState() }),
+    );
+    const box = screen.getByRole("form", { name: "Message hosts" });
+
+    fireEvent.change(within(box).getByLabelText("To"), { target: { value: "2" } });
+    fireEvent.change(within(box).getByLabelText("Message"), { target: { value: "30 s" } });
+    fireEvent.click(within(box).getByRole("button", { name: "Send" }));
+
+    expect(lastCommand()).toMatchObject({
+      module: "hosts",
+      command: "send_message",
+      args: { to: 2, text: "30 s", kind: "info" },
+    });
+  });
+
+  it("puts the session's messages to the hosts in the aired log download", async () => {
+    showPlayoutPage();
+    act(() =>
+      server.receive({ type: "patch", seq: 2, module: "hosts", path: "", value: hostsState() }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Export aired log" }));
+    await reply(lastCommand(), { stream_start_marker: null, entries: [], chapters: null });
+    expect(lastCommand()).toMatchObject({ module: "hosts", command: "export_messages" });
+    await reply(lastCommand(), { messages: [message({ id: 1 }), message({ id: 2 })] });
+
+    expect(screen.getByText("0 airings, 2 messages to the hosts.")).toBeInTheDocument();
   });
 });

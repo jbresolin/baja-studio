@@ -112,6 +112,20 @@ describe("Audio setup page", () => {
     expect(screen.getByTestId("save-bar")).toHaveTextContent("No unsaved changes");
   });
 
+  it("picks the camera operator's bus by its label and saves it", async () => {
+    await showSetup();
+    openSection("Channels");
+    const picker = screen.getByLabelText("Camera operator's bus (talkback)");
+    expect(picker).toHaveValue("bus6");
+    expect(within(picker).getByRole("option", { name: "IEM HOST 1 (Bus 1)" })).toBeInTheDocument();
+
+    fireEvent.change(picker, { target: { value: "bus1" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(saves).toHaveLength(1));
+    expect(saves[0]!.values.talkback_bus).toBe("bus1");
+  });
+
   it("discard goes back to what was saved", async () => {
     await showSetup();
     openSection("Channels");

@@ -1423,3 +1423,354 @@ button.small {
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+/* Hosts screen (WP9): large, high-contrast, read from 1.5 m on a 24" monitor. */
+
+.hosts-screen {
+  position: relative;
+  min-height: 100vh;
+  padding: 1rem;
+  background: #000;
+  color: #fff;
+  font-size: 22px;
+  border: 8px solid transparent;
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.hosts-stale {
+  border-color: var(--offline);
+}
+
+.hosts-stale-banner {
+  background: var(--offline);
+  color: #fff;
+  font-weight: 700;
+  padding: 0.3rem 0.8rem;
+  border-radius: 6px;
+}
+
+.hosts-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+  gap: 1rem;
+}
+
+.hosts-card {
+  background: #111418;
+  border: 2px solid #2e333b;
+  border-radius: 10px;
+  padding: 0.8rem 1rem;
+}
+
+.hosts-card-pushed {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent);
+}
+
+.hosts-card-title {
+  margin: 0 0 0.4rem;
+  font-size: 0.75em;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: #9aa3ad;
+}
+
+.hosts-quiet {
+  color: #9aa3ad;
+  font-size: 0.9em;
+}
+
+.hosts-live-badge {
+  border: 1px solid #9aa3ad;
+  border-radius: 4px;
+  padding: 0.05rem 0.5rem;
+  text-transform: uppercase;
+  font-size: 0.7em;
+  letter-spacing: 0.1em;
+}
+
+.hosts-big-label {
+  font-size: 1.3em;
+  font-weight: 600;
+}
+
+.hosts-countdown {
+  font-size: 4.5em;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.1;
+}
+
+.hosts-countdown-amber {
+  color: #ffb000;
+}
+
+.hosts-next {
+  margin: 0;
+  padding-left: 1.4em;
+}
+
+.hosts-next li {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.hosts-duration,
+.hosts-clock {
+  font-variant-numeric: tabular-nums;
+}
+
+.hosts-clock {
+  font-size: 3em;
+  font-weight: 700;
+}
+
+.hosts-subtle {
+  color: #9aa3ad;
+  font-size: 0.8em;
+}
+
+.hosts-mics {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+}
+
+.hosts-mic {
+  border: 3px solid;
+  border-radius: 8px;
+  padding: 0.3rem 0.7rem;
+  display: flex;
+  gap: 0.6rem;
+  opacity: 0.6;
+}
+
+.hosts-mic-live {
+  opacity: 1;
+}
+
+.hosts-talkback {
+  margin-top: 0.5rem;
+  color: #000;
+  background: #ffb000;
+  font-weight: 700;
+  border-radius: 6px;
+  padding: 0.2rem 0.6rem;
+  display: inline-block;
+}
+
+.hosts-messages {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.hosts-message {
+  border-left: 10px solid;
+  background: #1b1f25;
+  border-radius: 6px;
+  padding: 0.5rem 0.8rem;
+  animation: hosts-slide-in 0.3s ease-out;
+}
+
+.hosts-message-large .hosts-message-text {
+  font-size: 1.8em;
+  font-weight: 700;
+}
+
+.hosts-message-small {
+  font-size: 0.75em;
+}
+
+.hosts-message-urgent {
+  background: #3a1214;
+}
+
+.hosts-message-pulse {
+  animation: hosts-pulse 1s ease-in-out infinite;
+}
+
+.hosts-message-faded {
+  opacity: 0.35;
+}
+
+.hosts-message-head {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+}
+
+.hosts-dismiss {
+  margin-left: auto;
+  min-width: 48px;
+  min-height: 48px;
+}
+
+.hosts-reactions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-top: 0.4rem;
+}
+
+.hosts-reaction {
+  min-width: 56px;
+  min-height: 56px;
+  font-size: 1em;
+  padding: 0 0.7rem;
+}
+
+.hosts-reply {
+  min-height: 48px;
+  flex: 1;
+  min-width: 8rem;
+  font-size: 0.8em;
+}
+
+.hosts-corner {
+  display: flex;
+  gap: 0.6rem;
+  justify-content: flex-end;
+  align-items: center;
+  font-size: 14px;
+}
+
+.hosts-seat-picker {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.2rem;
+  margin-top: 10vh;
+}
+
+.hosts-seat-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  justify-content: center;
+}
+
+.hosts-seat {
+  min-width: 10rem;
+  min-height: 5rem;
+  font-size: 1.2em;
+  border: 3px solid;
+  background: transparent;
+}
+
+.hosts-seat.chosen {
+  background: #2a2f37;
+  font-weight: 700;
+}
+
+.hosts-seat-done {
+  min-width: 8rem;
+  min-height: 3rem;
+}
+
+@keyframes hosts-slide-in {
+  from {
+    transform: translateY(-0.6rem);
+    opacity: 0;
+  }
+}
+
+@keyframes hosts-pulse {
+  50% {
+    background: #7a1d22;
+  }
+}
+
+/* Hosts control page (WP9): production's side. */
+
+.hosts-control-columns {
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 1rem;
+}
+
+@media (max-width: 800px) {
+  .hosts-control-columns {
+    grid-template-columns: 1fr;
+  }
+}
+
+.hosts-seat-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.6rem;
+  margin: 0.6rem 0;
+}
+
+.hosts-seat-chip {
+  border: 2px solid;
+  border-radius: 6px;
+  padding: 0.2rem 0.5rem;
+}
+
+.hosts-composer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.hosts-composer input[aria-label="Message"] {
+  flex: 1;
+  min-width: 12rem;
+}
+
+.hosts-composer-compact {
+  padding: 0.3rem 0.5rem;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.hosts-canned {
+  width: 100%;
+}
+
+.hosts-history {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.hosts-history-item {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.4rem 0.6rem;
+}
+
+.hosts-history-item.faded {
+  opacity: 0.5;
+}
+
+.hosts-history-reaction {
+  margin-right: 0.6rem;
+}
+
+.hosts-kind-urgent {
+  background: var(--offline);
+  color: #fff;
+}
+
+.hosts-kind-question {
+  background: var(--degraded);
+  color: #000;
+}

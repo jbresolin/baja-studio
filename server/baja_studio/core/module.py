@@ -18,6 +18,7 @@ from baja_studio.core.childproc import ChildProcessHost, EventCallback
 from baja_studio.core.clock import Clock
 from baja_studio.core.commandlog import CommandLog
 from baja_studio.core.database import Database
+from baja_studio.core.hosts_cards import HostsCard
 from baja_studio.core.readiness import ReadinessCheck
 from baja_studio.core.settings import ModuleSettings, SettingsStore
 from baja_studio.core.state import StateStore
@@ -140,6 +141,14 @@ class Module:
 
         Only called while the module runs. Checks look and never change
         anything (see `core/readiness.py`); a module with none returns nothing.
+        """
+        return []
+
+    def hosts_cards(self) -> list[HostsCard]:
+        """The cards this module adds to the hosts screen (`core/hosts_cards.py`).
+
+        Only called while the module runs; asked for again every second or
+        so, so cards may follow the module's settings. Most modules have none.
         """
         return []
 

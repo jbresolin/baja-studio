@@ -8,6 +8,9 @@
  * on-air action that failed, auto-play falling back) arrive as `notice` and
  * show as a toast on every page.
  *
+ * Under the strip, a one-line "message hosts" box (WP9) sends to the hosts
+ * screen without leaving the page.
+ *
  * Every action is a command to the `playout` module; the server keeps all
  * the state, so every browser sees the same queue and program. Keys work
  * anywhere on the page except while typing in a field (`?` lists them).
@@ -16,12 +19,14 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
+import { HostsSendBox } from "../components/hosts/HostsSendBox";
 import { AiredExport } from "../components/playout/AiredExport";
 import { KeyboardLegend } from "../components/playout/KeyboardLegend";
 import { LibraryPanel } from "../components/playout/LibraryPanel";
 import { ProgramPanel, ProgramStrip } from "../components/playout/ProgramPanel";
 import { QueuePanel } from "../components/playout/QueuePanel";
 import { StatusLine } from "../components/playout/StatusLine";
+import type { HostsMessage } from "../lib/hosts";
 import {
   isEditableTarget,
   playoutKeyAction,
@@ -133,6 +138,7 @@ export function PlayoutPage() {
   return (
     <div className="playout-page">
       <ProgramStrip state={state} />
+      <HostsSendBox onError={setError} />
       <StatusLine state={state} clientId={clientId} />
       {state.tools?.problem && (
         <div className="notice notice-error" role="alert" data-testid="tools-banner">
@@ -194,7 +200,16 @@ export function PlayoutPage() {
             onTake={() => void take()}
             run={run}
           />
-          <AiredExport marker={state.export.stream_start_marker} run={run} />
+          <AiredExport
+            marker={state.export.stream_start_marker}
+            run={run}
+            hostsMessages={() =>
+              sendCommand("hosts", "export_messages").then(
+                (result) => (result as { messages: HostsMessage[] }).messages,
+                () => null,
+              )
+            }
+          />
           <p>
             <Link to="/playout/settings">Playout settings</Link>
           </p>

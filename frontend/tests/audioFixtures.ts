@@ -57,6 +57,7 @@ export function audioSettings(): AudioSettingsValues {
     ],
     scenes: [{ index: 1, label: "Race", snapshot: 3, macro: null }],
     d200: { enabled: true, state_poll_hint_s: 1 },
+    talkback_bus: "bus6",
   };
 }
 

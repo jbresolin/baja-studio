@@ -43,6 +43,7 @@ pytest_plugins = [
     "tests.modules.playout_studio",
     "tests.modules.audio_studio",
     "tests.modules.gateway_studio",
+    "tests.modules.hosts_studio",
 ]
 
 # How long (in real seconds) a helper waits before declaring the test failed.

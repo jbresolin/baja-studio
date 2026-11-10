@@ -29,6 +29,7 @@ from pydantic import BaseModel
 
 from baja_studio.adapters.obs_transport import TransportFactory, open_websocket_transport
 from baja_studio.adapters.obs_websocket import ObsWebsocketClient
+from baja_studio.core.hosts_cards import HostsCard
 from baja_studio.core.module import CommandError, Module, ModuleContext
 from baja_studio.core.readiness import ReadinessCheck
 from baja_studio.core.supervisor import WorkerSpec
@@ -36,6 +37,7 @@ from baja_studio.core.system_probes import free_disk_bytes as real_free_disk_byt
 from baja_studio.modules.playout.airing import AiringBookkeeper
 from baja_studio.modules.playout.commands import run_command
 from baja_studio.modules.playout.controller import PlayoutController
+from baja_studio.modules.playout.hosts_cards import playout_hosts_cards
 from baja_studio.modules.playout.library_workers import LibraryWorkers, ProberFactory
 from baja_studio.modules.playout.obs_worker import ObsConnectionWorker
 from baja_studio.modules.playout.publisher import PlayoutPublisher, initial_playout_state
@@ -209,6 +211,10 @@ class PlayoutModule(Module):
             self.context.state.get(self.name) or {},
             self._free_disk_bytes,
         )
+
+    def hosts_cards(self) -> list[HostsCard]:
+        """ "Now playing" and "Next up" for the hosts screen (see `hosts_cards.py`)."""
+        return playout_hosts_cards()
 
     def routes(self) -> APIRouter:
         """Clip media and thumbnails."""

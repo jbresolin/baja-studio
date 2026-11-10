@@ -68,6 +68,16 @@ reading its tests.
   on a page, its `link`. One cause gives one red line: a check that depends
   on something another check already reports missing says "not checked" as a
   warning. Each check gets a test for `ok` and one for its `warn`/`fail`.
+- **Modules declare hosts cards.** Data the hosts should see on the hosts
+  screen (`/hosts`) is a card the owning module returns from
+  `hosts_cards()` (`core/hosts_cards.py`): an id unique across the studio,
+  a priority, the state path it renders from and the name of its frontend
+  component, registered in `frontend/src/components/hosts/cards.tsx`. The
+  card reads state only (anything else goes in `options`) and is drawn
+  large and read-only; the hosts module collects the cards, and production
+  orders, hides and pushes them. Never add a module's data to the hosts
+  page directly. A placeholder id (`standings`, `team_facts`, `schedule`)
+  is taken over by declaring a real card with that id.
 - Settings are only what an operator configures. State that changes during
   the show (queues, link states, played flags) lives in the module's own
   tables, so the settings export never carries it. When a settings change

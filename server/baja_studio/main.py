@@ -42,6 +42,7 @@ from baja_studio.modules.echo import EchoModule
 from baja_studio.modules.gateway import GatewayModule, GatewaySystem, installed_caddy_version
 from baja_studio.modules.heartbeat import HeartbeatModule
 from baja_studio.modules.home import HomeModule
+from baja_studio.modules.hosts import HostsModule
 from baja_studio.modules.playout import PlayoutModule
 from baja_studio.modules.readiness import ReadinessModule
 
@@ -82,6 +83,7 @@ def build_module_list(
         CamerasModule(agents),
         PlayoutModule(free_disk_bytes=probes.free_disk_bytes, dispatch=registry.dispatch_command),
         AudioModule(),
+        HostsModule(registry),
         GatewayModule(service_control, gateway_system),
         agents,
         HeartbeatModule(),
