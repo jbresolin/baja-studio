@@ -16,7 +16,7 @@ import { StateSocketContext } from "../src/lib/stateHooks";
 import { StateSocket } from "../src/lib/stateSocket";
 import { PlayoutPage } from "../src/pages/PlayoutPage";
 import { fakeSocketFactory, type FakeSocket } from "./fakeSocket";
-import { hostsState, message } from "./hostsFixtures";
+import { hostMessage, hostsState, message } from "./hostsFixtures";
 import { clip, playoutState } from "./playoutFixtures";
 
 interface SentCommand {
@@ -464,6 +464,51 @@ describe("messaging the hosts (WP9)", () => {
     await reply(lastCommand(), { messages: [message({ id: 1 }), message({ id: 2 })] });
 
     expect(screen.getByText("0 airings, 2 messages to the hosts.")).toBeInTheDocument();
+  });
+
+  it("shows unread messages from the hosts with the latest one, and marks them read (WP9b)", () => {
+    showPlayoutPage();
+    const messages = [
+      hostMessage({ id: 1, seat: 1, text: "preciso de 1 min" }),
+      hostMessage({ id: 2, seat: 2, text: "problema no áudio" }),
+      hostMessage({ id: 3, seat: 1, text: "pronto", read_at: "x" }),
+    ];
+    act(() =>
+      server.receive({
+        type: "patch",
+        seq: 2,
+        module: "hosts",
+        path: "",
+        value: hostsState({ messages }),
+      }),
+    );
+
+    // Two unread; the latest unread is Bruno's, in his colour.
+    const line = screen.getByTestId("hosts-unread");
+    expect(line).toHaveTextContent("2 Bruno: problema no áudio");
+    fireEvent.click(within(line).getByRole("button", { name: "Read" }));
+
+    expect(lastCommand()).toMatchObject({
+      module: "hosts",
+      command: "mark_read",
+      args: { message_ids: [1, 2] },
+    });
+  });
+
+  it("shows no unread line when every host message has been read", () => {
+    showPlayoutPage();
+    const read = [hostMessage({ id: 1, seat: 1, read_at: "x" })];
+    act(() =>
+      server.receive({
+        type: "patch",
+        seq: 2,
+        module: "hosts",
+        path: "",
+        value: hostsState({ messages: read }),
+      }),
+    );
+
+    expect(screen.queryByTestId("hosts-unread")).toBeNull();
   });
 });
 

@@ -19,7 +19,7 @@ from pydantic import BaseModel
 from baja_studio.adapters.xr18_transport import TransportFactory, open_udp_transport
 from baja_studio.audio import defaults
 from baja_studio.audio.config import AudioSettings
-from baja_studio.audio.stores import LinkStore, StoredLevels, create_audio_tables
+from baja_studio.audio.stores import LinkStore, OffsetStore, StoredLevels, create_audio_tables
 from baja_studio.core.childproc import EventCallback
 from baja_studio.core.hosts_cards import HostsCard
 from baja_studio.core.module import CommandError, Module, ModuleContext
@@ -119,6 +119,7 @@ class AudioModule(Module):
             self.settings,
             StoredLevels(context.database, context.clock),
             LinkStore(context.database, defaults.LINKS),
+            OffsetStore(context.database),
             publisher,
             context.logger,
             wake_mixer=lambda: self._mixer_worker.wake() if self._mixer_worker else None,
@@ -145,6 +146,7 @@ class AudioModule(Module):
         self._controller, self._surface = controller, surface
         publisher.publish("links", controller.links.matrix())
         publisher.publish("stored_levels", controller.stored.all())
+        publisher.publish("offsets", controller.offsets.all())
         publisher.publish("settings_version", context.settings.record(self.name).version)
         controller.settings_changed()
         context.supervisor.set_health_summary(self.name, summarise_health)
@@ -195,8 +197,8 @@ class AudioModule(Module):
         )
 
     def hosts_cards(self) -> list[HostsCard]:
-        """The audio card: seat microphones and talkback (see `hosts_card.py`)."""
-        return [audio_hosts_card(self.settings())]
+        """The audio card: seat microphones, production → you, talkback (see `hosts_card.py`)."""
+        return [audio_hosts_card()]
 
     def root_routes(self) -> APIRouter:
         """The D200 contract (`/action/...`)."""

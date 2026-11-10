@@ -161,3 +161,139 @@ def test_clear_messages_starts_a_new_session_and_export_returns_the_whole_sessio
 def test_an_unknown_command_is_refused(hosts_studio: HostsStudio) -> None:
     with pytest.raises(CommandError, match="hosts has no command 'shout'"):
         hosts_studio.run("shout")
+
+
+# --- WP9b: hiding on a screen, messages from the hosts, chat size ---------------------
+
+
+def test_the_x_on_a_hosts_screen_hides_the_message_for_that_seat_only(
+    hosts_studio: HostsStudio,
+) -> None:
+    # The bench: ✕ on the hosts screen removed only the ✕, the message stayed.
+    # The screen now says which of its seats waved it away; the server keeps
+    # that, so a reload of seat 1's screen does not bring it back.
+    message_id = hosts_studio.run("send_message", {"to": "all", "text": "go to break"})["id"]
+
+    hosts_studio.run("dismiss", {"message_id": message_id, "seat_ids": [1]}, "web:monitor")
+
+    [message] = hosts_studio.state("messages")
+    assert [entry["seat_id"] for entry in message["dismissed_by"]] == [1]
+    # Not dismissed for everyone: seat 2's screen and production still see it bright.
+    assert message["dismissed_at"] is None
+
+
+def test_a_screen_cannot_hide_a_message_for_a_seat_it_was_not_for(
+    hosts_studio: HostsStudio,
+) -> None:
+    message_id = hosts_studio.run("send_message", {"to": 2, "text": "30 s"})["id"]
+
+    with pytest.raises(CommandError, match="not for seat 1"):
+        hosts_studio.run("dismiss", {"message_id": message_id, "seat_ids": [1]}, "web:monitor")
+
+
+def test_a_host_sends_production_a_message_that_is_logged_with_its_seat(
+    hosts_studio: HostsStudio,
+) -> None:
+    message = hosts_studio.run(
+        "send_host_message", {"seat_id": 1, "text": "pronto", "kind": "urgent"}, "web:monitor"
+    )
+
+    assert (message["from"], message["to"], message["kind"]) == ("seat:1", "production", "urgent")
+    # A host's message never fades by itself: production must read it.
+    assert message["expires_at"] is None
+    assert message["read_at"] is None
+    logged = hosts_studio.services.command_log.tail("hosts")
+    assert [(entry["command"], entry["source"]) for entry in logged] == [
+        ("send_host_message", "web:monitor")
+    ]
+
+
+@pytest.mark.parametrize(
+    ("args", "problem"),
+    [
+        ({"seat_id": 3, "text": "hi"}, "seat is switched off"),
+        ({"seat_id": 7, "text": "hi"}, "must be a seat"),
+        ({"seat_id": 1, "text": "  "}, "must be some text"),
+        ({"seat_id": 1, "text": "hi", "kind": "shout"}, "info, question or urgent"),
+    ],
+)
+def test_a_host_message_is_refused_for_a_seat_that_is_off_or_without_text(
+    hosts_studio: HostsStudio, args: dict[str, object], problem: str
+) -> None:
+    with pytest.raises(CommandError, match=problem):
+        hosts_studio.run("send_host_message", args, "web:monitor")
+
+
+def test_production_reacts_and_replies_to_a_host_message_with_the_usual_commands(
+    hosts_studio: HostsStudio,
+) -> None:
+    # Production answers without a seat: it is answering a host, as itself.
+    message_id = hosts_studio.run(
+        "send_host_message", {"seat_id": 2, "text": "repete?"}, "web:monitor"
+    )["id"]
+
+    hosts_studio.run("react", {"message_id": message_id, "reaction": "👍"})
+    message = hosts_studio.run("reply", {"message_id": message_id, "text": "30 s to break"})
+
+    assert message["reactions"][0]["by"] == "production:prod1"
+    assert (message["reply_text"], message["reply_by"]) == ("30 s to break", "production:prod1")
+    # Answering it is reading it: the unread badge goes.
+    assert message["read_at"] is not None
+
+
+def test_a_seat_answers_only_messages_that_are_for_it(hosts_studio: HostsStudio) -> None:
+    for_seat_2 = hosts_studio.run("send_message", {"to": 2, "text": "30 s"})["id"]
+    from_seat_1 = hosts_studio.run(
+        "send_host_message", {"seat_id": 1, "text": "pronto"}, "web:monitor"
+    )["id"]
+    for_production = hosts_studio.run("send_message", {"to": 1, "text": "ok?"})["id"]
+
+    # Seat 1 cannot answer seat 2's cue, nor its own message to production.
+    with pytest.raises(CommandError, match="not for seat 1"):
+        hosts_studio.run("react", {"message_id": for_seat_2, "seat_id": 1, "reaction": "👍"})
+    with pytest.raises(CommandError, match="not for seat 1"):
+        hosts_studio.run("reply", {"message_id": from_seat_1, "seat_id": 1, "text": "me"})
+    # Production cannot answer its own message as if it were a host.
+    with pytest.raises(CommandError, match="production answers only hosts' messages"):
+        hosts_studio.run("react", {"message_id": for_production, "reaction": "👍"})
+
+
+def test_production_reading_host_messages_clears_the_unread_and_is_not_logged(
+    hosts_studio: HostsStudio,
+) -> None:
+    message_id = hosts_studio.run(
+        "send_host_message", {"seat_id": 1, "text": "problema no áudio"}, "web:monitor"
+    )["id"]
+
+    assert hosts_studio.run("mark_read", {"message_ids": [message_id]}) == {"read": 1}
+
+    [message] = hosts_studio.state("messages")
+    assert message["read_at"] is not None
+    # It repeats whenever the page shows new messages: not something an operator did.
+    logged = [entry["command"] for entry in hosts_studio.services.command_log.tail("hosts")]
+    assert "mark_read" not in logged
+    with pytest.raises(CommandError, match="list of message numbers"):
+        hosts_studio.run("mark_read", {"message_ids": "all"})
+
+
+def test_set_texts_changes_the_chat_size_phrases_and_production_chime_at_once(
+    hosts_studio: HostsStudio,
+) -> None:
+    hosts_studio.run(
+        "set_texts",
+        {"chat_size": "large", "host_phrases": ["pronto", "mais 1 min"], "production_chime": False},
+    )
+
+    # Applied live: every open hosts screen reads `config` from state.
+    config = hosts_studio.state("config")
+    assert config["chat_size"] == "large"
+    assert config["host_phrases"] == ["pronto", "mais 1 min"]
+    assert config["production_chime"] is False
+    with pytest.raises(CommandError, match="chat_size"):
+        hosts_studio.run("set_texts", {"chat_size": "huge"})
+
+
+def test_the_seats_microphone_is_no_longer_a_hosts_setting(hosts_studio: HostsStudio) -> None:
+    # It moved to the audio settings (WP9b §2): one place per setting.
+    with pytest.raises(CommandError, match="audio setup page"):
+        hosts_studio.run("set_seat", {"seat_id": 1, "audio_channel": "1"})

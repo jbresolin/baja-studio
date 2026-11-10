@@ -13,7 +13,7 @@ import { StateSocketContext } from "../src/lib/stateHooks";
 import { StateSocket } from "../src/lib/stateSocket";
 import { HostsControlPage } from "../src/pages/HostsControlPage";
 import { fakeSocketFactory, type FakeSocket } from "./fakeSocket";
-import { hostsState, message, seats } from "./hostsFixtures";
+import { hostMessage, hostsState, message, seats } from "./hostsFixtures";
 
 interface SentCommand {
   module: string;
@@ -182,25 +182,34 @@ describe("setup", () => {
     expect(sentNamed("set_seat_name")[0]!.args).toEqual({ seat_id: 1, screen_name: "Carla" });
   });
 
-  it("switches a seat on and picks its microphone channel", () => {
+  it("switches a seat on, and sends the microphone to the audio setup", () => {
     showHostsPage();
 
     fireEvent.click(screen.getByLabelText("Seat 3 on"));
-    fireEvent.change(screen.getByLabelText("Seat 3 mic channel"), { target: { value: "9" } });
 
     expect(sentNamed("set_seat").map((command) => command.args)).toEqual([
       { seat_id: 3, enabled: true },
-      { seat_id: 3, audio_channel: "9" },
     ]);
+    // The seat's microphone and in-ears are audio facts now (WP9b): one place per setting.
+    expect(screen.queryByLabelText("Seat 3 mic channel")).toBeNull();
+    expect(screen.getByRole("link", { name: "Audio setup → Seats" })).toHaveAttribute(
+      "href",
+      "/audio/config",
+    );
   });
 
-  it("saves canned messages and quick replies one per line", () => {
+  it("saves canned messages, quick replies and the hosts' phrases one per line", () => {
     showHostsPage();
     const setup = screen.getByRole("region", { name: "Messages setup" });
 
     fireEvent.change(within(setup).getByLabelText("Canned messages (one per line)"), {
       target: { value: "10 s\n\nstretch\n" },
     });
+    fireEvent.change(
+      within(setup).getByLabelText("Hosts' one-tap messages to production (one per line)"),
+      { target: { value: "pronto\nmais 1 min" } },
+    );
+    fireEvent.click(within(setup).getByLabelText("Chime on this page when a host writes"));
     fireEvent.click(within(setup).getByRole("button", { name: "Save" }));
 
     expect(sentNamed("set_texts")[0]!.args).toEqual({
@@ -208,6 +217,100 @@ describe("setup", () => {
       quick_replies: ["ok", "need 1 min"],
       message_expires_s: 60,
       chime: false,
+      host_phrases: ["pronto", "mais 1 min"],
+      production_chime: false,
     });
+  });
+
+  it("applies the chat area size at once, without Save", () => {
+    showHostsPage();
+
+    fireEvent.change(screen.getByLabelText("Chat area size"), { target: { value: "large" } });
+
+    // Production tries it while looking at the hosts screen.
+    expect(sentNamed("set_texts")[0]!.args).toEqual({ chat_size: "large" });
+  });
+});
+
+describe("messages from the hosts", () => {
+  it("shows a host's message in the seat's colour, unread, with a count by the title", () => {
+    showHostsPage(hostsState({ messages: [hostMessage({ id: 4, seat: 2, text: "repete?" })] }));
+
+    const item = screen.getByTestId("history-4");
+    expect(item).toHaveTextContent("← Bruno");
+    expect(item).toHaveStyle({ borderColor: "#e67e22" });
+    expect(screen.getByTestId("unread-4")).toHaveTextContent("new");
+    expect(screen.getByTestId("unread-count")).toHaveTextContent("1 new from the hosts");
+  });
+
+  it("marks the hosts' messages read", () => {
+    showHostsPage(
+      hostsState({
+        messages: [hostMessage({ id: 4, seat: 2 }), hostMessage({ id: 5, seat: 1 })],
+      }),
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Mark read" }));
+
+    expect(sentNamed("mark_read")[0]!.args).toEqual({ message_ids: [4, 5] });
+  });
+
+  it("reacts and replies to a host's message as production (no seat)", () => {
+    showHostsPage(hostsState({ messages: [hostMessage({ id: 4, seat: 2 })] }));
+
+    fireEvent.click(screen.getByRole("button", { name: "React 👍 to message 4" }));
+    const reply = screen.getByLabelText("Reply to message 4");
+    fireEvent.change(reply, { target: { value: "ok, 30 s" } });
+    fireEvent.keyDown(reply, { key: "Enter" });
+
+    expect(sentNamed("react")[0]!.args).toEqual({ message_id: 4, reaction: "👍" });
+    expect(sentNamed("reply")[0]!.args).toEqual({ message_id: 4, text: "ok, 30 s" });
+  });
+
+  it("shows which seats hid production's message on their screen", () => {
+    const hidden = message({ id: 2, to: "all", dismissed_by: [{ seat_id: 1, ts: "" }] });
+    showHostsPage(hostsState({ messages: [hidden] }));
+
+    expect(screen.getByTestId("dismissed-by-2")).toHaveTextContent("dismissed by Ana");
+  });
+
+  it("chimes for a new host message only when production wants it, not on opening", () => {
+    const played: number[] = [];
+    class FakeAudioContext {
+      currentTime = 0;
+      destination = {};
+      createOscillator() {
+        played.push(1);
+        return { frequency: {}, connect: () => ({ connect: () => {} }), start() {}, stop() {} };
+      }
+      createGain() {
+        return { gain: { setValueAtTime() {}, exponentialRampToValueAtTime() {} } };
+      }
+      close() {
+        return Promise.resolve();
+      }
+    }
+    const original = window.AudioContext;
+    window.AudioContext = FakeAudioContext as unknown as typeof AudioContext;
+    try {
+      // Opening with an old message: no sound.
+      showHostsPage(hostsState({ messages: [hostMessage({ id: 1, seat: 1 })] }));
+      expect(played).toHaveLength(0);
+
+      // A host writes: two notes.
+      const messages = [hostMessage({ id: 1, seat: 1 }), hostMessage({ id: 2, seat: 2 })];
+      act(() =>
+        server.receive({
+          type: "patch",
+          seq: 2,
+          module: "hosts",
+          path: "messages",
+          value: messages,
+        }),
+      );
+      expect(played).toHaveLength(2);
+    } finally {
+      window.AudioContext = original;
+    }
   });
 });

@@ -62,13 +62,32 @@ def test_a_nudge_answers_with_the_new_level_in_the_2026_shape(audio: AudioStudio
 
 
 def test_a_nudge_aux_answers_in_the_2026_shape_and_pauses_the_link(audio: AudioStudio) -> None:
+    # Bus 6 is the camera operator's, not a seat's in-ears: WP4's rule holds.
     audio.connect_mixer()
 
-    body = call(audio, "POST", "/action/nudge-aux/1/bus4/+3").json()
+    body = call(audio, "POST", "/action/nudge-aux/1/bus6/+3").json()
 
     assert list(body) == ["ok", "channel", "bus", "fader", "db"]
-    assert body["bus"] == "bus4"
-    assert audio.state("links")["1"]["bus4"] == "paused"
+    assert body["bus"] == "bus6"
+    assert audio.state("links")["1"]["bus6"] == "paused"
+
+
+def test_a_hosts_pad_nudge_on_a_seat_bus_moves_the_offset_and_keeps_the_link(
+    audio: AudioStudio,
+) -> None:
+    # Host 1's pad "vol up" for the SHOTGUN (channel 9, linked to bus1 by
+    # the 2026 seed) in their in-ears (bus1 is seat 1's bus) is the same
+    # nudge-aux action the D200 always called. It now moves the seat's
+    # offset instead of pausing the link (WP9b §3), and answers in the same
+    # 2026 shape with the send's new level.
+    audio.connect_mixer()
+
+    body = call(audio, "POST", "/action/nudge-aux/9/bus1/+2").json()
+
+    assert list(body) == ["ok", "channel", "bus", "fader", "db"]
+    assert body["db"] == "2.0 dB"  # the shotgun's fader is at unity: 0 dB + 2 dB
+    assert audio.state("links")["9"]["bus1"] == "linked"
+    assert audio.state("offsets") == {"9:bus1": 2.0}
 
 
 def test_state_polls_are_not_commands_but_tell_the_page_a_d200_is_there(audio: AudioStudio) -> None:

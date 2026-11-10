@@ -84,6 +84,12 @@ reading its tests.
   orders, hides and pushes them. Never add a module's data to the hosts
   page directly. A placeholder id (`standings`, `team_facts`, `schedule`)
   is taken over by declaring a real card with that id.
+- **Hosts-facing commands are validated server-side against the seat.**
+  A command a hosts screen sends names its seat, and the server checks it
+  as if the screen could not be trusted: a seat answers or hides only
+  messages addressed to it (or to all), sends only while switched on, and
+  changes only its own in-ear bus (audio's `seat_commands.py`), whatever
+  else the arguments say. Refusals are `CommandError`s worded for the host.
 - **One place per setting.** A module with its own settings page
   (`/<module>/settings`) is configured there alone: the page has a
   permanent entry in the top bar (*<Module> setup*) and a ⚙ link on the

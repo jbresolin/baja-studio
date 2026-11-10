@@ -6,13 +6,16 @@ peers: same rules, same state, one command log. The mixer's own pushes
 
 The mixer-facing half (the link, what the mixer says, mirroring a fader to
 its linked sends, re-deriving macro states) is `MixerSide` in
-`mixer_side.py`; this file holds the operations built on it. Rules applied
-to every change, whatever its source:
+`mixer_side.py`, the seats' offsets `SeatMixing` in `seat_mix.py`; this
+file holds the operations built on them. Rules applied to every change,
+whatever its source:
 
-- A main-fader change is mirrored to the sends *linked* to it, except a
-  send that is closed (has a stored level).
+- A main-fader change is mirrored to the sends *linked* to it (plus the
+  pair's offset), except a send that is closed (has a stored level).
 - Setting a linked send directly (page, knob, D200 nudge, a macro's
-  `set_aux`) pauses its link, so the IEM tweak survives the next fader move.
+  `set_aux`) pauses its link, so the IEM tweak survives the next fader move;
+  except on a seat's in-ear bus, where the page, knob and pad change the
+  offset and the link stays (macros still pause it).
 - Whether each macro is active is recomputed from the result.
 """
 
@@ -25,7 +28,7 @@ from baja_studio.adapters.xr18_addresses import (
     mute_address,
     pan_address,
 )
-from baja_studio.adapters.xr18_levels import clamp_level, nudge_level
+from baja_studio.adapters.xr18_levels import clamp_level, nudge_level, offset_level
 from baja_studio.audio.config import MacroStep
 from baja_studio.audio.macros import (
     PlannedChange,
@@ -36,25 +39,38 @@ from baja_studio.audio.macros import (
     steps_to_run,
 )
 from baja_studio.core.module import CommandError
-from baja_studio.modules.audio.mixer_side import MixerSide
 from baja_studio.modules.audio.queries import interesting_addresses, send_query_addresses
+from baja_studio.modules.audio.seat_mix import SeatMixing
 
 
-class AudioController(MixerSide):
+class AudioController(SeatMixing):
     """Applies operations to the mixer and keeps audio's state up to date."""
 
     # --- operations ---------------------------------------------------------------
 
     def set_level(self, channel: str, bus: str, level: float, source: str) -> float:
-        """Set a fader (`bus` "main") or a send; a direct send change pauses its link."""
+        """Set a fader (`bus` "main") or a send; a direct send change pauses its link.
+
+        A linked send on a seat's in-ear bus keeps its link: the level becomes
+        its offset from the fader (`seat_mix.py`).
+        """
         level = clamp_level(level)
-        pauses = bus != MAIN_POINT
-        self._run([PlannedChange("level", channel, bus, level, None, pauses)], source)
-        return level
+        with self.lock:
+            if self.follows_with_offset(channel, bus):
+                return self.set_send_as_offset(channel, bus, level, source)
+            pauses = bus != MAIN_POINT
+            self._run([PlannedChange("level", channel, bus, level, None, pauses)], source)
+            return level
 
     def nudge(self, channel: str, bus: str, delta_db: float, source: str) -> float:
-        """Move a fader or send by `delta_db` (unknown counts as unity, as in 2026)."""
+        """Move a fader or send by `delta_db` (unknown counts as unity, as in 2026).
+
+        On a seat's in-ear bus a linked send's offset moves instead (a host's
+        pad vol up/down), and the link stays.
+        """
         with self.lock:
+            if self.follows_with_offset(channel, bus):
+                return self.nudge_offset(channel, bus, delta_db, source)
             target = nudge_level(self.cache.level(channel, bus), delta_db)
             return self.set_level(channel, bus, target, source)
 
@@ -116,7 +132,11 @@ class AudioController(MixerSide):
                 self.run_macro(scene.macro, source)
 
     def set_link(self, channel: str, bus: str, state: str, source: str) -> None:
-        """Link, pause or unlink a send; linking brings the send to the fader's level now."""
+        """Link, pause or unlink a send; linking brings the send to the fader's level now.
+
+        The fader's level plus the pair's offset, which stays when a link is
+        paused or removed, so relinking a seat's source restores its mix.
+        """
         if channel not in SEND_SOURCES:
             raise CommandError(f"channel {channel} has no sends to link")
         with self.lock:
@@ -128,7 +148,8 @@ class AudioController(MixerSide):
             fader = self.cache.faders.get(channel)
             held = self.stored.get(f"{channel}:{bus}") is not None
             if state == "linked" and fader is not None and not held and self._link is not None:
-                self._run([PlannedChange("level", channel, bus, fader)], source)
+                level = offset_level(fader, self.offsets.get(channel, bus))
+                self._run([PlannedChange("level", channel, bus, level)], source)
             else:
                 self._refresh_derived({channel}, source)
 

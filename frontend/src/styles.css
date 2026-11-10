@@ -1582,9 +1582,31 @@ button.small {
   animation: hosts-slide-in 0.3s ease-out;
 }
 
-.hosts-message-large .hosts-message-text {
+.hosts-message-expanded.hosts-message-large .hosts-message-text {
   font-size: 1.8em;
   font-weight: 700;
+}
+
+/* WP9b: at rest a message is one or two lines; it grows while it waits for an answer. */
+.hosts-message-compact {
+  padding: 0.25rem 0.6rem;
+  animation: none;
+}
+
+.hosts-message-compact .hosts-message-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.hosts-message-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.hosts-message-compact .hosts-dismiss {
+  min-height: 40px;
 }
 
 .hosts-message-small {
@@ -1635,6 +1657,199 @@ button.small {
   flex: 1;
   min-width: 8rem;
   font-size: 0.8em;
+}
+
+.hosts-reactions-compact {
+  margin-top: 0.2rem;
+}
+
+.hosts-reactions-compact .hosts-reaction {
+  min-width: 44px;
+  min-height: 40px;
+  font-size: 0.8em;
+}
+
+/* The chat's room at rest is production's choice; a grown message gets more. */
+.hosts-chat {
+  overflow: hidden;
+  transition: max-height 0.3s ease-out;
+}
+
+.hosts-chat-small {
+  max-height: 22vh;
+}
+
+.hosts-chat-medium {
+  max-height: 35vh;
+}
+
+.hosts-chat-large {
+  max-height: 50vh;
+}
+
+.hosts-chat.hosts-chat-growing {
+  max-height: 60vh;
+}
+
+.hosts-chat-large.hosts-chat-growing {
+  max-height: 70vh;
+}
+
+.hosts-composer-host {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+  margin-top: 0.6rem;
+  border-top: 1px solid var(--border);
+  padding-top: 0.6rem;
+}
+
+.hosts-composer-host button,
+.hosts-composer-host input,
+.hosts-composer-host select {
+  min-height: 48px;
+}
+
+.hosts-composer-host input[type="text"],
+.hosts-composer-host input:not([type]) {
+  flex: 1;
+  min-width: 10rem;
+}
+
+.hosts-phrase {
+  padding: 0 0.9rem;
+}
+
+.hosts-urgent-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.hosts-mic-open {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+  background: none;
+  border: none;
+  color: inherit;
+  font: inherit;
+  padding: 0;
+  min-height: 48px;
+  cursor: pointer;
+}
+
+.hosts-mic-to_production {
+  opacity: 1;
+  border-style: dashed;
+}
+
+.hosts-prod-to-you {
+  color: #000;
+  background: var(--accent);
+  border-radius: 6px;
+  padding: 0 0.4rem;
+  font-size: 0.75em;
+  font-weight: 700;
+}
+
+/* The personal-mix overlay: docked to the side, so the audio card stays in view. */
+.hosts-mix-overlay {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  bottom: 1rem;
+  width: min(32rem, calc(100vw - 2rem));
+  overflow-y: auto;
+  background: var(--surface-raised);
+  border: 3px solid;
+  border-radius: 10px;
+  padding: 1rem;
+  z-index: 20;
+  box-shadow: 0 0 24px rgba(0, 0, 0, 0.6);
+}
+
+.hosts-mix-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.hosts-mix-close,
+.hosts-mix-step,
+.hosts-mix-reset {
+  min-width: 56px;
+  min-height: 56px;
+  font-size: 1.4em;
+  touch-action: manipulation;
+  user-select: none;
+}
+
+.hosts-mix-reset {
+  margin-top: 0.8rem;
+  width: 100%;
+  font-size: 1em;
+}
+
+.hosts-mix-rows {
+  list-style: none;
+  margin: 0.6rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.hosts-mix-row {
+  display: grid;
+  grid-template-columns: 1fr auto auto auto;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.hosts-mix-label {
+  font-weight: 700;
+}
+
+.hosts-mix-note {
+  color: var(--degraded);
+  font-weight: 700;
+}
+
+.hosts-pad-toast {
+  position: fixed;
+  left: 50%;
+  bottom: 2rem;
+  transform: translateX(-50%);
+  background: var(--surface-raised);
+  border: 2px solid var(--accent);
+  border-radius: 8px;
+  padding: 0.6rem 1.2rem;
+  font-size: 1.4em;
+  font-weight: 700;
+  z-index: 30;
+}
+
+/* Production's side: hosts' messages and their unread count. */
+.badge-unread {
+  background: var(--accent);
+  color: #000;
+}
+
+.hosts-history-from-host {
+  border-left: 6px solid;
+}
+
+.hosts-unread-line {
+  margin-top: 0.3rem;
+}
+
+.checkbox-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  margin-right: 0.8rem;
 }
 
 .hosts-corner {

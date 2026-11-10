@@ -31,7 +31,12 @@ settings **export/import** (Settings → Export / import); see
 monitor in front of the hosts, built from cards that modules declare) and a
 production → hosts chat with four named seats, reactions and canned
 messages, run from **Hosts** (`/hosts/control`) or the playout page; see
-[docs/bench/wp9.md](docs/bench/wp9.md). Two demo modules remain:
+[docs/bench/wp9.md](docs/bench/wp9.md). WP9b let the hosts write to
+production, made the chat compact, and turned the audio card into where
+each seat's microphone is heard (live, to production, muted) with a
+personal in-ear mix overlay (offsets on top of the main mix, also moved by
+the hosts' pads); seats' microphones and in-ears are set on **Audio setup →
+Seats**; see [docs/bench/wp9b.md](docs/bench/wp9b.md). Two demo modules remain:
 
 - **heartbeat** counts up once per second. You can change the interval in
   Settings, reset it, or make its worker crash once to watch it recover.
@@ -282,7 +287,8 @@ server/baja_studio/
                    XR18's addresses and timing, the M-VAVE's MIDI map)
   playout/         clip library, queue, OBS switching, orchestrator sync,
                    ffprobe, webhook, aired-log export
-  audio/           audio settings, macros, stored levels and link states
+  audio/           audio settings, macros, stored levels, link states, seat
+                   offsets, and where a seat's microphone is heard
   fakes/           runnable stand-ins for external systems (fake_agent,
                    fake_visca_camera, fake_serial, fake_obs, fake_orchestrator,
                    fake_xr18, fake_midi, fake_caddy)

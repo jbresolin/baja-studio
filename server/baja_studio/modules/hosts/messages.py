@@ -1,16 +1,22 @@
-"""Production → hosts messages in SQLite: kept for the session, exported with the aired log.
+"""Messages between production and the hosts in SQLite, kept for the session (WP9, WP9b).
 
-A message (WP9 brief §2):
+A message (WP9 brief §2, WP9b §1):
 
-    {id, ts, from: "production:<client id>", to: seat id | "all", text, kind
-     ("info" | "question" | "urgent"), expires_s, expires_at,
-     reactions: [{seat_id, reaction, ts}], reply_text, reply_seat_id,
-     shown: [{seat_id, ts}], dismissed_at}
+    {id, ts, from: "production:<client id>" | "seat:<id>",
+     to: seat id | "all" | "production", text, kind ("info" | "question" | "urgent"),
+     expires_s, expires_at,
+     reactions: [{seat_id, reaction, ts, by}], reply_text, reply_seat_id, reply_by, reply_at,
+     shown: [{seat_id, ts}], dismissed_at, dismissed_by: [{seat_id, ts}], read_at}
+
+Production writes to a seat or to all; a host writes to production only
+(no host-to-host messages). On a host's message production reacts and
+replies (`seat_id` null, `by` the producer); on production's, the hosts do.
 
 `shown` is delivery: a hosts screen showing the message for one of its
-seats says so once per seat. A message is *answered* once it has a
-reaction or a reply, and *dismissed* when production or a host waves it
-away; the pages fade answered, dismissed and expired messages.
+seats says so once per seat. `read_at` is production having seen a host's
+message (the unread badge). A message is *answered* once it has a reaction
+or a reply. `dismissed_at` is production waving it away (it fades
+everywhere); `dismissed_by` lists the seats whose screen hid it.
 
 The session lasts until production clears it (`clear_messages`), so a
 service restart in the middle of a show keeps the conversation.
@@ -25,6 +31,7 @@ from baja_studio.core.clock import Clock
 from baja_studio.core.database import Database
 
 MESSAGE_KINDS = ("info", "question", "urgent")
+PRODUCTION = "production"
 # How many messages the state tree carries; the database keeps the whole session.
 MESSAGES_IN_STATE = 50
 
@@ -42,6 +49,13 @@ SCHEMA = """CREATE TABLE IF NOT EXISTS hosts_messages (
     shown_json TEXT NOT NULL DEFAULT '[]',
     dismissed_at TEXT
 )"""
+# Columns added after WP9 shipped: added to an existing table when missing.
+ADDED_COLUMNS = {
+    "dismissed_by_json": "TEXT NOT NULL DEFAULT '[]'",
+    "read_at": "TEXT",
+    "reply_by": "TEXT",
+    "reply_at": "TEXT",
+}
 
 
 class MessageError(Exception):
@@ -49,9 +63,18 @@ class MessageError(Exception):
 
 
 def create_hosts_tables(database: Database) -> None:
-    """Create the messages table if it does not exist; called when the module starts."""
+    """Create the messages table, or add the columns WP9b added; called when the module starts."""
     with database.transaction() as connection:
         connection.execute(SCHEMA)
+        existing = {row["name"] for row in connection.execute("PRAGMA table_info(hosts_messages)")}
+        for column, definition in ADDED_COLUMNS.items():
+            if column not in existing:
+                connection.execute(f"ALTER TABLE hosts_messages ADD COLUMN {column} {definition}")
+
+
+def seat_sender(seat_id: int) -> str:
+    """How a host's message names its sender: "seat:2"."""
+    return f"seat:{seat_id}"
 
 
 class MessageStore:
@@ -96,23 +119,26 @@ class MessageStore:
             rows = connection.execute(f"{_SELECT} ORDER BY id").fetchall()
         return [_message_view(row) for row in rows]
 
-    def add_reaction(self, message_id: int, seat_id: int, reaction: str) -> dict[str, Any]:
-        """Add a seat's reaction (an emoji or a quick reply) to a message."""
+    def add_reaction(
+        self, message_id: int, seat_id: int | None, reaction: str, by: str
+    ) -> dict[str, Any]:
+        """Add a reaction (emoji or quick reply) from a seat, or production (`seat_id` None)."""
         message = self.get(message_id)
         reactions = [
             *message["reactions"],
-            {"seat_id": seat_id, "reaction": reaction, "ts": self._now()},
+            {"seat_id": seat_id, "reaction": reaction, "ts": self._now(), "by": by},
         ]
         self._write(message_id, "reactions_json = ?", json.dumps(reactions))
         return self.get(message_id)
 
-    def set_reply(self, message_id: int, seat_id: int, text: str) -> dict[str, Any]:
-        """A seat's typed answer; a later one replaces it."""
+    def set_reply(self, message_id: int, seat_id: int | None, text: str, by: str) -> dict[str, Any]:
+        """A typed answer from a seat, or production (`seat_id` None); a later one replaces it."""
         self.get(message_id)
         with self._database.transaction() as connection:
             connection.execute(
-                "UPDATE hosts_messages SET reply_text = ?, reply_seat_id = ? WHERE id = ?",
-                (text, seat_id, message_id),
+                "UPDATE hosts_messages SET reply_text = ?, reply_seat_id = ?, reply_by = ?, "
+                "reply_at = ? WHERE id = ?",
+                (text, seat_id, by, self._now(), message_id),
             )
         return self.get(message_id)
 
@@ -129,11 +155,39 @@ class MessageStore:
         return self.get(message_id)
 
     def dismiss(self, message_id: int) -> dict[str, Any]:
-        """Wave a message away (it fades on every page); dismissing twice changes nothing."""
+        """Production waves a message away (it fades on every page); twice changes nothing."""
         message = self.get(message_id)
         if message["dismissed_at"] is None:
             self._write(message_id, "dismissed_at = ?", self._now())
         return self.get(message_id)
+
+    def dismiss_for_seats(self, message_id: int, seat_ids: list[int]) -> dict[str, Any] | None:
+        """These seats' screen hid the message (it stays gone for them); None if nothing new."""
+        message = self.get(message_id)
+        already = {entry["seat_id"] for entry in message["dismissed_by"]}
+        new = [seat_id for seat_id in seat_ids if seat_id not in already]
+        if not new:
+            return None
+        now = self._now()
+        dismissed = [
+            *message["dismissed_by"],
+            *({"seat_id": seat_id, "ts": now} for seat_id in new),
+        ]
+        self._write(message_id, "dismissed_by_json = ?", json.dumps(dismissed))
+        return self.get(message_id)
+
+    def mark_read(self, message_ids: list[int]) -> int:
+        """Production has seen these hosts' messages; returns how many were unread."""
+        if not message_ids:
+            return 0
+        marks = ",".join("?" * len(message_ids))
+        with self._database.transaction() as connection:
+            cursor = connection.execute(
+                f"UPDATE hosts_messages SET read_at = ? WHERE read_at IS NULL "
+                f"AND target = ? AND id IN ({marks})",
+                (self._now(), PRODUCTION, *message_ids),
+            )
+        return cursor.rowcount
 
     def clear(self) -> int:
         """Start a new session: forget every message; returns how many there were."""
@@ -153,12 +207,16 @@ class MessageStore:
 
 _SELECT = (
     "SELECT id, ts, sender, target, text, kind, expires_s, reactions_json, reply_text, "
-    "reply_seat_id, shown_json, dismissed_at FROM hosts_messages"
+    "reply_seat_id, reply_by, reply_at, shown_json, dismissed_at, dismissed_by_json, read_at "
+    "FROM hosts_messages"
 )
 
 
+def _target(stored: str) -> int | str:
+    return stored if stored in ("all", PRODUCTION) else int(stored)
+
+
 def _message_view(row: sqlite3.Row) -> dict[str, Any]:
-    target = row["target"]
     expires_at = None
     if row["expires_s"]:
         sent = datetime.fromisoformat(row["ts"])
@@ -167,7 +225,7 @@ def _message_view(row: sqlite3.Row) -> dict[str, Any]:
         "id": row["id"],
         "ts": row["ts"],
         "from": row["sender"],
-        "to": "all" if target == "all" else int(target),
+        "to": _target(row["target"]),
         "text": row["text"],
         "kind": row["kind"],
         "expires_s": row["expires_s"],
@@ -175,6 +233,10 @@ def _message_view(row: sqlite3.Row) -> dict[str, Any]:
         "reactions": json.loads(row["reactions_json"]),
         "reply_text": row["reply_text"],
         "reply_seat_id": row["reply_seat_id"],
+        "reply_by": row["reply_by"],
+        "reply_at": row["reply_at"],
         "shown": json.loads(row["shown_json"]),
         "dismissed_at": row["dismissed_at"],
+        "dismissed_by": json.loads(row["dismissed_by_json"]),
+        "read_at": row["read_at"],
     }

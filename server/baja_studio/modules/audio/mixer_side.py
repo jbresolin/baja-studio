@@ -7,10 +7,12 @@ class. Here: the parts every change shares, whoever made it.
   and hands over what the mixer pushed (`receive_from_mixer`), which is
   filtered by write protection and applied under the lock.
 - A main-fader change is mirrored to the sends *linked* to it (any source,
-  the mixer included), except a send that is closed (has a stored level):
-  a talkback route a macro closed stays closed when the fader moves.
-- After every change the derived state (macro active states) is worked
-  out again and the change listeners (MIDI LEDs, takeover) are told.
+  the mixer included), plus each pair's offset (a seat's personal mix,
+  WP9b), except a send that is closed (has a stored level): a talkback
+  route a macro closed stays closed when the fader moves.
+- After every change the derived state (macro active states, the hosts'
+  view) is worked out again and the change listeners (MIDI LEDs, takeover)
+  are told.
 
 One re-entrant lock covers the cache and every decision; nothing under it
 waits on another thread (writes are queued in the `Xr18Link`, MIDI in the
@@ -20,6 +22,7 @@ outbox).
 import logging
 import threading
 from collections.abc import Callable
+from typing import Any
 
 from baja_studio.adapters.osc import OscMessage
 from baja_studio.adapters.xr18_addresses import (
@@ -29,12 +32,14 @@ from baja_studio.adapters.xr18_addresses import (
     point_address,
     send_address,
 )
+from baja_studio.adapters.xr18_levels import offset_level
 from baja_studio.adapters.xr18_link import Xr18Link
 from baja_studio.audio.config import AudioSettings
 from baja_studio.audio.macros import is_active
 from baja_studio.audio.mixer_cache import MixerCache
-from baja_studio.audio.stores import LinkStore, StoredLevels
+from baja_studio.audio.stores import LinkStore, OffsetStore, StoredLevels
 from baja_studio.core.module import CommandError
+from baja_studio.modules.audio.hosts_view import build_hosts_view
 from baja_studio.modules.audio.publisher import AudioPublisher
 from baja_studio.modules.audio.queries import interesting_addresses
 
@@ -62,6 +67,9 @@ class _View:
     def link_state(self, channel: str, bus: str) -> str:
         return self._controller.links.state(channel, bus)
 
+    def offset_db(self, channel: str, bus: str) -> float:
+        return self._controller.offsets.get(channel, bus)
+
 
 class MixerSide:
     """The link to the mixer, the cache of what it is set to, and the rules every change follows."""
@@ -71,6 +79,7 @@ class MixerSide:
         settings: Callable[[], AudioSettings],
         stored: StoredLevels,
         links: LinkStore,
+        offsets: OffsetStore,
         publisher: AudioPublisher,
         logger: logging.LoggerAdapter[logging.Logger],
         wake_mixer: Callable[[], None],
@@ -79,6 +88,7 @@ class MixerSide:
         self.settings = settings
         self.stored = stored
         self.links = links
+        self.offsets = offsets
         self.publisher = publisher
         self.cache = MixerCache()
         self.view = _View(self)
@@ -90,6 +100,8 @@ class MixerSide:
         self._macro_active: dict[str, bool] = {}
         self._listeners: list[ChangeListener] = []
         self.selected_bus: str | None = None
+        # The last time a pad or knob moved a seat's offset (the hosts screen's toast).
+        self.pad_change: dict[str, Any] | None = None
 
     def add_change_listener(self, listener: ChangeListener) -> None:
         """Call `listener(channels, source)` after every change (under the lock)."""
@@ -110,12 +122,16 @@ class MixerSide:
         """The mixer answered `/xinfo` again, or stopped answering."""
         with self.lock:
             came_back = online and not self._online
+            changed = online != self._online
             self._online = online
             if came_back and self._link is not None:
                 # It may have rebooted or loaded a snapshot meanwhile: read it all again.
                 self._link.query(
                     interesting_addresses(self.settings(), self.links, self.selected_bus)
                 )
+            if changed:
+                # Offline: the hosts' card says so instead of showing stale states.
+                self.publish_hosts_view()
 
     @property
     def online(self) -> bool:
@@ -181,16 +197,33 @@ class MixerSide:
             self._mirror(channel, level, source)
 
     def _mirror(self, channel: str, level: float, source: str) -> None:
-        """Copy a main-fader level to the linked, open sends of `channel`."""
+        """Copy a main-fader level (plus the offset) to the linked, open sends of `channel`."""
         if self._link is None or channel not in SEND_SOURCES:
             return
         for bus in self.links.linked_buses(channel):
             if self.stored.get(f"{channel}:{bus}") is not None:
                 continue  # closed by a macro or button: stays closed
-            if self.cache.sends.get((channel, bus)) == level:
+            target = offset_level(level, self.offsets.get(channel, bus))
+            if self.cache.sends.get((channel, bus)) == target:
                 continue
-            self._link.write(send_address(channel, bus), level)
-            self.cache.sends[(channel, bus)] = level
+            self._link.write(send_address(channel, bus), target)
+            self.cache.sends[(channel, bus)] = target
+
+    def publish_hosts_view(self) -> None:
+        """Publish `audio.hosts_view` (`hosts_view.py`); skipped when nothing in it changed."""
+        with self.lock:
+            self.publisher.publish(
+                "hosts_view",
+                build_hosts_view(
+                    self.settings(),
+                    self.cache,
+                    self.links,
+                    self.offsets,
+                    self._online,
+                    self._macro_active,
+                    self.pad_change,
+                ),
+            )
 
     def _after_writes(self, channels: set[str], source: str) -> None:
         for channel in channels:
@@ -199,7 +232,7 @@ class MixerSide:
         self._wake_mixer()
 
     def _refresh_derived(self, channels: set[str], source: str) -> None:
-        """Re-derive macro states, then tell listeners (MIDI LEDs, takeover)."""
+        """Re-derive macro states and the hosts' view, then tell listeners (MIDI LEDs, takeover)."""
         settings = self.settings()
         active = {macro.id: is_active(macro, self.view) for macro in settings.macros}
         if active != self._macro_active:
@@ -207,5 +240,6 @@ class MixerSide:
             self.publisher.publish(
                 "macros", {macro_id: {"active": state} for macro_id, state in active.items()}
             )
+        self.publish_hosts_view()
         for listener in self._listeners:
             listener(channels, source)

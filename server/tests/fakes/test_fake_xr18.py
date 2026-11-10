@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 import pytest
 
 from baja_studio.adapters.osc import OscArgument
-from baja_studio.fakes.fake_xr18 import parse_value, run_console
+from baja_studio.fakes.fake_xr18 import parse_value, run_console, shortcut_change
 from baja_studio.fakes.simulated_xr18 import SimulatedXr18
 
 
@@ -41,3 +41,51 @@ def test_console_commands_change_the_mixer(monkeypatch: pytest.MonkeyPatch) -> N
     assert target.changes == [("/ch/01/mix/fader", 0.5)]
     assert target.mixer.drop_packets is True
     assert 2 in target.mixer.snapshots
+
+
+@pytest.mark.parametrize(
+    ("line", "change"),
+    [
+        # Muting writes mix/on 0 (the XR18's inverted sense).
+        ("mute 1 on", ("/ch/01/mix/on", 0)),
+        ("mute aux off", ("/rtn/aux/mix/on", 1)),
+        ("lr 1 off", ("/ch/01/mix/lr", 0)),
+        ("fader 9 0.5", ("/ch/09/mix/fader", 0.5)),
+        ("send 5 bus1 0.75", ("/ch/05/mix/01/level", 0.75)),
+        ("sendon 1 bus5 off", ("/ch/01/mix/05/on", 0)),
+        ("tap 1 bus5 pre", ("/ch/01/mix/05/tap", 3)),
+        ("tap 1 bus5 post", ("/ch/01/mix/05/tap", 4)),
+        # A fresh fake has channel 1 on LR (1): toggling takes it off.
+        ("toggle /ch/01/mix/lr", ("/ch/01/mix/lr", 0)),
+    ],
+)
+def test_console_shortcuts_stand_for_the_hosts_card_addresses(
+    line: str, change: tuple[str, OscArgument]
+) -> None:
+    assert shortcut_change(line.split(), SimulatedXr18().values) == change
+
+
+@pytest.mark.parametrize(
+    "line",
+    [
+        "mute 1 maybe",  # not on/off
+        "fader 1 loud",  # not a number
+        "send 1 bus9 0.5",  # no such bus
+        "lr 40 on",  # no such channel
+        "toggle /ch/01/mix/fader",  # not a 0/1 switch
+        "set /ch/01/mix/fader 0.5",  # the long form, handled by run_console itself
+    ],
+)
+def test_anything_else_is_not_a_shortcut(line: str) -> None:
+    assert shortcut_change(line.split(), SimulatedXr18().values) is None
+
+
+def test_the_console_applies_a_shortcut_as_a_change_from_the_desk(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    target = ConsoleTarget()
+    monkeypatch.setattr("sys.stdin", io.StringIO("lr 1 off\nquit\n"))
+
+    run_console(target)  # type: ignore[arg-type]
+
+    assert target.changes == [("/ch/01/mix/lr", 0)]

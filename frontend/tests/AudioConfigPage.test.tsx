@@ -277,3 +277,54 @@ describe("Audio setup page", () => {
     );
   });
 });
+
+describe("Audio setup → Seats (WP9b)", () => {
+  it("maps a seat's microphone and in-ears, the production bus and microphones, and saves", async () => {
+    await showSetup();
+    openSection("Seats");
+    const section = screen.getByTestId("seats-section");
+
+    // Seat 2's microphone is channel 2, and its in-ears move to bus 3.
+    fireEvent.change(within(section).getByLabelText("Seat 2 microphone"), {
+      target: { value: "2" },
+    });
+    fireEvent.change(within(section).getByLabelText("Seat 2 in-ears"), {
+      target: { value: "bus3" },
+    });
+    // Bus 6 becomes the production loop; channel 6 is a production microphone too.
+    fireEvent.change(within(section).getByLabelText("Production bus"), {
+      target: { value: "bus6" },
+    });
+    fireEvent.click(within(section).getByLabelText("Ch 6"));
+    fireEvent.click(
+      within(section).getByLabelText(
+        "Hosts may change their own in-ear mix (otherwise the overlay is view-only)",
+      ),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(saves).toHaveLength(1));
+    const values = saves[0]!.values;
+    expect(values.seats[1]).toEqual({ seat_id: 2, channel: "2", iem_bus: "bus3" });
+    expect(values.production_bus).toBe("bus6");
+    expect(values.production_channels).toEqual(["5", "6"]);
+    expect(values.hosts_can_adjust_mix).toBe(false);
+  });
+
+  it("shows an unmapped seat as not mapped, and the hosts' names when hosts is on", async () => {
+    await showSetup();
+    act(() =>
+      server.receive({
+        type: "patch",
+        module: "hosts",
+        path: "",
+        seq: 2,
+        value: { seats: [{ id: 2, screen_name: "Bruno" }] },
+      }),
+    );
+    openSection("Seats");
+
+    expect(screen.getByLabelText("Seat 2 microphone")).toHaveValue("");
+    expect(within(screen.getByTestId("seat-audio-table")).getByText("Bruno")).toBeInTheDocument();
+  });
+});

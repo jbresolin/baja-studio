@@ -63,7 +63,14 @@ export function AudioPage() {
     <div className="audio-page">
       <div className="page-header">
         <h1>Audio</h1>
-        <Link to="/audio/config">Audio setup</Link>
+        <Link
+          className="settings-gear"
+          to="/audio/config"
+          aria-label="Audio setup"
+          title="Audio setup"
+        >
+          ⚙
+        </Link>
       </div>
       <AudioStatus state={state} now={now} />
       {error && (

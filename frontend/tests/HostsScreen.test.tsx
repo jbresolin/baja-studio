@@ -15,8 +15,9 @@ import type { HostsView } from "../src/lib/playout";
 import { StateSocketContext } from "../src/lib/stateHooks";
 import { StateSocket } from "../src/lib/stateSocket";
 import { HostsScreen } from "../src/pages/HostsScreen";
+import { seatAudioView } from "./audioFixtures";
 import { fakeSocketFactory, type FakeSocket } from "./fakeSocket";
-import { hostsState, message } from "./hostsFixtures";
+import { hostMessage, hostsState, message } from "./hostsFixtures";
 
 interface SentCommand {
   module: string;
@@ -230,18 +231,31 @@ describe("cards", () => {
     expect(titles()[0]).toBe("Next up");
   });
 
-  it("shows each seat's microphone live or muted, and talkback to the camera op", () => {
-    const audio = {
-      mixer: { connection: "ok" },
-      channels: { "1": { muted: false }, "2": { muted: true } },
-      macros: { "prod1-talk-cam": { active: true } },
-    };
-    showHostsScreen(tree(hostsState(), { audio }));
+  it("shows where each seat's microphone is heard, production → you, and talkback", () => {
+    // Audio publishes the facts; the names and colours are the hosts' seats.
+    const view = seatAudioView({
+      talkback: { active: true, label: "CAMERA OP" },
+      seats: {
+        ...seatAudioView().seats,
+        "1": { ...seatAudioView().seats["1"]!, state: "live", production_to_you: true },
+        "2": { ...seatAudioView().seats["2"]!, state: "to_production" },
+      },
+    });
+    showHostsScreen(tree(hostsState(), { audio: { hosts_view: view } }));
 
     const card = screen.getByRole("region", { name: "Audio" });
-    expect(card).toHaveTextContent("AnaLIVE");
-    expect(card).toHaveTextContent("BrunoMUTED");
+    expect(screen.getByTestId("seat-audio-1")).toHaveTextContent("AnaLIVEproduction → you");
+    expect(screen.getByTestId("seat-audio-2")).toHaveTextContent("BrunoTO PRODUCTION");
     expect(within(card).getByRole("status")).toHaveTextContent("Talkback → CAMERA OP");
+  });
+
+  it("says the mixer is offline instead of showing old states", () => {
+    const view = seatAudioView({ mixer_online: false });
+    showHostsScreen(tree(hostsState(), { audio: { hosts_view: view } }));
+
+    const card = screen.getByRole("region", { name: "Audio" });
+    expect(card).toHaveTextContent("Mixer offline");
+    expect(card).not.toHaveTextContent("LIVE");
   });
 
   it("shows the time since the stream started", () => {
@@ -288,5 +302,241 @@ describe("the stale border", () => {
     expect(screen.getByTestId("hosts-screen")).not.toHaveClass("hosts-stale");
     advance(1000);
     expect(screen.getByTestId("hosts-screen")).toHaveClass("hosts-stale");
+  });
+});
+
+describe("hiding a message (WP9b)", () => {
+  it("the ✕ hides the message itself, not only the ✕, and says so for this screen's seat", () => {
+    // The bench: pressing ✕ removed the ✕ and left the message on screen.
+    showHostsScreen(tree(hostsState({ messages: [message({ id: 3, to: 1, text: "30 s" })] })), [1]);
+
+    fireEvent.click(
+      within(screen.getByTestId("hosts-message-3")).getByRole("button", { name: "Dismiss" }),
+    );
+
+    expect(screen.queryByTestId("hosts-message-3")).toBeNull();
+    expect(sentNamed("dismiss")[0]!.args).toEqual({ message_id: 3, seat_ids: [1] });
+  });
+
+  it("stays hidden after a reload, because the server keeps it per seat", () => {
+    const hidden = message({ id: 3, to: "all", dismissed_by: [{ seat_id: 1, ts: "" }] });
+    // Seat 1's screen (reloaded): gone. Seat 2's screen: still there.
+    showHostsScreen(tree(hostsState({ messages: [hidden] })), [1]);
+    expect(screen.queryByTestId("hosts-message-3")).toBeNull();
+  });
+
+  it("does not hide it on another seat's screen", () => {
+    const hidden = message({ id: 3, to: "all", dismissed_by: [{ seat_id: 1, ts: "" }] });
+    showHostsScreen(tree(hostsState({ messages: [hidden] })), [2]);
+    expect(screen.getByTestId("hosts-message-3")).toBeInTheDocument();
+  });
+});
+
+describe("compact chat (WP9b)", () => {
+  it("grows for a new message to this seat and shrinks back a few seconds after an answer", () => {
+    const cue = message({ id: 1, to: 1, text: "30 s" });
+    showHostsScreen(tree(hostsState({ messages: [cue] })), [1]);
+    expect(screen.getByTestId("hosts-message-1")).toHaveAttribute("data-expanded", "true");
+    expect(screen.getByTestId("hosts-chat")).toHaveAttribute("data-growing", "true");
+
+    // Ana taps 👍 at 12:00:01; four seconds later it is one line again.
+    const answered = {
+      ...cue,
+      reactions: [{ seat_id: 1 as const, reaction: "👍", ts: "2026-10-01T12:00:01+00:00" }],
+    };
+    patchHosts(2, hostsState({ messages: [answered] }));
+    advance(1000);
+    expect(screen.getByTestId("hosts-message-1")).toHaveAttribute("data-expanded", "true");
+    advance(5000);
+    expect(screen.getByTestId("hosts-message-1")).toHaveAttribute("data-expanded", "false");
+    expect(screen.getByTestId("hosts-chat")).toHaveAttribute("data-growing", "false");
+  });
+
+  it("keeps an urgent message grown until someone reacts", () => {
+    const urgent = message({ id: 1, to: 1, kind: "urgent", text: "go to break" });
+    showHostsScreen(tree(hostsState({ messages: [urgent] })), [1]);
+
+    advance(60_000);
+
+    expect(screen.getByTestId("hosts-message-1")).toHaveAttribute("data-expanded", "true");
+  });
+
+  it("shows a colleague's message as one small line", () => {
+    showHostsScreen(tree(hostsState({ messages: [message({ id: 2, to: 2 })] })), [1]);
+
+    expect(screen.getByTestId("hosts-message-2")).toHaveAttribute("data-expanded", "false");
+    expect(screen.getByTestId("hosts-message-2")).toHaveAttribute("data-size", "small");
+  });
+
+  it("takes the chat size production picked, and follows a change at once", () => {
+    showHostsScreen(tree(hostsState()), [1]);
+    expect(screen.getByTestId("hosts-chat")).toHaveAttribute("data-chat-size", "small");
+
+    const large = hostsState();
+    large.config = { ...large.config, chat_size: "large" };
+    patchHosts(2, large);
+
+    expect(screen.getByTestId("hosts-chat")).toHaveClass("hosts-chat-large");
+  });
+});
+
+describe("writing to production (WP9b)", () => {
+  it("sends a one-tap phrase and a typed urgent message from this screen's seat", () => {
+    showHostsScreen(tree(hostsState()), [1]);
+    const composer = screen.getByRole("form", { name: "Message production" });
+
+    fireEvent.click(within(composer).getByRole("button", { name: "pronto" }));
+    fireEvent.change(within(composer).getByLabelText("Message to production"), {
+      target: { value: "problema no áudio" },
+    });
+    fireEvent.click(within(composer).getByLabelText("urgent"));
+    fireEvent.click(within(composer).getByRole("button", { name: "Send" }));
+
+    expect(sentNamed("send_host_message").map((command) => command.args)).toEqual([
+      { seat_id: 1, text: "pronto", kind: "info" },
+      { seat_id: 1, text: "problema no áudio", kind: "urgent" },
+    ]);
+  });
+
+  it("lets a shared screen pick which seat is writing", () => {
+    showHostsScreen(tree(hostsState()), [1, 2]);
+    const composer = screen.getByRole("form", { name: "Message production" });
+
+    fireEvent.change(within(composer).getByLabelText("From"), { target: { value: "2" } });
+    fireEvent.click(within(composer).getByRole("button", { name: "pronto" }));
+
+    expect(sentNamed("send_host_message")[0]!.args).toMatchObject({ seat_id: 2 });
+  });
+
+  it("shows the host's own message with production's reply, not a colleague's", () => {
+    const replied = hostMessage({
+      id: 5,
+      seat: 1,
+      text: "repete?",
+      reply_text: "30 s to break",
+      reply_by: "production:prod1",
+      reply_at: "2026-10-01T12:00:00+00:00",
+    });
+    const colleagues = hostMessage({ id: 6, seat: 2, text: "pronto" });
+    showHostsScreen(tree(hostsState({ messages: [replied, colleagues] })), [1]);
+
+    expect(screen.getByTestId("hosts-message-5")).toHaveTextContent("Ana → production");
+    expect(screen.getByTestId("hosts-message-5")).toHaveTextContent("“30 s to break” — production");
+    expect(screen.queryByTestId("hosts-message-6")).toBeNull();
+  });
+});
+
+describe("personal mix (WP9b)", () => {
+  function showWithMix(view = seatAudioView()) {
+    showHostsScreen(tree(hostsState(), { audio: { hosts_view: view } }), [1]);
+  }
+
+  it("opens this seat's mix from the audio card, with main levels and offsets", () => {
+    showWithMix();
+
+    fireEvent.click(screen.getByRole("button", { name: /Ana: LIVE, open the in-ear mix/ }));
+
+    const overlay = screen.getByRole("dialog", { name: "Ana's in-ear mix" });
+    expect(within(overlay).getByTestId("mix-row-9")).toHaveTextContent("SHOTGUNmain 0.0 dB +2 dB");
+    // PC AUDIO is not linked to Ana's bus: its own level, labelled independent.
+    expect(within(overlay).getByTestId("mix-row-aux")).toHaveTextContent(
+      "PC AUDIOindependent -10.0 dB",
+    );
+    // The card stays on screen underneath.
+    expect(screen.getByRole("region", { name: "Audio" })).toBeInTheDocument();
+  });
+
+  it("does not offer another seat's mix", () => {
+    showWithMix();
+    expect(screen.queryByRole("button", { name: /Bruno: .*open the in-ear mix/ })).toBeNull();
+  });
+
+  it("steps an offset with + and −, repeats while held, and resets to main", () => {
+    showWithMix();
+    fireEvent.click(screen.getByRole("button", { name: /open the in-ear mix/ }));
+    const up = screen.getByRole("button", { name: "SHOTGUN up" });
+
+    fireEvent.pointerDown(up);
+    advance(400 + 250); // the first repeat, then one more
+    fireEvent.pointerUp(up);
+    advance(1000); // released: nothing more
+    fireEvent.pointerDown(screen.getByRole("button", { name: "SHOTGUN down" }));
+    fireEvent.pointerUp(screen.getByRole("button", { name: "SHOTGUN down" }));
+    fireEvent.click(screen.getByRole("button", { name: "Reset to main" }));
+
+    const steps = sentNamed("set_seat_offset").map((command) => command.args);
+    expect(steps).toEqual([
+      { seat_id: 1, channel: "9", delta_db: 1 },
+      { seat_id: 1, channel: "9", delta_db: 1 },
+      { seat_id: 1, channel: "9", delta_db: 1 },
+      { seat_id: 1, channel: "9", delta_db: -1 },
+    ]);
+    expect(sentNamed("set_seat_offset").every((command) => command.module === "audio")).toBe(true);
+    expect(sentNamed("reset_seat_offsets")[0]!.args).toEqual({ seat_id: 1 });
+  });
+
+  it("closes by itself after twenty seconds without a touch", () => {
+    showWithMix();
+    fireEvent.click(screen.getByRole("button", { name: /open the in-ear mix/ }));
+
+    advance(19_000);
+    fireEvent.pointerDown(screen.getByRole("dialog")); // a touch restarts the wait
+    advance(19_000);
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    advance(1500);
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("is view-only when production says so, and disabled with the mixer offline", () => {
+    showWithMix(seatAudioView({ can_adjust: false }));
+    fireEvent.click(screen.getByRole("button", { name: /open the in-ear mix/ }));
+    expect(screen.getByRole("button", { name: "SHOTGUN up" })).toBeDisabled();
+    expect(screen.getByRole("dialog")).toHaveTextContent("View only");
+
+    act(() =>
+      server.receive({
+        type: "patch",
+        seq: 2,
+        module: "audio",
+        path: "hosts_view.mixer_online",
+        value: false,
+      }),
+    );
+    expect(screen.getByRole("dialog")).toHaveTextContent("Mixer offline");
+    expect(screen.getByRole("button", { name: "Reset to main" })).toBeDisabled();
+  });
+
+  it("shows a toast when a pad changes this seat's mix, but not for what was there before", () => {
+    const before = { seq: 4, seat_id: 1, channel: "9", label: "SHOTGUN", offset_db: 1 };
+    showWithMix(seatAudioView({ pad_change: before }));
+    expect(screen.queryByTestId("pad-toast")).toBeNull();
+
+    act(() =>
+      server.receive({
+        type: "patch",
+        seq: 2,
+        module: "audio",
+        path: "hosts_view.pad_change",
+        value: { ...before, seq: 5, offset_db: 2 },
+      }),
+    );
+    expect(screen.getByTestId("pad-toast")).toHaveTextContent("Ana: SHOTGUN +2 dB");
+
+    advance(3500);
+    expect(screen.queryByTestId("pad-toast")).toBeNull();
+  });
+
+  it("does not toast a change to another seat's mix", () => {
+    showWithMix();
+    act(() =>
+      server.receive({
+        type: "patch",
+        seq: 2,
+        module: "audio",
+        path: "hosts_view.pad_change",
+        value: { seq: 1, seat_id: 2, channel: "9", label: "SHOTGUN", offset_db: 3 },
+      }),
+    );
+    expect(screen.queryByTestId("pad-toast")).toBeNull();
   });
 });

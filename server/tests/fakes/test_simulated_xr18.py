@@ -27,6 +27,21 @@ def test_a_query_is_answered_with_the_current_value() -> None:
     ]
 
 
+def test_a_fresh_mixer_has_inputs_on_lr_and_sends_on_and_pre_fader() -> None:
+    # What the hosts' audio card reads: LR assign, a send's on switch, its tap.
+    mixer = SimulatedXr18()
+
+    assert send(mixer, OscMessage("/ch/01/mix/lr")) == [
+        ("studio", OscMessage("/ch/01/mix/lr", (1,)))
+    ]
+    assert send(mixer, OscMessage("/ch/01/mix/05/on")) == [
+        ("studio", OscMessage("/ch/01/mix/05/on", (1,)))
+    ]
+    assert send(mixer, OscMessage("/rtn/aux/mix/02/tap")) == [
+        ("studio", OscMessage("/rtn/aux/mix/02/tap", (3,)))
+    ]
+
+
 def test_xinfo_says_who_the_mixer_is() -> None:
     reply = send(SimulatedXr18(name="XR18-TEST"), OscMessage("/xinfo"))
 

@@ -8,7 +8,8 @@ dry-run and the active state on every button (page, M-VAVE LED, D200 image).
 silences it ("closes the route"); `restore_levels` opens it again:
 
 - to the main fader's level when the send is *linked* to it (so a reopened
-  IEM send is in step with the fader it follows),
+  IEM send is in step with the fader it follows), plus the pair's offset
+  (a seat's personal mix, WP9b),
 - else to the stored level,
 - else to unity (0 dB), as in 2026.
 
@@ -29,7 +30,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from baja_studio.adapters.xr18_addresses import MAIN_POINT
-from baja_studio.adapters.xr18_levels import UNITY_LEVEL
+from baja_studio.adapters.xr18_levels import UNITY_LEVEL, offset_level
 from baja_studio.audio.config import (
     MacroConfig,
     MacroStep,
@@ -58,6 +59,9 @@ class MixerView(Protocol):
 
     def link_state(self, channel: str, bus: str) -> str:
         """ "linked", "paused" or "unlinked"."""
+
+    def offset_db(self, channel: str, bus: str) -> float:
+        """How far a linked send sits above or below its main fader (0 dB: none)."""
 
 
 @dataclass(frozen=True)
@@ -166,7 +170,7 @@ def plan_open(view: MixerView | _Overlay, channel: str, bus: str) -> list[Planne
     if bus != MAIN_POINT and overlay.view.link_state(channel, bus) == "linked":
         main = overlay.level(channel, MAIN_POINT)
         if main is not None:
-            target = main
+            target = offset_level(main, overlay.view.offset_db(channel, bus))
     changes = []
     if stored is not None:
         overlay.stored[point] = None

@@ -7,6 +7,8 @@
  * server/baja_studio/adapters/xr18_levels.py.
  */
 
+import type { SeatAudioView } from "./seatAudio";
+
 export const INPUTS = Array.from({ length: 16 }, (_, index) => String(index + 1));
 export const AUX_BUSES = ["bus1", "bus2", "bus3", "bus4", "bus5", "bus6"] as const;
 export const CHANNEL_IDS = [...INPUTS, "aux", "lr", ...AUX_BUSES];
@@ -41,6 +43,8 @@ export interface AudioState {
   channels: Record<string, ChannelView>;
   links: Record<string, Record<string, LinkState>>;
   stored_levels: Record<string, number>;
+  offsets: Record<string, number>;
+  hosts_view: SeatAudioView;
   macros: Record<string, { active: boolean }>;
   midi: {
     status: "disabled" | "starting" | "ok" | "offline";
@@ -121,6 +125,18 @@ export interface AudioSettingsValues {
   scenes: SceneConfig[];
   d200: { enabled: boolean; state_poll_hint_s: number };
   talkback_bus: AuxBus;
+  production_bus: AuxBus;
+  production_channels: string[];
+  seats: SeatAudioConfig[];
+  hosts_can_adjust_mix: boolean;
+  personal_mix_step_db: number;
+}
+
+/** The audio side of a hosts' seat: its microphone and in-ear bus (WP9b). */
+export interface SeatAudioConfig {
+  seat_id: number;
+  channel: string | null;
+  iem_bus: AuxBus;
 }
 
 // --- the XR18 fader law ------------------------------------------------------------

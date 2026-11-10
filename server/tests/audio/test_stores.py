@@ -9,7 +9,7 @@ from pathlib import Path
 
 import pytest
 
-from baja_studio.audio.stores import LinkStore, StoredLevels, create_audio_tables
+from baja_studio.audio.stores import LinkStore, OffsetStore, StoredLevels, create_audio_tables
 from baja_studio.core.database import Database
 from tests.conftest import FakeClock
 
@@ -76,3 +76,33 @@ def test_link_changes_survive_a_restart_and_report_the_previous_state(database: 
 def test_an_unknown_link_state_is_refused(database: Database) -> None:
     with pytest.raises(ValueError, match="linked, paused or unlinked"):
         LinkStore(database, SEED).set("1", "bus1", "maybe")
+
+
+def test_link_definitions_count_paused_links_as_designed(database: Database) -> None:
+    # A pause happens during the show; the matrix as designed still has the link.
+    links = LinkStore(database, SEED)
+    links.set("3", "bus4", "linked")
+
+    assert links.definitions() == {"1": ["bus1", "bus2"], "3": ["bus4"]}
+
+
+def test_an_offset_is_zero_until_set_and_survives_a_restart(database: Database) -> None:
+    offsets = OffsetStore(database)
+    assert offsets.get("9", "bus1") == 0.0
+
+    offsets.set("9", "bus1", 2.5)
+    offsets.set("aux", "bus2", -6.0)
+
+    # A restarted service reads them back from the table.
+    reopened = OffsetStore(database)
+    assert reopened.get("9", "bus1") == 2.5
+    assert reopened.all() == {"9:bus1": 2.5, "aux:bus2": -6.0}
+
+
+def test_setting_an_offset_back_to_zero_deletes_its_row(database: Database) -> None:
+    OffsetStore(database).set("9", "bus1", 2.5)
+    OffsetStore(database).set("9", "bus1", 0.0)
+
+    assert OffsetStore(database).all() == {}
+    with database.transaction() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM audio_offsets").fetchone()[0] == 0

@@ -1,15 +1,23 @@
 """The hosts module's commands: argument checking, then a call into the desk or the settings.
 
 Production: `send_message {to, text, kind?, expires_s?}`, `dismiss {message_id}`,
-`push_card {card_id | null}`, `set_card_layout {cards: [{id, visible}]}`,
-`set_seat_name {seat_id, screen_name}`, `set_seat {seat_id, color?, enabled?,
-audio_channel?}`, `set_texts {canned_messages?, quick_replies?,
-message_expires_s?, chime?}`, `clear_messages`, `export_messages`.
+`react`/`reply` on a host's message (without `seat_id`), `mark_read
+{message_ids}`, `push_card {card_id | null}`, `set_card_layout {cards: [{id,
+visible}]}`, `set_seat_name {seat_id, screen_name}`, `set_seat {seat_id,
+color?, enabled?}`, `set_texts {canned_messages?, quick_replies?,
+message_expires_s?, chime?, chat_size?, host_phrases?, production_chime?}`,
+`clear_messages`, `export_messages`.
 
-Hosts screen: `react {message_id, seat_id, reaction}`, `reply {message_id,
-seat_id, text}`, `dismiss`, `mark_shown {message_id, seat_ids}` (delivery) and
-`register_screen {seats}` (every 2 s). The last two are kept out of the
-command log (`QUIET_COMMANDS`): they repeat on their own and say nothing an
+Hosts screen: `send_host_message {seat_id, text, kind?}` (to production; no
+host-to-host), `react {message_id, seat_id, reaction}`, `reply {message_id,
+seat_id, text}`, `dismiss {message_id, seat_ids}` (hides it on that screen),
+`mark_shown {message_id, seat_ids}` (delivery) and `register_screen {seats}`
+(every 2 s). Commands from a hosts screen are checked against the seat: a
+seat answers and hides only messages addressed to it (or to all), and sends
+only while it is switched on.
+
+`register_screen`, `mark_shown` and `mark_read` are kept out of the command
+log (`QUIET_COMMANDS`): they repeat on their own and say nothing an
 operator did. Everything else is logged with its source by the registry.
 """
 
@@ -28,9 +36,23 @@ from baja_studio.modules.hosts.config import (
     HostsSettings,
 )
 from baja_studio.modules.hosts.desk import HostsDesk
-from baja_studio.modules.hosts.messages import MESSAGE_KINDS, MessageError
+from baja_studio.modules.hosts.messages import (
+    MESSAGE_KINDS,
+    PRODUCTION,
+    MessageError,
+    seat_sender,
+)
 
-QUIET_COMMANDS = frozenset({"register_screen", "mark_shown"})
+QUIET_COMMANDS = frozenset({"register_screen", "mark_shown", "mark_read"})
+TEXT_SETTINGS = (
+    "canned_messages",
+    "quick_replies",
+    "message_expires_s",
+    "chime",
+    "chat_size",
+    "host_phrases",
+    "production_chime",
+)
 
 
 class HostsCommands:
@@ -43,9 +65,11 @@ class HostsCommands:
         self._module = module_name
         self._handlers: dict[str, Callable[[dict[str, Any], str], Any]] = {
             "send_message": self._send_message,
+            "send_host_message": self._send_host_message,
             "react": self._react,
             "reply": self._reply,
-            "dismiss": lambda args, source: self._desk.dismiss(_int_arg(args, "message_id")),
+            "dismiss": self._dismiss,
+            "mark_read": self._mark_read,
             "mark_shown": self._mark_shown,
             "register_screen": self._register_screen,
             "push_card": self._push_card,
@@ -85,24 +109,67 @@ class HostsCommands:
                 raise CommandError("that seat is switched off; turn it on under Seats first")
             target = seat.id
         text = _text_arg(args, "text", MAX_MESSAGE_LENGTH)
-        kind = args.get("kind", "info")
-        if kind not in MESSAGE_KINDS:
-            raise CommandError("'kind' must be info, question or urgent")
+        kind = _kind_arg(args)
         expires_s = args.get("expires_s", settings.message_expires_s)
         if isinstance(expires_s, bool) or not isinstance(expires_s, int) or expires_s < 0:
             raise CommandError("'expires_s' must be a whole number of seconds (0: never)")
         return self._desk.send(source, target, text, kind, expires_s or None)
+
+    def _send_host_message(self, args: dict[str, Any], source: str) -> Any:
+        seat_id = _seat_arg(args, "seat_id")
+        seat = self._current().seat(seat_id)
+        if seat is None or not seat.enabled:
+            raise CommandError("this seat is switched off; production turns it on under Seats")
+        text = _text_arg(args, "text", MAX_MESSAGE_LENGTH)
+        return self._desk.send_from_seat(seat_id, text, _kind_arg(args))
 
     def _react(self, args: dict[str, Any], source: str) -> Any:
         reaction = args.get("reaction")
         allowed = [*REACTIONS, *self._current().quick_replies]
         if reaction not in allowed:
             raise CommandError(f"'reaction' must be one of: {', '.join(allowed)}")
-        return self._desk.react(_int_arg(args, "message_id"), _seat_arg(args, "seat_id"), reaction)
+        message_id, seat_id = self._answering(args)
+        return self._desk.react(message_id, seat_id, reaction, source)
 
     def _reply(self, args: dict[str, Any], source: str) -> Any:
         text = _text_arg(args, "text", MAX_MESSAGE_LENGTH)
-        return self._desk.reply(_int_arg(args, "message_id"), _seat_arg(args, "seat_id"), text)
+        message_id, seat_id = self._answering(args)
+        return self._desk.reply(message_id, seat_id, text, source)
+
+    def _answering(self, args: dict[str, Any]) -> tuple[int, int | None]:
+        """The message and the seat answering it; None for production answering a host."""
+        message = self._desk.store.get(_int_arg(args, "message_id"))
+        from_a_host = message["to"] == PRODUCTION
+        if args.get("seat_id") is None:
+            if from_a_host:
+                return message["id"], None
+            raise CommandError("production answers only hosts' messages; give the seat answering")
+        seat_id = _seat_arg(args, "seat_id")
+        if from_a_host or message["to"] not in (seat_id, "all"):
+            raise CommandError(f"that message is not for seat {seat_id}")
+        return message["id"], seat_id
+
+    def _dismiss(self, args: dict[str, Any], source: str) -> Any:
+        message_id = _int_arg(args, "message_id")
+        if args.get("seat_ids") is None:
+            return self._desk.dismiss(message_id)
+        seat_ids = _seat_list_arg(args, "seat_ids")
+        if not seat_ids:
+            raise CommandError("'seat_ids' must name at least one seat")
+        message = self._desk.store.get(message_id)
+        for seat_id in seat_ids:
+            addressed = message["to"] in (seat_id, "all")
+            if not addressed and message["from"] != seat_sender(seat_id):
+                raise CommandError(f"that message is not for seat {seat_id}")
+        return self._desk.dismiss(message_id, seat_ids)
+
+    def _mark_read(self, args: dict[str, Any], source: str) -> Any:
+        ids = args.get("message_ids")
+        if not isinstance(ids, list) or not all(
+            isinstance(value, int) and not isinstance(value, bool) for value in ids
+        ):
+            raise CommandError("'message_ids' must be a list of message numbers")
+        return {"read": self._desk.mark_read(ids)}
 
     def _mark_shown(self, args: dict[str, Any], source: str) -> Any:
         seat_ids = _seat_list_arg(args, "seat_ids")
@@ -137,11 +204,12 @@ class HostsCommands:
         return self._change_seat(_seat_arg(args, "seat_id"), {"screen_name": name})
 
     def _set_seat(self, args: dict[str, Any], source: str) -> Any:
-        changes: dict[str, Any] = {
-            key: args[key] for key in ("color", "enabled", "audio_channel") if key in args
-        }
+        changes: dict[str, Any] = {key: args[key] for key in ("color", "enabled") if key in args}
         if not changes:
-            raise CommandError("nothing to change: give color, enabled or audio_channel")
+            raise CommandError(
+                "nothing to change: give color or enabled (the microphone and in-ears "
+                "are set on the audio setup page)"
+            )
         return self._change_seat(_seat_arg(args, "seat_id"), changes)
 
     def _change_seat(self, seat_id: int, changes: dict[str, Any]) -> Any:
@@ -154,12 +222,11 @@ class HostsCommands:
         return changed.model_dump() if changed else None
 
     def _set_texts(self, args: dict[str, Any], source: str) -> Any:
-        keys = ("canned_messages", "quick_replies", "message_expires_s", "chime")
-        changes = {key: args[key] for key in keys if key in args}
+        changes = {key: args[key] for key in TEXT_SETTINGS if key in args}
         if not changes:
-            raise CommandError(f"nothing to change: give one of {', '.join(keys)}")
+            raise CommandError(f"nothing to change: give one of {', '.join(TEXT_SETTINGS)}")
         self._save(changes)
-        return {key: getattr(self._current(), key) for key in keys}
+        return {key: getattr(self._current(), key) for key in TEXT_SETTINGS}
 
     def _save(self, patch: dict[str, Any]) -> None:
         try:
@@ -173,6 +240,13 @@ def _int_arg(args: dict[str, Any], name: str) -> int:
     if isinstance(value, bool) or not isinstance(value, int):
         raise CommandError(f"'{name}' must be a whole number")
     return value
+
+
+def _kind_arg(args: dict[str, Any]) -> str:
+    kind = args.get("kind", "info")
+    if kind not in MESSAGE_KINDS:
+        raise CommandError("'kind' must be info, question or urgent")
+    return str(kind)
 
 
 def _seat_arg(args: dict[str, Any], name: str) -> int:

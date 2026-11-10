@@ -47,6 +47,44 @@ export interface ExportResult {
   document: unknown;
 }
 
+/**
+ * Audio's link matrix as designed and the seats' offsets (WP9b §4). They
+ * live in audio's tables, not in settings, so the page adds them to the
+ * file it saves under `audio_routing` and sends them back to audio on
+ * import (server: modules/audio/routing_commands.py).
+ */
+export interface AudioRouting {
+  links: Record<string, string[]>;
+  offsets: Record<string, number>;
+}
+
+export interface AudioRoutingPlan {
+  added: string[];
+  removed: string[];
+  offsets_changed: string[];
+  applied: boolean;
+}
+
+/** The key the page writes audio's routing under in the settings file. */
+export const AUDIO_ROUTING_KEY = "audio_routing";
+
+/** The audio routing a chosen settings file carries, or null (older file, or audio was off). */
+export async function readAudioRouting(file: Blob): Promise<AudioRouting | null> {
+  try {
+    const document = JSON.parse(await file.text()) as Record<string, unknown> | null;
+    const routing = document?.[AUDIO_ROUTING_KEY];
+    return typeof routing === "object" && routing !== null ? (routing as AudioRouting) : null;
+  } catch {
+    // Not JSON: the server's dry run says so in its own words.
+    return null;
+  }
+}
+
+/** How many things an audio routing import changes. */
+export function routingChangeCount(plan: AudioRoutingPlan): number {
+  return plan.added.length + plan.removed.length + plan.offsets_changed.length;
+}
+
 /** Send a chosen file to the server; resolves with the id the commands name it by. */
 export async function uploadSettingsFile(file: Blob): Promise<string> {
   const response = await fetch("/api/home/settings-import", {

@@ -11,6 +11,9 @@ keeps a copy in memory for fast reads and writes every change through.
 - **Links** (`audio_links`): which inputs' sends follow their main fader.
   A pair is `linked` (mirrored) or `paused` (kept, not mirrored); a pair
   without a row is `unlinked`. Seeded once from the 2026 matrix.
+- **Offsets** (`audio_offsets`): how many dB a linked send sits above or
+  below its main fader (WP9b: a seat's in-ear mix is "main plus my
+  offsets"). A pair without a row is 0 dB.
 """
 
 import threading
@@ -30,6 +33,12 @@ SCHEMA_STATEMENTS = (
         channel TEXT NOT NULL,
         bus TEXT NOT NULL,
         state TEXT NOT NULL,
+        PRIMARY KEY (channel, bus)
+    )""",
+    """CREATE TABLE IF NOT EXISTS audio_offsets (
+        channel TEXT NOT NULL,
+        bus TEXT NOT NULL,
+        offset_db REAL NOT NULL,
         PRIMARY KEY (channel, bus)
     )""",
     """CREATE TABLE IF NOT EXISTS audio_meta (
@@ -161,3 +170,60 @@ class LinkStore:
                     (channel, bus, state),
                 )
         return previous
+
+    def definitions(self) -> dict[str, list[str]]:
+        """{channel: [buses]} for every pair that is linked or paused: the matrix as designed.
+
+        Pauses happen during the show; the export keeps what is linked, not
+        which links a knob happened to pause.
+        """
+        with self._lock:
+            definitions: dict[str, list[str]] = {}
+            for channel, bus in sorted(self._links):
+                definitions.setdefault(channel, []).append(bus)
+            return definitions
+
+
+class OffsetStore:
+    """Offsets in dB by (input channel, aux bus); 0 dB when there is none."""
+
+    def __init__(self, database: Database) -> None:
+        """Load the offsets kept before the last restart."""
+        self._database = database
+        self._lock = threading.Lock()
+        with database.transaction() as connection:
+            rows = connection.execute(
+                "SELECT channel, bus, offset_db FROM audio_offsets"
+            ).fetchall()
+        self._offsets: dict[tuple[str, str], float] = {
+            (row["channel"], row["bus"]): row["offset_db"] for row in rows
+        }
+
+    def get(self, channel: str, bus: str) -> float:
+        """The offset of `channel`'s send to `bus` (0 dB when none was set)."""
+        with self._lock:
+            return self._offsets.get((channel, bus), 0.0)
+
+    def all(self) -> dict[str, float]:
+        """{"channel:bus": dB} for every pair with an offset (state and export)."""
+        with self._lock:
+            return {f"{channel}:{bus}": db for (channel, bus), db in sorted(self._offsets.items())}
+
+    def set(self, channel: str, bus: str, offset_db: float) -> None:
+        """Remember an offset; 0 dB deletes the row."""
+        with self._lock:
+            if offset_db == 0.0:
+                self._offsets.pop((channel, bus), None)
+            else:
+                self._offsets[(channel, bus)] = offset_db
+        with self._database.transaction() as connection:
+            if offset_db == 0.0:
+                connection.execute(
+                    "DELETE FROM audio_offsets WHERE channel = ? AND bus = ?", (channel, bus)
+                )
+            else:
+                connection.execute(
+                    "INSERT OR REPLACE INTO audio_offsets (channel, bus, offset_db) "
+                    "VALUES (?, ?, ?)",
+                    (channel, bus, offset_db),
+                )

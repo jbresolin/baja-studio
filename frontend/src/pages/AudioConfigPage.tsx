@@ -8,6 +8,9 @@
  * WebSocket (mixer names, macro states, learn) but never touches the draft.
  *
  * The link matrix is the exception: it is live routing, applied on tap.
+ *
+ * Seats (WP9b): the hosts' microphones and in-ear buses, the production
+ * bus and microphones, and how the hosts may change their own mixes.
  */
 
 import { useState } from "react";
@@ -20,7 +23,9 @@ import { LinkMatrix } from "../components/audio/config/LinkMatrix";
 import { MacroEditor } from "../components/audio/config/MacroEditor";
 import { MvaveMapping } from "../components/audio/config/MvaveMapping";
 import { D200Card, SceneTable } from "../components/audio/config/ScenesAndD200";
+import { SeatsSection } from "../components/audio/config/SeatsSection";
 import type { AudioState } from "../lib/audio";
+import type { HostsState } from "../lib/hosts";
 import { useClientId, useModuleState, useSendCommand } from "../lib/stateHooks";
 import { useAudioSettings } from "../lib/useAudioSettings";
 
@@ -29,6 +34,7 @@ const SECTIONS = [
   ["channels", "Channels"],
   ["mvave", "M-VAVE"],
   ["links", "Link matrix"],
+  ["seats", "Seats"],
   ["macros", "Macros"],
   ["scenes", "Scenes"],
   ["d200", "D200"],
@@ -38,6 +44,10 @@ type Section = (typeof SECTIONS)[number][0];
 
 export function AudioConfigPage() {
   const live = useModuleState<AudioState>("audio");
+  const hosts = useModuleState<HostsState>("hosts");
+  const seatNames = Object.fromEntries(
+    (hosts?.seats ?? []).map((seat) => [seat.id, seat.screen_name || `Seat ${seat.id}`]),
+  );
   const settings = useAudioSettings(live?.settings_version);
   const sendCommand = useSendCommand();
   const clientId = useClientId();
@@ -145,6 +155,9 @@ export function AudioConfigPage() {
         />
       )}
       {section === "links" && <LinkMatrix draft={draft} live={live} run={run} />}
+      {section === "seats" && (
+        <SeatsSection draft={draft} edit={settings.edit} seatNames={seatNames} />
+      )}
       {section === "macros" && (
         <MacroEditor draft={draft} live={live} edit={settings.edit} ask={ask} />
       )}

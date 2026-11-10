@@ -327,6 +327,36 @@ describe("Settings page, a module with its own settings page (WP5c)", () => {
     await waitFor(() => expect(saves).toEqual([{ version: 4, values: { enabled: false } }]));
     expect(await screen.findByText("Saved.")).toBeInTheDocument();
   });
+
+  it("does the same for audio, whose fields live on Audio setup (WP9b)", async () => {
+    vi.unstubAllGlobals();
+    const requests = fakeServer((_method, path) => {
+      if (path === "/api/settings") {
+        return { status: 200, body: [{ section: "audio", title: "Audio" }] };
+      }
+      if (path === "/api/settings/audio") {
+        return {
+          status: 200,
+          body: { section: "audio", version: 2, updated_at: "", values: { enabled: true } },
+        };
+      }
+      return { status: 404, body: {} };
+    });
+    render(
+      <MemoryRouter initialEntries={["/settings/audio"]}>
+        <Routes>
+          <Route path="/settings/:section" element={<Settings />} />
+        </Routes>
+      </MemoryRouter>,
+    );
+
+    await screen.findByLabelText("audio settings JSON");
+    expect(screen.getByRole("link", { name: "⚙ Audio setup" })).toHaveAttribute(
+      "href",
+      "/audio/config",
+    );
+    expect(requests.some((request) => request.path.endsWith("/schema"))).toBe(false);
+  });
 });
 
 describe("fieldErrorsBySection", () => {

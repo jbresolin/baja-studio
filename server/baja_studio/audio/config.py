@@ -34,9 +34,12 @@ from baja_studio.audio.config_base import (
     check_channel,
 )
 from baja_studio.audio.midi_config import MidiSettings
+from baja_studio.audio.seat_config import SeatAudio, check_seats, default_seats
 from baja_studio.core.settings import ModuleSettings
 
 COLOUR_PATTERN = r"^#[0-9a-fA-F]{6}$"
+# PROD 1-4 in the 2026 patch (`audio/defaults.py`).
+DEFAULT_PRODUCTION_CHANNELS = ("5", "6", "7", "8")
 # Macro ids appear in the D200's URLs (/action/macro/<id>), so they stay URL-safe.
 MACRO_ID_PATTERN = r"^[A-Za-z0-9_-]{1,64}$"
 
@@ -191,6 +194,21 @@ class AudioSettings(ModuleSettings):
         default="bus6",
         description="The camera operator's bus: a macro opening a send to it is talkback.",
     )
+    production_bus: AuxBusId = Field(
+        default="bus5",
+        description="The production loop: a host heard here but not on LR talks to production.",
+    )
+    production_channels: list[SendSourceId] = Field(
+        default_factory=lambda: list(DEFAULT_PRODUCTION_CHANNELS),
+        description="The production microphones (for the hosts' 'production → you').",
+    )
+    seats: list[SeatAudio] = Field(default_factory=default_seats)
+    hosts_can_adjust_mix: bool = Field(
+        default=True, description="Off: the hosts screen shows the personal mix, read-only."
+    )
+    personal_mix_step_db: float = Field(
+        default=1.0, gt=0.0, le=6.0, description="How much one tap of + or - moves a source."
+    )
 
     @field_validator("channels")
     @classmethod
@@ -199,6 +217,32 @@ class AudioSettings(ModuleSettings):
             check_channel(channel)
         # Strips missing from a saved document get defaults, in mixer order.
         return {channel: channels.get(channel, ChannelConfig()) for channel in CHANNEL_IDS}
+
+    @field_validator("production_channels")
+    @classmethod
+    def _each_production_channel_once(cls, channels: list[str]) -> list[str]:
+        return sorted(set(channels), key=channels.index)
+
+    @field_validator("seats")
+    @classmethod
+    def _seats_in_order(cls, seats: list[SeatAudio]) -> list[SeatAudio]:
+        return check_seats(seats)
+
+    @model_validator(mode="after")
+    def _seats_off_the_production_bus(self) -> "AudioSettings":
+        if self.seat_on_bus(self.production_bus) is not None:
+            raise ValueError(
+                f"{self.production_bus} is the production bus; it cannot be a seat's in-ears"
+            )
+        return self
+
+    def seat(self, seat_id: int) -> SeatAudio | None:
+        """The audio side of seat `seat_id`, if there is one."""
+        return next((seat for seat in self.seats if seat.seat_id == seat_id), None)
+
+    def seat_on_bus(self, bus: str) -> SeatAudio | None:
+        """The seat whose in-ears `bus` feeds, if any."""
+        return next((seat for seat in self.seats if seat.iem_bus == bus), None)
 
     @model_validator(mode="after")
     def _check_references(self) -> "AudioSettings":

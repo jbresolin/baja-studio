@@ -3,8 +3,9 @@
 Shared by the runnable fake (`fake_xr18.py`, real UDP) and the in-process
 network the tests use. It models what the studio relies on:
 
-- Every strip's fader, mute (`mix/on`, 1 = playing), name, pan and the six
-  aux sends of each input, at the addresses in `adapters/xr18_addresses.py`.
+- Every strip's fader, mute (`mix/on`, 1 = playing), name, pan, LR assign
+  and the six aux sends of each input (level, on switch, tap), at the
+  addresses in `adapters/xr18_addresses.py`.
 - A message without arguments is a query: the current value comes back.
 - A message with an argument sets the value and is pushed to every client
   subscribed with `/xremote` within the last 10 s, the sender included
@@ -31,10 +32,13 @@ from baja_studio.adapters.xr18_addresses import (
     SNAPSHOT_LOAD,
     SUBSCRIBE,
     fader_address,
+    lr_assign_address,
     mute_address,
     name_address,
     pan_address,
     send_address,
+    send_on_address,
+    send_tap_address,
 )
 
 SUBSCRIPTION_SECONDS = 10.0
@@ -44,8 +48,16 @@ FLOOD_WINDOW_SECONDS = 0.5
 Outgoing = list[tuple[str, bytes]]
 
 
+# Where a fresh fake takes its aux sends from: pre-fader, as monitor mixes usually are.
+DEFAULT_SEND_TAP = 3
+
+
 def default_mixer_values() -> dict[str, OscArgument]:
-    """A freshly reset mixer: faders at unity, nothing muted, sends off, pans centred."""
+    """A freshly reset mixer: faders at unity, nothing muted, sends off, pans centred.
+
+    Every input is assigned to LR, and every send is switched on and taken
+    pre-fader (`DEFAULT_SEND_TAP`); the hosts' audio card reads all three.
+    """
     values: dict[str, OscArgument] = {}
     for channel in CHANNEL_IDS:
         values[fader_address(channel)] = 0.75
@@ -53,8 +65,11 @@ def default_mixer_values() -> dict[str, OscArgument]:
         values[name_address(channel)] = ""
     for channel in SEND_SOURCES:
         values[pan_address(channel)] = 0.5
+        values[lr_assign_address(channel)] = 1
         for bus in AUX_BUSES:
             values[send_address(channel, bus)] = 0.0
+            values[send_on_address(channel, bus)] = 1
+            values[send_tap_address(channel, bus)] = DEFAULT_SEND_TAP
     return values
 
 

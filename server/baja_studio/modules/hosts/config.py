@@ -1,16 +1,18 @@
 """The hosts module's settings: seats, card layout, canned messages and quick replies.
 
 Seats, not users (WP9 brief §2): four fixed seats with a typed screen name
-and a colour, no accounts. A seat may name the mixer channel of its
-microphone (`audio_channel`), so the audio card can show it live or muted
-in the seat's colour.
+and a colour, no accounts. Which microphone and in-ear bus belong to a seat
+is an audio fact, set in the audio settings (WP9b §2); WP9's
+`audio_channel` is dropped from saved seats (`settings_version` 2).
 
 `layout` is production's choice of card order and visibility; an empty list
 means "every card by priority". The pushed card is not here: it is a
 moment in the show, so it lives in state only.
 """
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from typing import Any, Literal
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from baja_studio.core.settings import ModuleSettings
 
@@ -35,10 +37,15 @@ class SeatSettings(StrictModel):
     screen_name: str = Field(default="", max_length=24, description="The name messages show.")
     color: str = Field(default="#5b7fff", pattern=COLOUR_PATTERN)
     enabled: bool = Field(default=True, description="Off: production cannot address this seat.")
-    audio_channel: str | None = Field(
-        default=None,
-        description="The mixer channel of this seat's microphone (1-16), for the audio card.",
-    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _forget_the_wp9_audio_channel(cls, values: Any) -> Any:
+        # WP9 kept the seat's microphone here; it moved to the audio settings.
+        # Saved seats and older exported files still carry it: drop it.
+        if isinstance(values, dict):
+            return {key: value for key, value in values.items() if key != "audio_channel"}
+        return values
 
 
 class CardLayoutEntry(StrictModel):
@@ -51,14 +58,10 @@ class CardLayoutEntry(StrictModel):
 def default_seats() -> list[SeatSettings]:
     """Two hosts and two guests, in the audio page's channel colours (channels 1-4)."""
     return [
-        SeatSettings(id=1, screen_name="Host 1", color="#e74c3c", audio_channel="1"),
-        SeatSettings(id=2, screen_name="Host 2", color="#e67e22", audio_channel="2"),
-        SeatSettings(
-            id=3, screen_name="Guest 1", color="#f1c40f", enabled=False, audio_channel="3"
-        ),
-        SeatSettings(
-            id=4, screen_name="Guest 2", color="#2ecc71", enabled=False, audio_channel="4"
-        ),
+        SeatSettings(id=1, screen_name="Host 1", color="#e74c3c"),
+        SeatSettings(id=2, screen_name="Host 2", color="#e67e22"),
+        SeatSettings(id=3, screen_name="Guest 1", color="#f1c40f", enabled=False),
+        SeatSettings(id=4, screen_name="Guest 2", color="#2ecc71", enabled=False),
     ]
 
 
@@ -70,10 +73,15 @@ DEFAULT_CANNED_MESSAGES = [
     "mention sponsor",
 ]
 DEFAULT_QUICK_REPLIES = ["ok", "need 1 min", "repeat?"]
+# What a host can send production with one tap (WP9b §1), in the hosts' language.
+DEFAULT_HOST_PHRASES = ["preciso de 1 min", "problema no áudio", "repete?", "pronto"]
 
 
 class HostsSettings(ModuleSettings):
     """Settings of the hosts module."""
+
+    # 2: seats no longer carry `audio_channel` (it moved to the audio settings).
+    settings_version = 2
 
     seats: list[SeatSettings] = Field(default_factory=default_seats)
     layout: list[CardLayoutEntry] = Field(
@@ -98,6 +106,18 @@ class HostsSettings(ModuleSettings):
         default=False,
         description="A soft sound on the hosts screen for a new message (hosts wear IEMs).",
     )
+    chat_size: Literal["small", "medium", "large"] = Field(
+        default="small",
+        description="How much of the hosts screen the chat takes when nothing is new.",
+    )
+    host_phrases: list[str] = Field(
+        default_factory=lambda: list(DEFAULT_HOST_PHRASES),
+        description="One-tap messages a host can send to production.",
+    )
+    production_chime: bool = Field(
+        default=True,
+        description="A sound on the Hosts page when a host sends a message.",
+    )
 
     @field_validator("seats")
     @classmethod
@@ -110,6 +130,11 @@ class HostsSettings(ModuleSettings):
     @classmethod
     def _canned_fit_a_message(cls, messages: list[str]) -> list[str]:
         return _non_blank(messages, MAX_MESSAGE_LENGTH, "canned message")
+
+    @field_validator("host_phrases")
+    @classmethod
+    def _phrases_fit_a_message(cls, phrases: list[str]) -> list[str]:
+        return _non_blank(phrases, MAX_MESSAGE_LENGTH, "host phrase")
 
     @field_validator("quick_replies")
     @classmethod

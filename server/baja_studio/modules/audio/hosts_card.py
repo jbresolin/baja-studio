@@ -1,15 +1,17 @@
-"""Audio's card on the hosts screen (WP9 §3): seat microphones live or muted, and talkback.
+"""Audio's card on the hosts screen: where each seat's microphone is heard, and talkback.
 
-The card renders from `audio` state: each seat's channel (the hosts module's
-seats name it) is live or muted in the seat's colour. Talkback is "some
-macro that opens a send to the camera operator's bus is active": the
-macros are found here, from the settings, so the page only looks their ids
-up in `audio.macros`. The camera operator's bus is the `talkback_bus`
-setting (bus 6 in the 2026 patch).
+The card renders `audio.hosts_view` (`hosts_view.py`), joined with the hosts
+module's seats by `seat_id` for names and colours (WP9b §2). Per seat:
+LIVE, TO PRODUCTION, MUTED or "not mapped", and "production → you" when a
+production microphone is open into the seat's in-ears; tapping the card
+opens the seat's personal-mix overlay.
+
+Talkback is "some macro that opens a send to the camera operator's bus is
+active"; the macros are found here from the settings (`talkback_macros`),
+the bus is the `talkback_bus` setting (bus 6 in the 2026 patch).
 """
 
 from baja_studio.audio.config import (
-    AudioSettings,
     MacroConfig,
     MacroStep,
     RestoreLevelsStep,
@@ -18,19 +20,14 @@ from baja_studio.audio.config import (
 from baja_studio.core.hosts_cards import HostsCard
 
 
-def audio_hosts_card(settings: AudioSettings) -> HostsCard:
-    """The "Audio" card, with the talkback macros and the bus's label as options."""
-    bus = settings.talkback_bus
+def audio_hosts_card() -> HostsCard:
+    """The "Audio" card; everything it shows is in `audio.hosts_view`."""
     return HostsCard(
         id="audio",
         title="Audio",
         priority=50,
-        state_path="audio",
-        component="audio_state",
-        options={
-            "talkback_macros": talkback_macros(settings.macros, bus),
-            "talkback_label": settings.channels[bus].label or "camera op",
-        },
+        state_path="audio.hosts_view",
+        component="seat_audio",
     )
 
 

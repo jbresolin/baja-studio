@@ -5,10 +5,10 @@ import type { CardView, HostsMessage, HostsState, Seat } from "../src/lib/hosts"
 /** Ana on seat 1 (red), Bruno on seat 2 (orange), guests off; nobody online. */
 export function seats(): Seat[] {
   return [
-    seat({ id: 1, screen_name: "Ana", color: "#e74c3c", audio_channel: "1" }),
-    seat({ id: 2, screen_name: "Bruno", color: "#e67e22", audio_channel: "2" }),
-    seat({ id: 3, screen_name: "Guest 1", color: "#f1c40f", enabled: false, audio_channel: "3" }),
-    seat({ id: 4, screen_name: "Guest 2", color: "#2ecc71", enabled: false, audio_channel: "4" }),
+    seat({ id: 1, screen_name: "Ana", color: "#e74c3c" }),
+    seat({ id: 2, screen_name: "Bruno", color: "#e67e22" }),
+    seat({ id: 3, screen_name: "Guest 1", color: "#f1c40f", enabled: false }),
+    seat({ id: 4, screen_name: "Guest 2", color: "#2ecc71", enabled: false }),
   ];
 }
 
@@ -17,7 +17,6 @@ export function seat(overrides: Partial<Seat> & Pick<Seat, "id">): Seat {
     screen_name: `Seat ${overrides.id}`,
     color: "#5b7fff",
     enabled: true,
-    audio_channel: null,
     online: false,
     screens: 0,
     ...overrides,
@@ -49,9 +48,8 @@ export function layout(): CardView[] {
       id: "audio",
       module: "audio",
       title: "Audio",
-      state_path: "audio",
-      component: "audio_state",
-      options: { talkback_macros: ["prod1-talk-cam"], talkback_label: "CAMERA OP" },
+      state_path: "audio.hosts_view",
+      component: "seat_audio",
     }),
     card({
       id: "clock",
@@ -92,10 +90,22 @@ export function message(overrides: Partial<HostsMessage> & Pick<HostsMessage, "i
     reactions: [],
     reply_text: null,
     reply_seat_id: null,
+    reply_by: null,
+    reply_at: null,
     shown: [],
     dismissed_at: null,
+    dismissed_by: [],
+    read_at: null,
     ...overrides,
   };
+}
+
+/** A host's message to production ("seat:<id>" → "production"), unread. */
+export function hostMessage(
+  overrides: Partial<HostsMessage> & Pick<HostsMessage, "id"> & { seat: number },
+): HostsMessage {
+  const { seat: seatId, ...rest } = overrides;
+  return message({ from: `seat:${seatId}`, to: "production", text: "pronto", ...rest });
 }
 
 export function hostsState(overrides: Partial<HostsState> = {}): HostsState {
@@ -111,6 +121,9 @@ export function hostsState(overrides: Partial<HostsState> = {}): HostsState {
       reactions: ["👍", "👎", "✋", "❓"],
       message_expires_s: 60,
       chime: false,
+      chat_size: "small",
+      host_phrases: ["preciso de 1 min", "pronto"],
+      production_chime: true,
     },
     ...overrides,
   };

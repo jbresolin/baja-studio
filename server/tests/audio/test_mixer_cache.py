@@ -33,6 +33,39 @@ def test_sends_names_and_pans_are_kept() -> None:
     assert cache.pans == {"3": 0.4}
 
 
+def test_lr_assign_and_a_sends_on_switch_and_tap_are_kept_and_changes_noticed() -> None:
+    # What the hosts' audio card needs: is channel 1 on LR, is its send to
+    # bus5 switched on, and where is that send taken from.
+    cache = MixerCache()
+    lr = ParsedAddress("lr_assign", "1")
+    send_on = ParsedAddress("send_on", "1", "bus5")
+    tap = ParsedAddress("send_tap", "1", "bus5")
+
+    assert cache.apply(lr, 1) == CacheChange("lr_assign", "1", None, None, True)
+    assert cache.apply(send_on, 0) == CacheChange("send_on", "1", "bus5", None, False)
+    assert cache.apply(tap, 3) == CacheChange("send_tap", "1", "bus5", None, 3)
+    # The same value again is not a change; a new one is.
+    assert cache.apply(lr, 1) is None
+    assert cache.apply(send_on, 0) is None
+    assert cache.apply(tap, 4) == CacheChange("send_tap", "1", "bus5", 3, 4)
+    assert (cache.lr_assigns, cache.send_ons, cache.send_taps) == (
+        {"1": True},
+        {("1", "bus5"): False},
+        {("1", "bus5"): 4},
+    )
+
+
+def test_clearing_forgets_the_switches_and_taps_too() -> None:
+    cache = MixerCache()
+    cache.apply(ParsedAddress("lr_assign", "1"), 1)
+    cache.apply(ParsedAddress("send_on", "1", "bus5"), 1)
+    cache.apply(ParsedAddress("send_tap", "1", "bus5"), 3)
+
+    cache.clear()
+
+    assert (cache.lr_assigns, cache.send_ons, cache.send_taps) == ({}, {}, {})
+
+
 def test_a_value_of_the_wrong_type_is_ignored() -> None:
     cache = MixerCache()
 

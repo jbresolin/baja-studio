@@ -59,17 +59,19 @@ def test_relinking_brings_the_send_to_the_fader_at_once(audio: AudioStudio) -> N
 
 
 def test_adjusting_a_linked_send_directly_pauses_its_link(audio: AudioStudio) -> None:
-    # Guest 2 wants more of host 1 in their in-ear (bus4). The tweak must
-    # survive host 1's next fader move (in 2026 the D200 nudge did not).
+    # The camera operator (bus6, not a seat's in-ears) wants more of host 1.
+    # The tweak must survive host 1's next fader move (in 2026 the D200
+    # nudge did not). On a seat's in-ear bus the link stays instead and the
+    # tweak becomes an offset (test_audio_seat_mix.py).
     audio.connect_mixer()
 
-    audio.command("nudge", channel="1", bus="bus4", delta_db=3.0, source="device:d200")
-    tweaked = audio.state("channels.1")["sends"]["bus4"]
+    audio.command("nudge", channel="1", bus="bus6", delta_db=3.0, source="device:d200")
+    tweaked = audio.state("channels.1")["sends"]["bus6"]
     audio.command("set_fader", channel="1", level=0.5)
     audio.settle()
 
-    assert audio.state("links")["1"]["bus4"] == "paused"
-    assert audio.state("channels.1")["sends"]["bus4"] == tweaked
+    assert audio.state("links")["1"]["bus6"] == "paused"
+    assert audio.state("channels.1")["sends"]["bus6"] == tweaked
 
 
 def test_a_send_closed_by_a_macro_stays_closed_when_its_linked_fader_moves(

@@ -7,6 +7,9 @@ the plan: what would be written, stored or forgotten, in order.
 
 from dataclasses import dataclass, field
 
+import pytest
+
+from baja_studio.adapters.xr18_levels import db_to_level
 from baja_studio.audio.config import MacroConfig
 from baja_studio.audio.macros import (
     PlannedChange,
@@ -24,6 +27,7 @@ class FakeView:
     mutes: dict[str, bool] = field(default_factory=dict)
     stored_levels: dict[str, float] = field(default_factory=dict)
     links: dict[tuple[str, str], str] = field(default_factory=dict)
+    offsets: dict[tuple[str, str], float] = field(default_factory=dict)
 
     def level(self, channel: str, bus: str) -> float | None:
         return self.levels.get((channel, bus))
@@ -36,6 +40,9 @@ class FakeView:
 
     def link_state(self, channel: str, bus: str) -> str:
         return self.links.get((channel, bus), "unlinked")
+
+    def offset_db(self, channel: str, bus: str) -> float:
+        return self.offsets.get((channel, bus), 0.0)
 
 
 def macro(**fields: object) -> MacroConfig:
@@ -94,6 +101,21 @@ def test_opening_a_linked_send_follows_its_fader_rather_than_the_old_level() -> 
     )
 
     assert plan_open(view, "5", "bus1")[-1] == PlannedChange("level", "5", "bus1", 0.5, 0.0)
+
+
+def test_opening_a_linked_send_on_a_seat_bus_adds_the_seats_offset() -> None:
+    # Host 1 keeps PROD 1 2 dB louder than main in their in-ears (an offset,
+    # WP9b). Reopening the talkback route goes to main + 2 dB, not to main.
+    view = FakeView(
+        levels={("5", "main"): 0.75, ("5", "bus1"): 0.0},
+        stored_levels={"5:bus1": 0.6},
+        links={("5", "bus1"): "linked"},
+        offsets={("5", "bus1"): 2.0},
+    )
+
+    reopened = plan_open(view, "5", "bus1")[-1]
+
+    assert reopened.value == pytest.approx(db_to_level(2.0))
 
 
 def test_later_steps_see_what_earlier_steps_planned() -> None:

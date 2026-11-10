@@ -89,6 +89,39 @@ def send_address(channel: str, bus: str) -> str:
     return f"{channel_prefix(channel)}/mix/{int(bus.removeprefix('bus')):02d}/level"
 
 
+def lr_assign_address(channel: str) -> str:
+    """`mix/lr`: int 1 when the strip is assigned to the main mix (LR), 0 when not.
+
+    The X Air name (the X32 calls it `mix/st`). To be confirmed at the bench
+    (docs/bench/wp9b.md).
+    """
+    return f"{channel_prefix(channel)}/mix/lr"
+
+
+def send_on_address(channel: str, bus: str) -> str:
+    """`/ch/01/mix/03/on`: int 1 when an input's send to an aux bus is switched on.
+
+    The X32 has this switch; whether the XR18 does is to be confirmed at the
+    bench. A mixer that never answers leaves it unknown, and unknown counts
+    as on (`audio/seat_states.py`).
+    """
+    return _send_parameter(channel, bus, "on")
+
+
+def send_tap_address(channel: str, bus: str) -> str:
+    """`/ch/01/mix/03/tap`: where the send is taken from, an int (see `POST_FADER_TAPS`)."""
+    return _send_parameter(channel, bus, "tap")
+
+
+# Send taps: 0 input, 1 pre-EQ, 2 post-EQ, 3 pre-fader, 4 post-fader, 5 sub-group
+# (which follows the fader too). Only the last two depend on the channel's fader.
+POST_FADER_TAPS = frozenset({4, 5})
+
+
+def _send_parameter(channel: str, bus: str, parameter: str) -> str:
+    return send_address(channel, bus).removesuffix("/level") + f"/{parameter}"
+
+
 def point_address(channel: str, bus: str) -> str:
     """The address holding a send point's level: the fader for "main", else the send."""
     return fader_address(channel) if bus == MAIN_POINT else send_address(channel, bus)
@@ -131,7 +164,9 @@ def normalise_point_bus(text: str) -> str:
 class ParsedAddress:
     """What an incoming address refers to.
 
-    `kind` is "fader", "mute", "name", "pan" or "send"; `bus` is set for sends.
+    `kind` is "fader", "mute", "name", "pan", "lr_assign", or for an input's
+    send to an aux bus "send" (its level), "send_on" or "send_tap"; `bus` is
+    set for the last three.
     """
 
     kind: str
@@ -145,8 +180,12 @@ _ADDRESS_PATTERNS = {
     "mute": re.compile(_PREFIX_PATTERN + r"/mix/on"),
     "name": re.compile(_PREFIX_PATTERN + r"/config/name"),
     "pan": re.compile(_PREFIX_PATTERN + r"/mix/pan"),
+    "lr_assign": re.compile(_PREFIX_PATTERN + r"/mix/lr"),
     "send": re.compile(_PREFIX_PATTERN + r"/mix/(?P<send>\d{2})/level"),
+    "send_on": re.compile(_PREFIX_PATTERN + r"/mix/(?P<send>\d{2})/on"),
+    "send_tap": re.compile(_PREFIX_PATTERN + r"/mix/(?P<send>\d{2})/tap"),
 }
+_SEND_KINDS = ("send", "send_on", "send_tap")
 
 
 def parse_address(address: str) -> ParsedAddress | None:
@@ -162,7 +201,7 @@ def parse_address(address: str) -> ParsedAddress | None:
         channel = _channel_from_match(address, match)
         if channel is None:
             return None
-        if kind == "send":
+        if kind in _SEND_KINDS:
             number = int(match.group("send"))
             if not 1 <= number <= len(AUX_BUSES):
                 return None  # sends 7-10 go to the effects

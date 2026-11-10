@@ -6,9 +6,14 @@
  *
  * Every change is a command to the `hosts` module; the server keeps all the
  * state, so two producers see the same conversation.
+ *
+ * WP9b: messages the hosts send to production show in the history in the
+ * seat's colour, with an unread count by the title (cleared with "Mark
+ * read" or by answering) and a chime for each new one when the
+ * `production_chime` setting is on (default on: production is not on IEMs).
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { LayoutEditor } from "../components/hosts/LayoutEditor";
@@ -16,7 +21,8 @@ import { MessageComposer } from "../components/hosts/MessageComposer";
 import { MessageHistory } from "../components/hosts/MessageHistory";
 import { SeatsEditor } from "../components/hosts/SeatsEditor";
 import { TextsEditor } from "../components/hosts/TextsEditor";
-import type { HostsState } from "../lib/hosts";
+import { playChime } from "../lib/chime";
+import { isFromHost, unreadFromHosts, type HostsState } from "../lib/hosts";
 import { useModuleState, useSendCommand } from "../lib/stateHooks";
 
 const ERROR_SHOWN_MS = 4000;
@@ -47,12 +53,29 @@ export function HostsControlPage() {
     }
   };
 
+  useProductionChime(state);
+
   if (!state) return <p className="muted">Waiting for the studio service…</p>;
+  const unread = unreadFromHosts(state.messages);
 
   return (
     <div className="hosts-control">
       <div className="page-header">
         <h1>Hosts</h1>
+        {unread.length > 0 && (
+          <>
+            <span className="badge badge-unread" data-testid="unread-count">
+              {unread.length} new from the hosts
+            </span>
+            <button
+              onClick={() =>
+                void run("mark_read", { message_ids: unread.map((message) => message.id) })
+              }
+            >
+              Mark read
+            </button>
+          </>
+        )}
         <Link to="/hosts" target="_blank">
           Open the hosts screen
         </Link>
@@ -92,4 +115,20 @@ export function HostsControlPage() {
       )}
     </div>
   );
+}
+
+/** A chime for each new message from a host while this page is open, when production wants it. */
+function useProductionChime(state: HostsState | undefined) {
+  const newestSeen = useRef<number | null>(null);
+  useEffect(() => {
+    if (!state) return;
+    const newest = state.messages.at(-1)?.id ?? 0;
+    const previous = newestSeen.current;
+    newestSeen.current = newest;
+    // Opening the page is not news: only messages after that chime.
+    if (previous === null || !state.config.production_chime) return;
+    if (state.messages.some((message) => message.id > previous && isFromHost(message))) {
+      playChime();
+    }
+  }, [state]);
 }
