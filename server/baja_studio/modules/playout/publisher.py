@@ -4,16 +4,21 @@ Layout (brief §4 plus what the page needs):
 
 - `obs`: connection (`not_configured`, `connecting`, `connected`, `offline`,
   `auth_failed`), message, current_scene, address, scenes (OBS's scene list)
-- `program`: clip on air, slot, started_at, position_s, duration_s, remaining_s
-- `preview`: the cued clip and its slot
+- `program`: clip on air, slot, started_at, position_s, duration_s,
+  remaining_s, speed_percent, and `transport` ({state: playing | paused |
+  other, position_s, fps, speed_percent}) for the media controls (WP5c)
+- `preview`: the cued clip, its slot and its replay speed; `cue_speed_percent`
+  the speed the next cue gets when nothing is cued
 - `queue`: entries in play order (entry_id, clip_id, added_by, added_at,
   playlist_id, playlist, title, duration_s, missing); `queue_total_s` their
   known durations summed, `queue_unknown` how many have no duration
 - `library`: every clip keyed by id (so one clip changing is one small patch);
-  `library_summary`: counts per group, missing, unplayed, unmatched
+  `library_summary`: counts per group, missing, unplayed, unmatched, and
+  `pending_probe` (present files not measured yet: a rescan's progress)
 - `playlists`: every playlist (id, name, shuffle, on_air, clip_ids)
 - `return_target`: the "Return to" control and its warning (`return_target.py`)
-- `tools`: whether ffprobe/ffmpeg were found, and the banner text if not
+- `tools`: where ffprobe/ffmpeg were found (`playout/tools.py`, the one
+  resolver), and the banner text if one is missing
 - `cue_problem`: why the last cue failed (cleared by the next good one)
 - `notice`: the latest problem to show as a toast ({id, message}), e.g. an
   on-air action that failed
@@ -26,12 +31,14 @@ import itertools
 from collections.abc import Callable
 from typing import Any
 
+from baja_studio.adapters.obs_protocol import MediaState
 from baja_studio.adapters.obs_requests import MediaStatus
 from baja_studio.modules.playout.hosts_view import build_hosts_view
+from baja_studio.modules.playout.transport import frames_per_second
 from baja_studio.playout.library import LibraryStore
 from baja_studio.playout.playlists import PlaylistStore
 from baja_studio.playout.queue_store import QueueStore
-from baja_studio.playout.switcher import ProgramSwitcher
+from baja_studio.playout.switcher import OnAir, ProgramSwitcher
 
 UpdateState = Callable[[str, Any], None]
 
@@ -42,6 +49,7 @@ def initial_playout_state() -> dict[str, Any]:
         "obs": {"connection": "not_configured", "message": "", "current_scene": None, "scenes": []},
         "program": None,
         "preview": None,
+        "cue_speed_percent": 100,
         "queue": [],
         "queue_total_s": 0.0,
         "queue_unknown": 0,
@@ -49,6 +57,7 @@ def initial_playout_state() -> dict[str, Any]:
         "library_summary": {
             "total": 0,
             "missing": 0,
+            "pending_probe": 0,
             "unplayed": 0,
             "unmatched": 0,
             "per_group": {},
@@ -86,6 +95,8 @@ class PlayoutPublisher:
         self._notice_ids = itertools.count(1)
         # What the hosts view is built from, kept as last published.
         self._program: dict[str, Any] | None = None
+        # The airing `_program` describes (a speed change republishes the same one).
+        self._program_airing: OnAir | None = None
         self._cued_clip: dict[str, Any] | None = None
         self._queue_entries: list[dict[str, Any]] = []
         self._hosts_view: dict[str, Any] | None = None
@@ -110,6 +121,10 @@ class PlayoutPublisher:
                 self._update(f"library.{clip_id}", clip)
         self._update("library_summary", self._library.summary())
         self.publish_queue()
+
+    def publish_library_summary(self) -> None:
+        """The counts alone (after a change that touched no single clip, or every one)."""
+        self._update("library_summary", self._library.summary())
 
     def publish_queue(self) -> None:
         """The queue with each entry's title, duration and playlist name."""
@@ -136,26 +151,42 @@ class PlayoutPublisher:
         self._update("playlists", self._playlists.all())
 
     def publish_program(self, switcher: ProgramSwitcher) -> None:
-        """What is on air (position unknown until the next poll)."""
+        """What is on air; a new airing starts at 0, the same one keeps its last position."""
         program = switcher.program
+        same_airing = program is not None and program is self._program_airing
+        self._program_airing = program
         if program is None:
             self._program = None
             self._update("program", None)
         else:
-            duration = program.clip.get("duration_s")
+            previous = self._program or {}
+            # A speed change or swap republishes the airing: keep the position it had.
+            position = previous.get("position_s", 0.0) if same_airing else 0.0
+            duration = previous.get("duration_s") if same_airing else None
+            duration = duration if duration is not None else program.clip.get("duration_s")
+            remaining = max(0.0, duration - position) if duration is not None else None
+            transport_state = previous.get("transport", {}).get("state") if same_airing else None
             self._program = {
                 "clip": program.clip,
                 "slot": program.slot,
                 "started_at": program.started_at,
-                "position_s": 0.0,
+                "position_s": position,
                 "duration_s": duration,
-                "remaining_s": duration,
+                "remaining_s": remaining,
+                "speed_percent": program.speed_percent,
+                "transport": _transport(
+                    transport_state or "playing", position, program.clip, program.speed_percent
+                ),
             }
             self._update("program", dict(self._program))
         self.publish_hosts_view()
 
+    def program_view(self) -> dict[str, Any] | None:
+        """The program as last published (a copy), or None."""
+        return dict(self._program) if self._program is not None else None
+
     def publish_position(self, status: MediaStatus) -> None:
-        """Position from the 5 Hz poll of the source on air."""
+        """Position and play/pause from the 5 Hz poll of the clip on air, or a transport action."""
         position = status.cursor_s or 0.0
         duration = status.duration_s
         remaining = max(0.0, duration - position) if duration is not None else None
@@ -163,15 +194,34 @@ class PlayoutPublisher:
         self._update("program.duration_s", duration)
         self._update("program.remaining_s", remaining)
         if self._program is not None:
-            self._program.update(position_s=position, duration_s=duration, remaining_s=remaining)
+            transport = _transport(
+                _transport_state(status.state),
+                position,
+                self._program["clip"],
+                self._program["speed_percent"],
+            )
+            if transport != self._program["transport"]:
+                self._update("program.transport", transport)
+            self._program.update(
+                position_s=position, duration_s=duration, remaining_s=remaining, transport=transport
+            )
         self.publish_hosts_view()
 
     def publish_preview(self, switcher: ProgramSwitcher) -> None:
         """The cued clip."""
         cued = switcher.cued
         self._cued_clip = cued.clip if cued else None
-        self._update("preview", {"clip": cued.clip, "slot": cued.slot} if cued else None)
+        self._update(
+            "preview",
+            {"clip": cued.clip, "slot": cued.slot, "speed_percent": cued.speed_percent}
+            if cued
+            else None,
+        )
         self.publish_hosts_view()
+
+    def publish_next_cue_speed(self, speed_percent: int) -> None:
+        """The replay speed the next cue gets (100 unless the operator chose slow motion)."""
+        self._update("cue_speed_percent", speed_percent)
 
     def publish_hosts_view(self) -> None:
         """The hosts screen's now/next; sent only when it changed (about 1 Hz while playing)."""
@@ -220,3 +270,23 @@ class PlayoutPublisher:
     def publish_export(self, marker: str | None) -> None:
         """The stream-start marker."""
         self._update("export", {"stream_start_marker": marker})
+
+
+def _transport_state(media_state: str) -> str:
+    if media_state == MediaState.PLAYING:
+        return "playing"
+    if media_state == MediaState.PAUSED:
+        return "paused"
+    return "other"
+
+
+def _transport(
+    state: str, position_s: float, clip: dict[str, Any], speed_percent: int
+) -> dict[str, Any]:
+    """`program.transport`: what the media controls need about the clip on air."""
+    return {
+        "state": state,
+        "position_s": position_s,
+        "fps": frames_per_second(clip),
+        "speed_percent": speed_percent,
+    }

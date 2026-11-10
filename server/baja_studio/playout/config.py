@@ -12,6 +12,9 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from baja_studio.core.settings import ModuleSettings
 
 PostClipBehaviour = Literal["return", "hold", "fade"]
+LiveSpeedChange = Literal["reload", "swap"]
+# Blank (or the bare name) means the installer's copy, else PATH.
+TOOL_PATH_HELP = "Leave blank for the bundled copy."
 # Shown (state, health, readiness) while OBS has no address or no password.
 OBS_NOT_CONFIGURED = "OBS not configured: set its address and password in Playout → Settings"
 
@@ -115,6 +118,14 @@ class ObsSettings(StrictModel):
     # Transition names are localised in OBS (pt-BR: "Corte", "Desvanecer").
     cut_transition: str = Field(default="Cut", min_length=1)
     fade_transition: str = Field(default="Fade", min_length=1)
+    live_speed_change: LiveSpeedChange = Field(
+        default="swap",
+        description=(
+            "Changing the speed of the clip on air. swap: load it at the new speed in the "
+            "other playback source and cut (seamless); reload: change the source on air and "
+            "seek back (OBS reloads the file: may show a hiccup)."
+        ),
+    )
 
     @property
     def is_configured(self) -> bool:
@@ -132,10 +143,15 @@ class ObsSettings(StrictModel):
 
 
 class ToolsSettings(StrictModel):
-    """ffprobe/ffmpeg, used for durations and thumbnails."""
+    """ffprobe/ffmpeg, used for durations, frame rates and thumbnails (`playout/tools.py`)."""
 
-    ffprobe_path: str = Field(default="ffprobe", min_length=1)
-    ffmpeg_path: str = Field(default="ffmpeg", min_length=1)
+    ffprobe_path: str = Field(default="", description=TOOL_PATH_HELP)
+    ffmpeg_path: str = Field(default="", description=TOOL_PATH_HELP)
+
+    @field_validator("ffprobe_path", "ffmpeg_path", mode="before")
+    @classmethod
+    def _strip_path(cls, value: Any) -> Any:
+        return value.strip() if isinstance(value, str) else value
 
 
 class OperatorsSettings(StrictModel):

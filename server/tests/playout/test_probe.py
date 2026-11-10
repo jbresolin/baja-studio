@@ -5,6 +5,7 @@ program (normally `subprocess.run`), and each test hands it a fake that
 records the command line and answers what the test wants.
 """
 
+import json
 import subprocess
 from collections.abc import Callable
 from pathlib import Path
@@ -14,10 +15,10 @@ import pytest
 
 from baja_studio.playout.probe import (
     PROBE_TIMEOUT_SECONDS,
+    MediaInfo,
     MediaProber,
     ProbeError,
     thumbnail_at,
-    tools_status,
 )
 
 
@@ -47,23 +48,33 @@ class FakeRun:
         return subprocess.CompletedProcess(command, returncode, stdout, stderr)
 
 
-def test_the_duration_comes_from_this_exact_ffprobe_command() -> None:
-    # ffprobe prints the container duration alone on a line.
-    run = FakeRun(stdout="12.345000\n")
+def ffprobe_json(duration: str, frame_rate: str | None) -> str:
+    """What ffprobe prints as JSON for the first video stream and the container."""
+    streams = [{"avg_frame_rate": frame_rate}] if frame_rate is not None else []
+    return json.dumps({"streams": streams, "format": {"duration": duration}})
+
+
+def test_duration_and_frame_rate_come_from_this_exact_ffprobe_command() -> None:
+    # ffprobe prints the first video stream's average frame rate (as a
+    # fraction: NTSC is 30000/1001) and the container duration, as JSON.
+    run = FakeRun(stdout=ffprobe_json("12.345000", "30000/1001"))
     prober = MediaProber("C:/tools/ffprobe.exe", "ffmpeg", run)
 
-    duration = prober.probe_duration("D:/clips/enduro/42/3.mp4")
+    info = prober.probe("D:/clips/enduro/42/3.mp4")
 
-    assert duration == pytest.approx(12.345)
+    assert info.duration_s == pytest.approx(12.345)
+    assert info.fps == pytest.approx(29.97, abs=0.01)
     command, options = run.calls[0]
     assert command == [
         "C:/tools/ffprobe.exe",
         "-v",
         "error",
+        "-select_streams",
+        "v:0",
         "-show_entries",
-        "format=duration",
+        "format=duration:stream=avg_frame_rate",
         "-of",
-        "default=noprint_wrappers=1:nokey=1",
+        "json",
         "D:/clips/enduro/42/3.mp4",
     ]
     # A timeout, so a file on a dead network share cannot hang the worker.
@@ -73,10 +84,32 @@ def test_the_duration_comes_from_this_exact_ffprobe_command() -> None:
 
 def test_no_duration_in_the_output_is_a_probe_error() -> None:
     # Some broken files make ffprobe print "N/A" and exit 0.
-    prober = MediaProber("ffprobe", "ffmpeg", FakeRun(stdout="N/A\n"))
+    prober = MediaProber("ffprobe", "ffmpeg", FakeRun(stdout=ffprobe_json("N/A", "25/1")))
 
     with pytest.raises(ProbeError, match="no duration"):
-        prober.probe_duration("broken.mp4")
+        prober.probe("broken.mp4")
+
+
+def test_output_that_is_not_json_is_a_probe_error() -> None:
+    prober = MediaProber("ffprobe", "ffmpeg", FakeRun(stdout="12.3\n"))
+
+    with pytest.raises(ProbeError, match="no duration"):
+        prober.probe("odd.mp4")
+
+
+@pytest.mark.parametrize(
+    ("frame_rate", "expected"),
+    [("25/1", 25.0), ("0/0", None), ("N/A", None), (None, None)],
+)
+def test_a_frame_rate_ffprobe_cannot_tell_is_none(
+    frame_rate: str | None, expected: float | None
+) -> None:
+    # "0/0" is what ffprobe prints for a still image or a rate it cannot
+    # average; no stream at all is a file without video (audio only).
+    # Without a rate, a frame step on air falls back to 30 fps.
+    prober = MediaProber("ffprobe", "ffmpeg", FakeRun(stdout=ffprobe_json("4.0", frame_rate)))
+
+    assert prober.probe("clip.mp4") == MediaInfo(4.0, expected)
 
 
 def test_a_failing_ffprobe_reports_the_last_line_of_its_error_output() -> None:
@@ -85,7 +118,7 @@ def test_a_failing_ffprobe_reports_the_last_line_of_its_error_output() -> None:
     prober = MediaProber("ffprobe", "ffmpeg", run)
 
     with pytest.raises(ProbeError, match=r"^broken.mp4: Invalid data found$"):
-        prober.probe_duration("broken.mp4")
+        prober.probe("broken.mp4")
 
 
 def test_a_missing_ffprobe_says_to_fix_the_path_in_the_settings() -> None:
@@ -93,7 +126,7 @@ def test_a_missing_ffprobe_says_to_fix_the_path_in_the_settings() -> None:
     prober = MediaProber("ffprobe", "ffmpeg", FakeRun(raises=FileNotFoundError("ffprobe")))
 
     with pytest.raises(ProbeError, match="set its path in the settings"):
-        prober.probe_duration("a.mp4")
+        prober.probe("a.mp4")
 
 
 def test_a_timeout_is_a_probe_error() -> None:
@@ -101,7 +134,7 @@ def test_a_timeout_is_a_probe_error() -> None:
     prober = MediaProber("ffprobe", "ffmpeg", FakeRun(raises=timeout))
 
     with pytest.raises(ProbeError, match="ffprobe failed"):
-        prober.probe_duration("a.mp4")
+        prober.probe("a.mp4")
 
 
 def test_the_thumbnail_comes_from_this_exact_ffmpeg_command(tmp_path: Path) -> None:
@@ -142,31 +175,3 @@ def test_ffmpeg_writing_no_file_is_a_probe_error(tmp_path: Path) -> None:
 def test_the_thumbnail_is_taken_one_second_in_or_halfway_through_a_short_clip() -> None:
     assert thumbnail_at(30.0) == 1.0
     assert thumbnail_at(1.2) == pytest.approx(0.6)
-
-
-def test_with_both_tools_found_there_is_no_banner() -> None:
-    status = tools_status("ffprobe", "ffmpeg", which=lambda name: f"/usr/bin/{name}")
-
-    assert status == {"ffprobe": "/usr/bin/ffprobe", "ffmpeg": "/usr/bin/ffmpeg", "problem": None}
-
-
-def test_without_ffprobe_the_banner_says_durations_and_thumbnails_are_unavailable() -> None:
-    # Regression, bench 2026-11-09: ffprobe was not on PATH and the page showed
-    # dashes and grey boxes with no explanation.
-    status = tools_status(
-        "ffprobe", "ffmpeg", which=lambda name: "/usr/bin/ffmpeg" if name == "ffmpeg" else None
-    )
-
-    assert status["problem"] == (
-        "durations and thumbnails unavailable — ffprobe not found; "
-        "set the path in Settings or install ffmpeg"
-    )
-
-
-def test_without_ffmpeg_only_thumbnails_are_unavailable() -> None:
-    status = tools_status(
-        "ffprobe", "ffmpeg", which=lambda name: "/usr/bin/ffprobe" if name == "ffprobe" else None
-    )
-
-    assert status["problem"] is not None
-    assert status["problem"].startswith("thumbnails unavailable — ffmpeg not found")

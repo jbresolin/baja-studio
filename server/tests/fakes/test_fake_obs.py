@@ -12,6 +12,7 @@ import pytest
 
 from baja_studio.adapters.obs_protocol import (
     EventSubscription,
+    MediaState,
     OpCode,
     RequestStatus,
     authentication_string,
@@ -210,6 +211,41 @@ def test_setting_the_same_file_again_does_not_restart_it(fake: FakeObs) -> None:
     fake.tick()
 
     assert peer.events() == ["MediaInputPlaybackStarted"]
+
+
+def test_a_new_speed_reopens_the_file_from_the_top_at_that_speed(
+    fake: FakeObs, fake_clock: FakeClock
+) -> None:
+    # What the fake assumes OBS 32 does when speed_percent changes on a
+    # playing source (bench step 6 of WP5c checks it): open the file again,
+    # start it on the next tick, then play at the new rate.
+    peer = connect(fake)
+    settings = {"local_file": "x.mp4"}
+    ask(fake, peer, "SetInputSettings", inputName="baja_program_a", inputSettings=settings)
+    fake.tick()
+    fake_clock.advance(3.0)
+
+    slow = {"speed_percent": 50}
+    ask(fake, peer, "SetInputSettings", inputName="baja_program_a", inputSettings=slow)
+    media = fake.media_of("baja_program_a")
+    assert media.state == MediaState.OPENING
+    fake.tick()
+    fake_clock.advance(2.0)
+
+    assert peer.events() == ["MediaInputPlaybackStarted", "MediaInputPlaybackStarted"]
+    assert media.cursor(fake_clock.monotonic()) == pytest.approx(1.0)
+
+
+def test_mute_is_kept_per_input_and_read_back(fake: FakeObs) -> None:
+    peer = connect(fake)
+
+    ask(fake, peer, "SetInputMute", inputName="baja_program_a", inputMuted=True)
+
+    assert fake.inputs["baja_program_a"].muted is True
+    assert ask(fake, peer, "GetInputMute", inputName="baja_program_a")["responseData"] == {
+        "inputMuted": True
+    }
+    assert fake.inputs["baja_program_b"].muted is False
 
 
 def test_tick_sends_playback_ended_once_when_a_file_finishes(

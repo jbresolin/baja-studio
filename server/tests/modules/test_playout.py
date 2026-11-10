@@ -9,14 +9,23 @@ fake OBS (what went to air), the webhook posts and the database.
 """
 
 import threading
+from pathlib import Path
 
 import pytest
 
 from baja_studio.adapters.obs_protocol import MediaState
 from baja_studio.core.module import CommandError
 from baja_studio.core.supervisor import HealthState
+from baja_studio.core.system_services import INSTALL_DIRECTORY_ENVIRONMENT_VARIABLE
 from tests.conftest import eventually
-from tests.modules.playout_studio import CLIP_SECONDS, HOOK_URL, PlayoutStudio, ready_studio
+from tests.modules.playout_studio import (
+    CLIP_FPS,
+    CLIP_SECONDS,
+    HOOK_URL,
+    PlayoutStudio,
+    ready_studio,
+)
+from tests.modules.readiness_runner import run_module_checks
 
 
 def play_through(playout: PlayoutStudio) -> None:
@@ -540,7 +549,7 @@ def test_missing_ffprobe_shows_one_banner_and_a_fixed_path_clears_it(
 
     assert playout.state("tools.problem") == (
         "durations and thumbnails unavailable — ffprobe not found; "
-        "set the path in Settings or install ffmpeg"
+        "run the installer again, or set the path in Playout → Settings"
     )
 
     playout.tools_found.add("ffprobe")
@@ -548,3 +557,76 @@ def test_missing_ffprobe_shows_one_banner_and_a_fixed_path_clears_it(
 
     assert playout.state("tools.problem") is None
     assert playout.state("tools.ffprobe") == "/opt/ffmpeg/ffprobe"
+
+
+@pytest.mark.parametrize("bare_names", [True, False], ids=["bare names", "blank fields"])
+def test_with_the_bundled_copies_installed_there_is_no_banner(
+    playout: PlayoutStudio,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    bare_names: bool,
+) -> None:
+    # Regression, v0.2.0 bench (2026-11-09): with the bundled copies installed
+    # and nothing on PATH, the banner said "not found" (it asked PATH alone)
+    # while the scanner and the readiness check used the bundled copies.
+    # Bare names and blank fields both mean "the bundled copy".
+    playout.tools_found.clear()
+    bundled = tmp_path / "program" / "ffmpeg"
+    bundled.mkdir(parents=True)
+    for name in ("ffprobe", "ffmpeg"):
+        (bundled / f"{name}.exe").write_bytes(b"")
+    # First a typed path that does not exist: the banner shows.
+    missing = str(tmp_path / "nowhere" / "ffprobe.exe")
+    playout.configure(tools={"ffprobe_path": missing, "ffmpeg_path": missing})
+    assert playout.state("tools.problem") is not None
+
+    # The installer announces its folder; the fields go back to automatic.
+    monkeypatch.setenv(INSTALL_DIRECTORY_ENVIRONMENT_VARIABLE, str(tmp_path / "program"))
+    automatic = {"ffprobe_path": "ffprobe", "ffmpeg_path": "ffmpeg"} if bare_names else {}
+    playout.configure(tools=automatic)
+
+    # The banner, the readiness line and the prober all see the same copies.
+    assert playout.state("tools.problem") is None
+    assert playout.state("tools.ffprobe") == str(bundled / "ffprobe.exe")
+    assert playout.state("tools.sources") == {"ffprobe": "bundled", "ffmpeg": "bundled"}
+    tools_check = run_module_checks(playout.services, "playout", playout.clock)["tools"]
+    assert tools_check.detail.startswith(f"ffprobe: bundled ({bundled / 'ffprobe.exe'})")
+    assert playout.module.resolved_tools().ffmpeg.command == str(bundled / "ffmpeg.exe")
+
+
+# --- rescan ---------------------------------------------------------------------------------
+
+
+def test_rescan_forgets_durations_and_thumbnails_and_measures_every_file_again(
+    playout: PlayoutStudio,
+) -> None:
+    # Two files scanned, measured and given a thumbnail.
+    ready_studio(playout, ("a.mp4", "b.mp4"))
+    thumbnail_folder = playout.prober.thumbnails[0].parent
+    # A thumbnail left over from a clip that no longer exists: nothing would
+    # ever make it again, so it shows that the cache was emptied.
+    stale = thumbnail_folder / "99-0.jpg"
+    stale.write_bytes(b"old")
+    probes_before = len(playout.prober.probed)
+
+    result = playout.command("rescan_library")
+
+    # At once: both files are waiting to be measured again (the settings page
+    # shows `library_summary.pending_probe` counting down from this as the
+    # rescan's progress), and the cache is emptied.
+    assert result == {"files": 2}
+    assert not stale.exists()
+    # Then the prober measures both again and makes their thumbnails again,
+    # and the count goes back to 0.
+    playout.soon(lambda: playout.state("library_summary.pending_probe") == 0)
+    assert len(playout.prober.probed) == probes_before + 2
+    assert len(playout.prober.thumbnails) == 4
+    assert all(clip["has_thumbnail"] and clip["duration_s"] for clip in playout.clips())
+    assert ("web:alice", "rescan_library", "ok") in playout.log()
+
+
+def test_a_clip_s_frame_rate_comes_from_ffprobe(playout: PlayoutStudio) -> None:
+    # The fake prober says 25 fps (a frame step on air then moves 40 ms).
+    ready_studio(playout, ("a.mp4",))
+
+    assert playout.clip("a.mp4")["fps"] == CLIP_FPS  # type: ignore[index]

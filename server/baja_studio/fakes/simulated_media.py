@@ -8,6 +8,9 @@ then it cannot be paused or sought (real OBS refuses `SetMediaInputCursor`
 with "media must be playing or paused"), which is why playout waits for the
 start before parking a cued clip on its first frame. A `stuck` source never
 finishes opening, for the cue-timeout tests.
+
+`speed` is OBS's `speed_percent` / 100: the position (in the file's own
+seconds, as OBS reports it) moves that much per second of real time.
 """
 
 from dataclasses import dataclass
@@ -27,6 +30,8 @@ class SimulatedMedia:
     anchor_time: float = 0.0
     # Never finishes opening (a file OBS cannot start in time).
     stuck: bool = False
+    # Playback rate: 1.0 normal, 0.5 for speed_percent 50.
+    speed: float = 1.0
 
     @property
     def is_seekable(self) -> bool:
@@ -37,7 +42,7 @@ class SimulatedMedia:
         """Where playback is at `now`, in seconds (never past the end)."""
         if self.state != MediaState.PLAYING:
             return self.anchor_cursor_s
-        position = self.anchor_cursor_s + (now - self.anchor_time)
+        position = self.anchor_cursor_s + (now - self.anchor_time) * self.speed
         return min(position, self.duration_s) if self.duration_s is not None else position
 
     def load(self, file: str, duration_s: float | None, now: float) -> None:
@@ -47,6 +52,15 @@ class SimulatedMedia:
             self._set(MediaState.OPENING, 0.0, now)
         else:
             self._set(MediaState.NONE, 0.0, now)
+
+    def reload(self, now: float) -> None:
+        """Settings that need the file opened again (its speed): open it, start from the top.
+
+        What real OBS does here is bench step 6 (WP5c); playout copes either
+        way, because it waits for the start and seeks back.
+        """
+        if self.file:
+            self._set(MediaState.OPENING, 0.0, now)
 
     def restart(self, now: float) -> None:
         """Play from the top (after opening again, like real OBS)."""

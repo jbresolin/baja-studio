@@ -10,40 +10,28 @@ not used.
 
 Transitions *to* the two playback scenes are overridden to a cut when OBS
 connects, so a take is a cut whatever transition the operator has selected.
-Every method is called with the playout controller's lock held.
+Every method is called with the playout controller's lock held. Loading and
+parking a clip (also at a slow-motion speed) is `parking.py`.
 """
 
 import collections
 import contextlib
-import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
-from baja_studio.adapters.obs_protocol import MediaAction, MediaState
+from baja_studio.adapters.obs_protocol import MediaAction
 from baja_studio.adapters.obs_requests import MediaStatus
-from baja_studio.adapters.obs_transport import ObsError, ObsRequestFailedError
+from baja_studio.adapters.obs_transport import ObsError
 from baja_studio.core.clock import Clock
 from baja_studio.playout.config import ObsSettings
+from baja_studio.playout.parking import NORMAL_SPEED_PERCENT, MediaObs, MediaParker, ParkError
 
 SlotName = Literal["a", "b"]
 # Scene changes we asked for whose OBS event has not come back yet (a few at most).
 MAX_REQUESTED_SCENE_CHANGES = 8
 # After a fade, the temporary transition override is cleared this long after it ended.
 FADE_OVERRIDE_CLEAR_MARGIN_SECONDS = 0.5
-# A cued source must start playing within this long, or the cue fails.
-CUE_START_TIMEOUT_SECONDS = 3.0
-# While waiting for that start, OBS's status is asked again this often.
-CUE_START_POLL_SECONDS = 0.1
-# Media source settings for a clip: play once, keep the last frame (hold), never
-# restart on its own when its scene becomes visible.
-MEDIA_SOURCE_SETTINGS = {
-    "looping": False,
-    "restart_on_activate": False,
-    "close_when_inactive": False,
-    "clear_on_media_end": False,
-    "is_local_file": True,
-}
 
 
 class SwitchError(Exception):
@@ -54,35 +42,16 @@ class CueError(SwitchError):
     """OBS would not start or park a cued clip; the message carries OBS's words."""
 
 
-class ObsControl(Protocol):
+class ObsControl(MediaObs, Protocol):
     """The OBS requests switching needs (`ObsWebsocketClient` provides them)."""
 
-    def set_input_settings(
-        self, input_name: str, settings: dict[str, Any], overlay: bool = True
-    ) -> None:
-        """See `ObsRequestsMixin`."""
-
-    def trigger_media_input_action(self, input_name: str, action: str) -> None:
-        """See `ObsRequestsMixin`."""
-
-    def set_media_input_cursor(self, input_name: str, cursor_s: float) -> None:
-        """See `ObsRequestsMixin`."""
-
     def set_current_program_scene(self, scene_name: str) -> None:
-        """See `ObsRequestsMixin`."""
-
-    def get_media_input_status(self, input_name: str) -> MediaStatus:
         """See `ObsRequestsMixin`."""
 
     def set_scene_transition_override(
         self, scene_name: str, transition_name: str | None, duration_ms: int | None = None
     ) -> None:
         """See `ObsRequestsMixin`."""
-
-    def expecting_event(
-        self, event_type: str, **match: Any
-    ) -> contextlib.AbstractContextManager[threading.Event]:
-        """See `ObsWebsocketClient`."""
 
 
 @dataclass(frozen=True)
@@ -104,6 +73,8 @@ class OnAir:
     aired_id: int = 0
     # The playlist it was queued from, if any (its on-air actions apply).
     playlist_id: int | None = None
+    # OBS's `speed_percent` for it: 100, or slow motion (50, 25).
+    speed_percent: int = NORMAL_SPEED_PERCENT
 
 
 @dataclass
@@ -113,6 +84,7 @@ class Cued:
     clip: dict[str, Any]
     slot: SlotName
     playlist_id: int | None = None
+    speed_percent: int = NORMAL_SPEED_PERCENT
 
 
 def other_slot(slot: SlotName) -> SlotName:
@@ -128,6 +100,7 @@ class ProgramSwitcher:
         self._obs = obs
         self._settings = settings
         self._clock = clock
+        self.parker = MediaParker(obs, clock)
         self.program: OnAir | None = None
         self.cued: Cued | None = None
         # The slot used last; the first cue goes into the other one ("a").
@@ -160,48 +133,25 @@ class ProgramSwitcher:
         for name in ("a", "b"):
             self._obs.set_scene_transition_override(self.slot(name).scene, cut)
 
-    def cue(self, clip: dict[str, Any], playlist_id: int | None = None) -> Cued:
+    def cue(
+        self,
+        clip: dict[str, Any],
+        playlist_id: int | None = None,
+        speed_percent: int = NORMAL_SPEED_PERCENT,
+    ) -> Cued:
         """Load `clip` into the off-air source and park it on its first frame.
 
-        Set the file, restart, wait until OBS has started it, pause, rewind.
-        OBS refuses to seek a source that has not started (the 2026-11-08
-        bench: "media must be playing or paused" on the first cue), so the
-        wait is what makes a first cue work. Raises `CueError` when the
+        Set the file (and the replay speed), restart, wait until OBS has
+        started it, pause, rewind (`parking.py`). Raises `CueError` when the
         source does not start within 3 s or OBS refuses the rewind.
         """
         slot = self.slot(self.off_air_slot())
-        self._obs.set_input_settings(
-            slot.source, {**MEDIA_SOURCE_SETTINGS, "local_file": clip["file_path"]}
-        )
-        with self._obs.expecting_event("MediaInputPlaybackStarted", inputName=slot.source) as start:
-            self._obs.trigger_media_input_action(slot.source, MediaAction.RESTART)
-            self._wait_until_playing(slot.source, start, clip)
-        self._obs.trigger_media_input_action(slot.source, MediaAction.PAUSE)
         try:
-            self._obs.set_media_input_cursor(slot.source, 0.0)
-        except ObsRequestFailedError as error:
-            raise CueError(f"OBS would not rewind {clip['title']!r}: {error.comment}") from error
-        self.cued = Cued(clip, slot.name, playlist_id)
+            self.parker.park(slot.source, clip, speed_percent)
+        except ParkError as error:
+            raise CueError(str(error)) from error
+        self.cued = Cued(clip, slot.name, playlist_id, speed_percent)
         return self.cued
-
-    def _wait_until_playing(
-        self, source: str, start: threading.Event, clip: dict[str, Any]
-    ) -> None:
-        """Return once OBS says `source` plays; `start` is set by its started event."""
-        deadline = self._clock.monotonic() + CUE_START_TIMEOUT_SECONDS
-        while True:
-            # The event only wakes us early; the status is the truth, because a
-            # started event left over from loading the file can arrive late.
-            status = self._obs.get_media_input_status(source)
-            if status.state == MediaState.PLAYING:
-                return
-            if self._clock.monotonic() >= deadline:
-                raise CueError(
-                    f"OBS did not start {clip['title']!r} in {source!r} within "
-                    f"{CUE_START_TIMEOUT_SECONDS:g} s (media state {status.state})"
-                )
-            self._clock.wait(start, CUE_START_POLL_SECONDS)
-            start.clear()
 
     def take(self) -> tuple[OnAir, OnAir | None]:
         """Cut to the cued clip and play it; returns (now on air, what it replaced)."""
@@ -216,12 +166,29 @@ class ProgramSwitcher:
             slot.name,
             self._clock.now_utc().isoformat(),
             playlist_id=self.cued.playlist_id,
+            speed_percent=self.cued.speed_percent,
         )
         self.cued = None
         self.last_slot = slot.name
         if previous is not None and previous.slot != slot.name:
             self._stop_quietly(self.slot(previous.slot).source)
         return self.program, previous
+
+    def move_program_to(self, slot_name: SlotName, play: bool) -> None:
+        """Cut from the clip on air to the same clip parked in `slot_name` (a live swap).
+
+        The airing goes on: same clip, start time and log entry, so no
+        on-air action and no webhook fires. The source it left is stopped.
+        """
+        assert self.program is not None
+        slot, left = self.slot(slot_name), self.program.slot
+        self._switch_program(slot.scene)
+        if play:
+            self._obs.trigger_media_input_action(slot.source, MediaAction.PLAY)
+        self.program.slot = slot_name
+        self.last_slot = slot_name
+        if left != slot_name:
+            self._stop_quietly(self.slot(left).source)
 
     def end_program(self) -> OnAir | None:
         """Forget the clip on air (it ended, or the operator cut away); returns it."""
@@ -262,6 +229,12 @@ class ProgramSwitcher:
         while self._requested_scenes.popleft() != scene_name:
             pass
         return True
+
+    def program_source(self) -> str:
+        """The media source of the clip on air (`SwitchError` when nothing is)."""
+        if self.program is None:
+            raise SwitchError("nothing from playout is on air")
+        return self.slot(self.program.slot).source
 
     def pause_slot(self, slot: SlotName) -> None:
         """Pause a slot's source, freezing its frame (raises if OBS refuses)."""

@@ -1,7 +1,9 @@
 /**
- * Playout's settings page (/playout/settings, WP5b §1 and §4): forms for the
- * folders, OBS, tools and on-air actions, and the whole settings as JSON
- * under "Advanced".
+ * Playout's settings page (/playout/settings, WP5b §1 and §4, WP5c §1):
+ * forms for the folders, OBS, tools and on-air actions, "Rescan library",
+ * and the whole settings as JSON under "Advanced". It is the one place
+ * playout is configured: the generic Settings page shows playout's JSON
+ * only and links here.
  *
  * The bench found a JSON box that took a list of strings for the folders;
  * here the forms make that shape impossible, and the server still checks
@@ -16,6 +18,7 @@ import { Link } from "react-router-dom";
 
 import { FoldersForm } from "../components/playout/FoldersForm";
 import { OnAirActionsEditor } from "../components/playout/OnAirActionsEditor";
+import { RescanLibrary } from "../components/playout/RescanLibrary";
 import {
   getSettings,
   saveSettings,
@@ -115,6 +118,7 @@ export function PlayoutSettingsPage() {
       <p>
         <Link to="/playout">← Playout</Link>
       </p>
+      <h1>⚙ Playout setup</h1>
       <h2>Clip folders</h2>
       <FoldersForm
         folders={draft.sources.local_folders}
@@ -153,6 +157,20 @@ export function PlayoutSettingsPage() {
           />
         </div>
         <div className="field">
+          <label htmlFor="obs-live-speed">Speed change on air</label>
+          <select
+            id="obs-live-speed"
+            value={draft.obs.live_speed_change ?? "swap"}
+            onChange={(event) => setObs("live_speed_change", event.target.value)}
+          >
+            <option value="swap">swap: other source, then cut (seamless)</option>
+            <option value="reload">reload: same source, seek back (may hiccup)</option>
+          </select>
+          <div className="field-help">
+            How a speed button on the media controls changes the clip on air.
+          </div>
+        </div>
+        <div className="field">
           <label htmlFor="obs-post-clip">After a clip</label>
           <select
             id="obs-post-clip"
@@ -177,12 +195,20 @@ export function PlayoutSettingsPage() {
             <input
               id={`tools-${field}`}
               value={draft.tools[field]}
+              placeholder="bundled copy"
               onChange={(event) => set("tools", { ...draft.tools, [field]: event.target.value })}
             />
+            <div className="field-help">
+              Leave blank for the bundled copy.
+              <ToolFound playout={playout} tool={field === "ffprobe_path" ? "ffprobe" : "ffmpeg"} />
+            </div>
           </div>
         ))}
         {playout?.tools?.problem && <div className="field-error">{playout.tools.problem}</div>}
       </div>
+
+      <h2>Library</h2>
+      <RescanLibrary playout={playout} />
 
       <h2>On air actions</h2>
       <p className="muted">
@@ -221,6 +247,20 @@ export function PlayoutSettingsPage() {
           <ErrorNotice lines={notice.lines} />
         ))}
     </form>
+  );
+}
+
+/** "In use: bundled (C:\...\ffprobe.exe)", from the resolver the module itself uses. */
+function ToolFound({ playout, tool }: { playout: PlayoutState | undefined; tool: string }) {
+  const tools = playout?.tools;
+  if (!tools) return null;
+  const foundAt = tool === "ffprobe" ? tools.ffprobe : tools.ffmpeg;
+  const source = tools.sources?.[tool];
+  return (
+    <span data-testid={`tool-found-${tool}`}>
+      {" "}
+      In use: {foundAt ? `${source ?? "found"} (${foundAt})` : "not found"}.
+    </span>
   );
 }
 

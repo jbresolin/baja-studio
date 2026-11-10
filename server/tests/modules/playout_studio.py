@@ -10,6 +10,7 @@ the scanner walks real folders. Free disk space comes from `system_probes`.
 """
 
 import json
+import shutil
 from collections.abc import Callable, Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -27,7 +28,8 @@ from baja_studio.fakes.fake_obs_in_process import InProcessObsNetwork
 from baja_studio.fakes.fake_orchestrator import FakeOrchestrator
 from baja_studio.modules.playout import PlayoutModule
 from baja_studio.playout.config import ToolsSettings
-from baja_studio.playout.probe import ProbeError, Prober
+from baja_studio.playout.probe import MediaInfo, ProbeError, Prober
+from baja_studio.playout.tools import ResolvedTools, resolve_tools
 from tests.conftest import (
     AppFactory,
     FakeClock,
@@ -47,26 +49,30 @@ ORCHESTRATOR_TOKEN = "studio-token"
 HOOK_URL = "http://overlay.test/hook"
 # The fake OBS plays every file for this long (the fake prober agrees).
 CLIP_SECONDS = 10.0
+# The fake prober's frame rate (a frame step on air moves 40 ms).
+CLIP_FPS = 25.0
 # All five playout workers sleep only on the fake clock.
 PLAYOUT_WORKERS = module_worker_threads("playout")
 
 
 @dataclass
 class FakeProber:
-    """Stands in for ffprobe/ffmpeg: every file lasts CLIP_SECONDS unless told otherwise."""
+    """Stands in for ffprobe/ffmpeg: every file is CLIP_SECONDS long at CLIP_FPS, unless failing."""
 
     failing: set[str] = field(default_factory=set)
     probed: list[str] = field(default_factory=list)
+    thumbnails: list[Path] = field(default_factory=list)
 
-    def probe_duration(self, path: str) -> float:
+    def probe(self, path: str) -> MediaInfo:
         self.probed.append(path)
         if Path(path).name in self.failing:
             raise ProbeError("Invalid data found when processing input")
-        return CLIP_SECONDS
+        return MediaInfo(CLIP_SECONDS, CLIP_FPS)
 
     def make_thumbnail(self, path: str, output: Path, at_s: float) -> None:
         output.parent.mkdir(parents=True, exist_ok=True)
         output.write_bytes(b"\xff\xd8 fake jpeg")
+        self.thumbnails.append(output)
 
 
 @dataclass
@@ -192,7 +198,7 @@ def playout(
         orchestrator_queries.append(dict(request.url.params))
         return orchestrator_transport.handle_request(request)
 
-    def prober_factory(tools: ToolsSettings) -> Prober:
+    def prober_factory(tools: ResolvedTools) -> Prober:
         return prober
 
     registries: list[ModuleRegistry] = []
@@ -202,8 +208,16 @@ def playout(
         # On-air actions go through the registry, like any command.
         return registries[0].dispatch_command(module_name, command, args, source)
 
-    def find_tool(name: str) -> str | None:
-        return f"/opt/ffmpeg/{name}" if name in tools_found else None
+    def find_tool(command: str) -> str | None:
+        # The bare names answer from `tools_found`; a typed path is looked up for real.
+        if command in ("ffprobe", "ffmpeg"):
+            return f"/opt/ffmpeg/{command}" if command in tools_found else None
+        return shutil.which(command)
+
+    def tool_resolver(tools: ToolsSettings) -> ResolvedTools:
+        # The real resolver (bundled copy from the install folder in the
+        # environment, else PATH), with only the PATH lookup faked.
+        return resolve_tools(tools, which=find_tool)
 
     module = PlayoutModule(
         obs_transport_factory=network.connect,
@@ -212,7 +226,7 @@ def playout(
         hook_transport=httpx2.MockTransport(catch_hook),
         free_disk_bytes=system_probes.free_disk_bytes,
         dispatch=dispatch,
-        find_tool=find_tool,
+        tool_resolver=tool_resolver,
     )
     clips_folder = tmp_path / "clips"
     clips_folder.mkdir()

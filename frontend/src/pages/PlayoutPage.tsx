@@ -8,8 +8,10 @@
  * on-air action that failed, auto-play falling back) arrive as `notice` and
  * show as a toast on every page.
  *
- * Under the strip, a one-line "message hosts" box (WP9) sends to the hosts
- * screen without leaving the page.
+ * Under the strip, the media controls for the clip on air (WP5c), locked
+ * until held for two seconds, then a one-line "message hosts" box (WP9)
+ * that sends to the hosts screen without leaving the page. The gear opens
+ * Playout → Settings.
  *
  * Every action is a command to the `playout` module; the server keeps all
  * the state, so every browser sees the same queue and program. Keys work
@@ -23,6 +25,7 @@ import { HostsSendBox } from "../components/hosts/HostsSendBox";
 import { AiredExport } from "../components/playout/AiredExport";
 import { KeyboardLegend } from "../components/playout/KeyboardLegend";
 import { LibraryPanel } from "../components/playout/LibraryPanel";
+import { MediaControls } from "../components/playout/MediaControls";
 import { ProgramPanel, ProgramStrip } from "../components/playout/ProgramPanel";
 import { QueuePanel } from "../components/playout/QueuePanel";
 import { StatusLine } from "../components/playout/StatusLine";
@@ -30,6 +33,7 @@ import type { HostsMessage } from "../lib/hosts";
 import {
   isEditableTarget,
   playoutKeyAction,
+  transportArgs,
   type PlayoutKeyAction,
   type PlayoutState,
 } from "../lib/playout";
@@ -51,11 +55,16 @@ export function PlayoutPage() {
   const [tab, setTab] = useState<Tab>("library");
   const [error, setError] = useState<string | null>(null);
   const [confirmAsked, setConfirmAsked] = useState(false);
+  // Media controls unlocked for this airing (the started_at of the clip on air).
+  const [unlockedFor, setUnlockedFor] = useState<string | null>(null);
   // The id of the server's notice already seen (undefined until the first
   // state arrives), so each notice toasts once.
   const seenNotice = useRef<number | null | undefined>(undefined);
   const loaded = state !== undefined;
   const notice = state?.notice ?? null;
+  const program = state?.program ?? null;
+  // A clip leaving the air (or the next one taking over) locks the controls again.
+  const transportEnabled = program !== null && unlockedFor === program.started_at;
 
   useEffect(() => {
     if (!loaded) return;
@@ -104,6 +113,14 @@ export function PlayoutPage() {
     else if (action === "return") void run("return_to_scene");
     else if (action === "replay_last") void run("replay_last");
     else if (action === "toggle_legend") setLegendOpen((open) => !open);
+    else if (
+      action === "transport_toggle" ||
+      action === "transport_back" ||
+      action === "transport_forward" ||
+      action === "frame_back" ||
+      action === "frame_forward"
+    )
+      void run("transport", transportArgs(action));
     else if (action === "focus_search") {
       setTab("library");
       searchRef.current?.focus();
@@ -122,6 +139,7 @@ export function PlayoutPage() {
         ctrlKey: event.ctrlKey,
         altKey: event.altKey,
         metaKey: event.metaKey,
+        transportEnabled,
       });
       if (action === null) return;
       event.preventDefault();
@@ -138,8 +156,28 @@ export function PlayoutPage() {
   return (
     <div className="playout-page">
       <ProgramStrip state={state} />
+      {state.program && (
+        <MediaControls
+          program={state.program}
+          enabled={transportEnabled}
+          onEnabledChange={(enabled) =>
+            setUnlockedFor(enabled ? (state.program?.started_at ?? null) : null)
+          }
+          run={run}
+        />
+      )}
       <HostsSendBox onError={setError} />
-      <StatusLine state={state} clientId={clientId} />
+      <div className="playout-status-row">
+        <StatusLine state={state} clientId={clientId} />
+        <Link
+          className="settings-gear"
+          to="/playout/settings"
+          aria-label="Playout settings"
+          title="Playout settings"
+        >
+          ⚙
+        </Link>
+      </div>
       {state.tools?.problem && (
         <div className="notice notice-error" role="alert" data-testid="tools-banner">
           {state.tools.problem} <Link to="/playout/settings">Playout settings</Link>
@@ -210,9 +248,6 @@ export function PlayoutPage() {
               )
             }
           />
-          <p>
-            <Link to="/playout/settings">Playout settings</Link>
-          </p>
         </div>
       </div>
       {error && (
@@ -220,7 +255,9 @@ export function PlayoutPage() {
           {error}
         </div>
       )}
-      {legendOpen && <KeyboardLegend onClose={() => setLegendOpen(false)} />}
+      {legendOpen && (
+        <KeyboardLegend transportEnabled={transportEnabled} onClose={() => setLegendOpen(false)} />
+      )}
     </div>
   );
 }

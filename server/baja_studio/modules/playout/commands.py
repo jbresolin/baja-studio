@@ -15,8 +15,10 @@ from baja_studio.core.settings import SettingsStore
 from baja_studio.core.settings_import import readable_errors
 from baja_studio.modules.playout.controller import PlayoutController
 from baja_studio.modules.playout.return_target import RETURN_MODES
+from baja_studio.modules.playout.transport import TRANSPORT_ACTIONS, check_speed
 from baja_studio.playout.config import OnAirActions
 from baja_studio.playout.library import LibraryError
+from baja_studio.playout.parking import ParkError
 from baja_studio.playout.playlists import PlaylistError
 from baja_studio.playout.queue_store import QueueError
 from baja_studio.playout.switcher import SwitchError
@@ -42,7 +44,7 @@ def run_command(
         return handler(controller, args, source)
     except ObsNotConnectedError as error:
         raise CommandError("OBS is not connected; check the OBS status") from error
-    except (ObsError, SwitchError, LibraryError, QueueError, PlaylistError) as error:
+    except (ObsError, SwitchError, ParkError, LibraryError, QueueError, PlaylistError) as error:
         raise CommandError(str(error)) from error
 
 
@@ -214,6 +216,53 @@ def _playlist_delete(controller: PlayoutController, args: dict[str, Any], source
         controller.playlists_changed()
 
 
+def _number_arg(args: dict[str, Any], name: str) -> float:
+    value = args.get(name)
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise CommandError(f"'{name}' must be a number")
+    return float(value)
+
+
+def _transport(controller: PlayoutController, args: dict[str, Any], source: str) -> Any:
+    """`{action: play|pause|toggle|restart|seek|step|nudge}`, on the clip on air only.
+
+    seek takes `position_s`, step `frames` (±1; the clip must be paused),
+    nudge `seconds` (±5 on the page).
+    """
+    action = args.get("action")
+    if action not in TRANSPORT_ACTIONS:
+        raise CommandError(f"'action' must be one of {', '.join(TRANSPORT_ACTIONS)}")
+    checked: dict[str, Any] = {}
+    if action == "seek":
+        checked["position_s"] = _number_arg(args, "position_s")
+    elif action == "step":
+        checked["frames"] = _int_arg(args, "frames")
+    elif action == "nudge":
+        checked["seconds"] = _number_arg(args, "seconds")
+    with controller.lock:
+        status = controller.transport.control(action, checked, source)
+        controller.publisher.publish_position(status)
+        program = controller.publisher.program_view()
+        return program["transport"] if program else None
+
+
+def _set_cue_speed(controller: PlayoutController, args: dict[str, Any], source: str) -> Any:
+    """`{speed_percent: 100|50|25}`: the cued clip is cued again at it, else the next cue's."""
+    speed = check_speed(args.get("speed_percent"))
+    with controller.lock:
+        controller.transport.set_cue_speed(speed)
+        controller.publisher.publish_next_cue_speed(controller.transport.next_cue_speed)
+        return {"speed_percent": speed}
+
+
+def _set_program_speed(controller: PlayoutController, args: dict[str, Any], source: str) -> Any:
+    """`{speed_percent: 100|50|25}` for the clip on air (method: `obs.live_speed_change`)."""
+    speed = check_speed(args.get("speed_percent"))
+    with controller.lock:
+        controller.transport.set_program_speed(speed, source)
+        return {"speed_percent": speed}
+
+
 def _playlist_queue(controller: PlayoutController, args: dict[str, Any], source: str) -> Any:
     return {"entry_ids": controller.queue_playlist(_int_arg(args, "playlist_id"), source)}
 
@@ -240,5 +289,8 @@ HANDLERS: dict[str, Handler] = {
     "mark_played": _mark_played,
     "set_label": _set_label,
     "set_auto_play_next": _set_auto_play_next,
+    "transport": _transport,
+    "set_cue_speed": _set_cue_speed,
+    "set_program_speed": _set_program_speed,
     "export_aired": lambda controller, args, source: controller.export_aired(),
 }

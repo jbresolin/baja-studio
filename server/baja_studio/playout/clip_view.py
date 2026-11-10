@@ -66,6 +66,7 @@ def public_clip(row: sqlite3.Row) -> dict[str, Any]:
         "missing": bool(row["missing"]),
         "queueable": not row["missing"],
         "duration_s": row["duration_s"],
+        "fps": row["fps"],
         "probe_error": row["probe_error"],
         "prova": row["prova"],
         "car_number": row["car_number"],

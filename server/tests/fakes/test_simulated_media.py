@@ -130,6 +130,27 @@ def test_the_position_never_passes_the_end() -> None:
     assert playing().cursor(30.0) == 10.0
 
 
+def test_at_half_speed_the_position_moves_half_a_second_per_second() -> None:
+    # speed_percent 50: the position is in the file's own seconds.
+    media = playing()
+    media.speed = 0.5
+
+    assert media.cursor(4.0) == pytest.approx(2.0)
+    # A 10 s file at half speed ends after 20 s.
+    assert media.advance(19.0) is None
+    assert media.advance(20.0) == "ended"
+
+
+def test_a_reload_opens_the_file_again_and_starts_it_from_the_top() -> None:
+    media = playing()
+
+    media.reload(3.0)
+
+    assert media.state == MediaState.OPENING
+    assert media.advance(3.0) == "started"
+    assert media.cursor(3.0) == 0.0
+
+
 def test_actions_on_an_empty_source_do_nothing() -> None:
     media = SimulatedMedia()
 

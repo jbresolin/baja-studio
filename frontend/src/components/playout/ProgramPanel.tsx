@@ -2,7 +2,7 @@
  * Program and preview: the always-visible strip (its background fills with
  * the clip's progress; on the right, what is left of the clip and of the
  * queue after it), the cued clip (playable in the browser without touching
- * OBS), the transport buttons and the "Return to" control.
+ * OBS) with its replay speed, the transport buttons and the "Return to" control.
  */
 
 import {
@@ -13,6 +13,7 @@ import {
   formatRemaining,
   programProgress,
   remainingAfterOnAir,
+  REPLAY_SPEEDS,
   type PlayoutState,
   type ReturnMode,
 } from "../../lib/playout";
@@ -52,6 +53,14 @@ export function ProgramStrip({ state }: ProgramStripProps) {
       style={{ "--progress": `${(progress * 100).toFixed(1)}%` } as React.CSSProperties}
     >
       <span className="on-air">ON AIR</span>
+      {program.transport?.state === "paused" && (
+        <span className="badge badge-degraded">paused</span>
+      )}
+      {(program.speed_percent ?? 100) < 100 && (
+        <span className="badge badge-slow" data-testid="program-speed">
+          {program.speed_percent} %
+        </span>
+      )}
       <span className="program-title">{program.clip.title}</span>
       {warning && <StripWarning text={warning} />}
       <span className="muted">
@@ -106,6 +115,7 @@ export function ProgramPanel({ state, queueLength, onTake, run }: ProgramPanelPr
         ) : (
           <p className="muted">Nothing cued. Cue loads the first clip of the queue.</p>
         )}
+        <ReplaySpeed state={state} run={run} />
       </div>
       <div className="button-row transport">
         <button
@@ -150,6 +160,38 @@ export function ProgramPanel({ state, queueLength, onTake, run }: ProgramPanelPr
       </label>
       <ReturnToControl state={state} run={run} />
     </section>
+  );
+}
+
+/**
+ * Replay speed of the cued clip (it is cued again at the new speed), or of
+ * the next cue when nothing is cued; it applies to that one cue only.
+ * Below 100 % the clip's sound is muted.
+ */
+function ReplaySpeed({ state, run }: { state: PlayoutState; run: Run }) {
+  const speed = state.preview?.speed_percent ?? state.cue_speed_percent ?? 100;
+  return (
+    <div className="replay-speed">
+      <span className="speed-buttons" role="radiogroup" aria-label="Replay speed">
+        {REPLAY_SPEEDS.map((value) => (
+          <button
+            key={value}
+            role="radio"
+            aria-checked={speed === value}
+            className={speed === value ? "active" : ""}
+            onClick={() => {
+              if (speed !== value) void run("set_cue_speed", { speed_percent: value });
+            }}
+          >
+            {value} %
+          </button>
+        ))}
+      </span>
+      <span className="muted">
+        {state.preview ? "replay speed of the cued clip" : "replay speed of the next cue"}
+        {speed < 100 && " · sound muted"}
+      </span>
+    </div>
   );
 }
 

@@ -9,9 +9,9 @@
 
 import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import type { PlayoutState, QueueEntry } from "../src/lib/playout";
+import { HOLD_TO_ENABLE_MS, type PlayoutState, type QueueEntry } from "../src/lib/playout";
 import { StateSocketContext } from "../src/lib/stateHooks";
 import { StateSocket } from "../src/lib/stateSocket";
 import { PlayoutPage } from "../src/pages/PlayoutPage";
@@ -464,5 +464,287 @@ describe("messaging the hosts (WP9)", () => {
     await reply(lastCommand(), { messages: [message({ id: 1 }), message({ id: 2 })] });
 
     expect(screen.getByText("0 airings, 2 messages to the hosts.")).toBeInTheDocument();
+  });
+});
+
+/** Playout state with "Intro" (10 s at 25 fps) on air, 2 s in, playing or paused. */
+function onAirState(transportState: "playing" | "paused" = "playing", startedAt = "t1") {
+  const intro = clip({ id: 1, title: "Intro", duration_s: 10, fps: 25 });
+  return playoutState({
+    library: library(),
+    program: {
+      clip: intro,
+      slot: "a",
+      started_at: startedAt,
+      position_s: 2,
+      duration_s: 10,
+      remaining_s: 8,
+      speed_percent: 100,
+      transport: { state: transportState, position_s: 2, fps: 25, speed_percent: 100 },
+    },
+  });
+}
+
+/** Hold the unlock button for the full two seconds (fake timers must be on). */
+function unlockMediaControls() {
+  const button = screen.getByRole("button", { name: /Hold to unlock/ });
+  fireEvent.pointerDown(button);
+  act(() => {
+    vi.advanceTimersByTime(HOLD_TO_ENABLE_MS);
+  });
+}
+
+describe("media controls for the clip on air (WP5c)", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it("are locked until the unlock button is held for two seconds", () => {
+    showPlayoutPage(onAirState());
+
+    // Letting go after one second does nothing: they stay locked.
+    const button = screen.getByRole("button", { name: /Hold to unlock/ });
+    fireEvent.pointerDown(button);
+    act(() => {
+      vi.advanceTimersByTime(1000);
+    });
+    fireEvent.pointerUp(button);
+    act(() => {
+      vi.advanceTimersByTime(3000);
+    });
+    expect(screen.queryByRole("group", { name: /Media controls/ })).toBeNull();
+
+    // Held for the full two seconds, the controls appear, marked LIVE.
+    unlockMediaControls();
+    const controls = screen.getByRole("group", { name: "Media controls (live)" });
+    expect(controls).toHaveTextContent("LIVE");
+  });
+
+  it("pause, restart, nudges and speed each send one command for the clip on air", () => {
+    showPlayoutPage(onAirState());
+    unlockMediaControls();
+    const controls = screen.getByRole("group", { name: "Media controls (live)" });
+
+    fireEvent.click(within(controls).getByRole("button", { name: "Pause" }));
+    fireEvent.click(within(controls).getByRole("button", { name: "Restart" }));
+    fireEvent.click(within(controls).getByRole("button", { name: "Back 5 s" }));
+    fireEvent.click(within(controls).getByRole("button", { name: "Forward 5 s" }));
+    fireEvent.click(within(controls).getByRole("radio", { name: "50 %" }));
+
+    expect(sent().map(({ command, args }) => ({ command, args }))).toEqual([
+      { command: "transport", args: { action: "pause" } },
+      { command: "transport", args: { action: "restart" } },
+      { command: "transport", args: { action: "nudge", seconds: -5 } },
+      { command: "transport", args: { action: "nudge", seconds: 5 } },
+      { command: "set_program_speed", args: { speed_percent: 50 } },
+    ]);
+  });
+
+  it("steps frames only while the clip on air is paused", () => {
+    showPlayoutPage(onAirState("playing"));
+    unlockMediaControls();
+    expect(screen.getByRole("button", { name: "One frame forward" })).toBeDisabled();
+
+    act(() =>
+      server.receive({
+        type: "patch",
+        seq: 2,
+        module: "playout",
+        path: "program.transport.state",
+        value: "paused",
+      }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "One frame forward" }));
+    fireEvent.click(screen.getByRole("button", { name: "One frame back" }));
+
+    expect(sent().map((command) => command.args)).toEqual([
+      { action: "step", frames: 1 },
+      { action: "step", frames: -1 },
+    ]);
+    // Paused, the strip says so to every operator, and the button offers Play.
+    expect(screen.getByTestId("program-strip")).toHaveTextContent("paused");
+    expect(screen.getByRole("button", { name: "Play" })).toBeInTheDocument();
+  });
+
+  it("the scrub bar previews where it will go while dragged and seeks once, on release", () => {
+    showPlayoutPage(onAirState());
+    unlockMediaControls();
+    const scrub = screen.getByRole("slider", { name: "Scrub" });
+
+    fireEvent.change(scrub, { target: { value: "4.2" } });
+    fireEvent.change(scrub, { target: { value: "6.4" } });
+
+    // Nothing sent while dragging; the target is shown beside the bar.
+    expect(sent()).toEqual([]);
+    expect(screen.getByTestId("scrub-position")).toHaveTextContent("→ 0:06.4");
+
+    fireEvent.pointerUp(scrub);
+
+    expect(sent().map((command) => command.args)).toEqual([{ action: "seek", position_s: 6.4 }]);
+  });
+
+  it("K, J, L, comma and period act on air only while unlocked", () => {
+    showPlayoutPage(onAirState("paused"));
+
+    // Locked: L is Replay last, and K does nothing.
+    act(() => {
+      fireEvent.keyDown(window, { key: "k" });
+      fireEvent.keyDown(window, { key: "l" });
+    });
+    expect(sent().map((command) => command.command)).toEqual(["replay_last"]);
+
+    unlockMediaControls();
+    act(() => {
+      for (const key of ["k", "j", "l", ",", "."]) fireEvent.keyDown(window, { key });
+    });
+
+    expect(
+      sent()
+        .slice(1)
+        .map((command) => command.args),
+    ).toEqual([
+      { action: "toggle" },
+      { action: "nudge", seconds: -5 },
+      { action: "nudge", seconds: 5 },
+      { action: "step", frames: -1 },
+      { action: "step", frames: 1 },
+    ]);
+  });
+
+  it("lock again when the next clip goes to air", () => {
+    showPlayoutPage(onAirState("playing", "t1"));
+    unlockMediaControls();
+    expect(screen.getByRole("group", { name: "Media controls (live)" })).toBeInTheDocument();
+
+    act(() =>
+      server.receive({
+        type: "patch",
+        seq: 2,
+        module: "playout",
+        path: "program",
+        value: onAirState("playing", "t2").program,
+      }),
+    );
+
+    expect(screen.queryByRole("group", { name: "Media controls (live)" })).toBeNull();
+    expect(screen.getByRole("button", { name: /Hold to unlock/ })).toBeInTheDocument();
+  });
+
+  it("are not shown with nothing on air", () => {
+    showPlayoutPage();
+    expect(screen.queryByRole("button", { name: /Hold to unlock/ })).toBeNull();
+  });
+});
+
+describe("slow motion and the settings gear (WP5c)", () => {
+  it("chooses the replay speed of the next cue, and shows a slow clip on the strip", () => {
+    showPlayoutPage();
+
+    fireEvent.click(
+      within(screen.getByRole("radiogroup", { name: "Replay speed" })).getByRole("radio", {
+        name: "50 %",
+      }),
+    );
+    expect(lastCommand()).toMatchObject({
+      command: "set_cue_speed",
+      args: { speed_percent: 50 },
+    });
+
+    act(() =>
+      server.receive({
+        type: "patch",
+        seq: 2,
+        module: "playout",
+        path: "",
+        value: { ...onAirState(), program: { ...onAirState().program!, speed_percent: 50 } },
+      }),
+    );
+    expect(screen.getByTestId("program-speed")).toHaveTextContent("50 %");
+  });
+
+  it("has a gear that opens Playout settings", () => {
+    showPlayoutPage();
+    expect(screen.getByRole("link", { name: "Playout settings" })).toHaveAttribute(
+      "href",
+      "/playout/settings",
+    );
+  });
+});
+
+describe("editing a playlist (WP5c)", () => {
+  function showWithPlaylist() {
+    showPlayoutPage(
+      playoutState({
+        library: library(),
+        playlists: [
+          {
+            id: 7,
+            name: "Patrocinadores",
+            shuffle: false,
+            on_air: null,
+            clip_ids: [1, 2, 3],
+            created_at: "",
+          },
+        ],
+      }),
+    );
+    fireEvent.click(within(screen.getByTestId("playlist-7")).getByRole("button", { name: "Edit" }));
+  }
+
+  it("removes a clip and reorders without recreating the playlist", () => {
+    showWithPlaylist();
+
+    fireEvent.click(
+      screen.getByRole("button", { name: "Remove Enduro · carro 42 from the playlist" }),
+    );
+    fireEvent.click(
+      screen.getByRole("button", { name: "Move Enduro · carro 7 up in the playlist" }),
+    );
+
+    // Each change is one playlist_update with the whole new order (the
+    // second is computed from the playlist as the server last sent it).
+    expect(sent().map(({ command, args }) => ({ command, args }))).toEqual([
+      { command: "playlist_update", args: { playlist_id: 7, clip_ids: [1, 3] } },
+      { command: "playlist_update", args: { playlist_id: 7, clip_ids: [1, 3, 2] } },
+    ]);
+  });
+
+  it("drags a clip to a new place in the playlist", () => {
+    showWithPlaylist();
+
+    fireEvent.dragStart(screen.getByTestId("playlist-clip-2"));
+    fireEvent.drop(screen.getByTestId("playlist-clip-0"));
+
+    expect(lastCommand()).toMatchObject({
+      command: "playlist_update",
+      args: { playlist_id: 7, clip_ids: [3, 1, 2] },
+    });
+  });
+
+  it("adds a clip found in the library at the end", () => {
+    showWithPlaylist();
+
+    fireEvent.change(screen.getByLabelText("Add a clip to the playlist"), {
+      target: { value: "intro" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Add Intro to the playlist" }));
+
+    expect(lastCommand()).toMatchObject({
+      command: "playlist_update",
+      args: { playlist_id: 7, clip_ids: [1, 2, 3, 1] },
+    });
+  });
+
+  it("finds no clip whose file is missing", () => {
+    showWithPlaylist();
+
+    fireEvent.change(screen.getByLabelText("Add a clip to the playlist"), {
+      target: { value: "Suspensão" },
+    });
+
+    expect(screen.queryByRole("button", { name: /^Add Suspensão/ })).toBeNull();
   });
 });

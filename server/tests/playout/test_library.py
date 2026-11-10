@@ -260,6 +260,8 @@ def test_the_summary_counts_clips_per_group_missing_unplayed_and_unmatched(
     assert summary == {
         "total": 4,
         "missing": 1,
+        # The three present files have not been measured by ffprobe yet.
+        "pending_probe": 3,
         "unplayed": 4,
         "unmatched": 1,
         "per_group": {"Enduro": 2, "Patrocinadores": 1, "Unmatched": 1},

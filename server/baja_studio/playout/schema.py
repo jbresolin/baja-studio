@@ -11,6 +11,8 @@ columns to existing tables: `clips.in_receiver_root` (to tell unmatched files
 from manual ones), `queue.playlist_id` and `aired.playlist` (so on-air
 overrides and the aired log know which playlist a clip came from). The
 columns are added to an older file when the module starts.
+
+WP5c added `clips.fps` (the video frame rate from ffprobe, for frame steps).
 """
 
 from baja_studio.core.database import Database
@@ -77,6 +79,7 @@ ADDED_COLUMNS = (
     ("playout_clips", "in_receiver_root", "INTEGER NOT NULL DEFAULT 0"),
     ("playout_queue", "playlist_id", "INTEGER"),
     ("playout_aired", "playlist", "TEXT"),
+    ("playout_clips", "fps", "REAL"),
 )
 
 

@@ -1,4 +1,4 @@
-"""ffprobe for durations and ffmpeg for thumbnails, run as subprocesses.
+"""ffprobe for durations and frame rates, ffmpeg for thumbnails, run as subprocesses.
 
 Thumbnails go into a cache folder in the service's data directory, never
 next to the clips (the clip folder belongs to the receiver and to OBS).
@@ -6,9 +6,11 @@ Each call has a timeout, so a file on a dead network share cannot hang the
 probe worker.
 """
 
-import shutil
+import json
 import subprocess
 from collections.abc import Callable, Sequence
+from dataclasses import dataclass
+from fractions import Fraction
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -23,11 +25,19 @@ class ProbeError(Exception):
     """ffprobe or ffmpeg could not read the file (or could not be started)."""
 
 
+@dataclass(frozen=True)
+class MediaInfo:
+    """What ffprobe says about a file: its length, and its video frame rate if it has one."""
+
+    duration_s: float
+    fps: float | None = None
+
+
 class Prober(Protocol):
     """What the probe worker needs; tests hand in a fake."""
 
-    def probe_duration(self, path: str) -> float:
-        """The file's duration in seconds, or `ProbeError`."""
+    def probe(self, path: str) -> MediaInfo:
+        """The file's duration and frame rate, or `ProbeError`."""
 
     def make_thumbnail(self, path: str, output: Path, at_s: float) -> None:
         """Write a JPEG still of the file at `at_s` seconds to `output`, or `ProbeError`."""
@@ -42,24 +52,33 @@ class MediaProber:
         self._ffmpeg = ffmpeg_path
         self._run = run
 
-    def probe_duration(self, path: str) -> float:
-        """Ask ffprobe for the container duration."""
+    def probe(self, path: str) -> MediaInfo:
+        """Ask ffprobe for the container duration and the first video stream's frame rate.
+
+        The frame rate is what a frame step on air moves by (WP5c §3); a file
+        without video, or with a rate ffprobe cannot tell ("0/0"), has none.
+        """
         output = self._call(
             [
                 self._ffprobe,
                 "-v",
                 "error",
+                "-select_streams",
+                "v:0",
                 "-show_entries",
-                "format=duration",
+                "format=duration:stream=avg_frame_rate",
                 "-of",
-                "default=noprint_wrappers=1:nokey=1",
+                "json",
                 path,
             ]
         )
         try:
-            return float(output.strip().splitlines()[0])
-        except (ValueError, IndexError) as error:
+            data = json.loads(output)
+            duration = float(data["format"]["duration"])
+        except (ValueError, KeyError, TypeError) as error:
             raise ProbeError(f"ffprobe gave no duration for {path}") from error
+        streams = data.get("streams") or [{}]
+        return MediaInfo(duration, _frame_rate(streams[0].get("avg_frame_rate")))
 
     def make_thumbnail(self, path: str, output: Path, at_s: float) -> None:
         """Grab one frame at `at_s`, scaled to 320 px wide."""
@@ -103,30 +122,15 @@ class MediaProber:
         return completed.stdout or ""
 
 
-def tools_status(
-    ffprobe_path: str, ffmpeg_path: str, which: Callable[[str], str | None] = shutil.which
-) -> dict[str, str | None]:
-    """Where ffprobe and ffmpeg were found (None if not), and the page's banner text.
-
-    With ffprobe missing nothing gets a duration or a thumbnail; with only
-    ffmpeg missing, durations work but thumbnails do not. Bundling both is
-    the installer's job (WP7b); until then the page says what to do.
-    """
-    ffprobe, ffmpeg = which(ffprobe_path), which(ffmpeg_path)
-    missing = [name for name, found in (("ffprobe", ffprobe), ("ffmpeg", ffmpeg)) if not found]
-    problem = None
-    if ffprobe is None:
-        problem = (
-            f"durations and thumbnails unavailable — {' and '.join(missing)} not found; "
-            "set the path in Settings or install ffmpeg"
-        )
-    elif ffmpeg is None:
-        problem = (
-            "thumbnails unavailable — ffmpeg not found; set its path in Settings or install ffmpeg"
-        )
-    return {"ffprobe": ffprobe, "ffmpeg": ffmpeg, "problem": problem}
-
-
 def thumbnail_at(duration_s: float) -> float:
     """One second in, or halfway through a clip shorter than two seconds."""
     return min(THUMBNAIL_AT_SECONDS, duration_s / 2)
+
+
+def _frame_rate(text: object) -> float | None:
+    """ "30000/1001" → 29.97; "0/0", "N/A" or nothing → None."""
+    try:
+        rate = Fraction(str(text))
+    except (ValueError, ZeroDivisionError):
+        return None
+    return float(rate) if rate > 0 else None

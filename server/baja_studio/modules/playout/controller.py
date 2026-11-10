@@ -6,7 +6,8 @@ changes halfway through an action. OBS requests are made with the lock held;
 each has a 2 s timeout (a cue may wait up to 3 s for its source to start).
 Event listeners never take the lock: they hand the event to the OBS worker,
 which calls `on_media_ended` / `on_scene_changed`. What happens around an
-airing (log, webhook, on-air actions) is in `airing.py`.
+airing (log, webhook, on-air actions) is in `airing.py`; transport and slow
+motion for the clip on air in `transport.py` (`controller.transport`).
 """
 
 import logging
@@ -24,12 +25,13 @@ from baja_studio.modules.playout.take_confirmation import (
     TAKE_CONFIRMATION_WINDOW_SECONDS,
     TakeConfirmation,
 )
+from baja_studio.modules.playout.transport import ProgramTransport
 from baja_studio.playout.config import PlayoutSettings
 from baja_studio.playout.export import build_aired_export
 from baja_studio.playout.library import LibraryError, LibraryStore
 from baja_studio.playout.playlists import PlaylistStore
 from baja_studio.playout.queue_store import QueueStore
-from baja_studio.playout.switcher import CueError, OnAir, ProgramSwitcher, SwitchError
+from baja_studio.playout.switcher import Cued, CueError, OnAir, ProgramSwitcher, SwitchError
 
 
 class PlayoutController:
@@ -64,6 +66,9 @@ class PlayoutController:
         # Why the last cue failed; the OBS worker reports it as `degraded`.
         self.cue_problem: str | None = None
         self._confirmation = TakeConfirmation(clock, publisher, self.lock)
+        self.transport = ProgramTransport(
+            switcher, settings, clock, logger, self._save_session, self._cue_lost
+        )
 
     # --- session --------------------------------------------------------------------------
 
@@ -71,13 +76,23 @@ class PlayoutController:
         """Bring back program, cue, toggles and the return target saved before a restart."""
         with self.lock:
             restore_switcher(self.switcher, self.queue, self.library, self.publisher)
+            self.transport.next_cue_speed = self.queue.session_value("next_cue_speed", 100)
             self.publisher.publish_everything(self.switcher)
+            self.publisher.publish_next_cue_speed(self.transport.next_cue_speed)
             self.return_target.publish()
 
     def _save_session(self) -> None:
         save_switcher(self.switcher, self.queue)
+        self.queue.set_session_value("next_cue_speed", self.transport.next_cue_speed)
         self.publisher.publish_program(self.switcher)
         self.publisher.publish_preview(self.switcher)
+        self.publisher.publish_next_cue_speed(self.transport.next_cue_speed)
+
+    def _cue_lost(self, cued: Cued, reason: str) -> None:
+        """A clip that was cued could not be cued again: back to the head of the queue."""
+        self.queue.add([cued.clip["id"]], "resync", True, cued.playlist_id)
+        self.publisher.publish_queue()
+        self._set_cue_problem(reason)
 
     # --- queue and playlists --------------------------------------------------------------
 
@@ -134,7 +149,7 @@ class PlayoutController:
                 raise SwitchError("the queue is empty: add a clip first")
             try:
                 clip = self.library.require_queueable(entry["clip_id"])
-                self.switcher.cue(clip, entry["playlist_id"])
+                self.switcher.cue(clip, entry["playlist_id"], self.transport.next_cue_speed)
             except (ObsError, SwitchError) as error:
                 self.queue.add([entry["clip_id"]], entry["added_by"], True, entry["playlist_id"])
                 if isinstance(error, CueError):
@@ -142,6 +157,7 @@ class PlayoutController:
                 raise
             finally:
                 self.publisher.publish_queue()
+            self.transport.take_next_cue_speed()
             self._set_cue_problem(None)
             self._save_session()
             return clip
@@ -260,10 +276,10 @@ class PlayoutController:
                     self.queue.add([cued.clip["id"]], "resync", True, cued.playlist_id)
                 else:
                     try:
-                        self.switcher.cue(cued.clip, cued.playlist_id)  # OBS may have lost it
+                        # OBS may have lost it.
+                        self.switcher.cue(cued.clip, cued.playlist_id, cued.speed_percent)
                     except SwitchError as error:
-                        self.queue.add([cued.clip["id"]], "resync", True, cued.playlist_id)
-                        self._set_cue_problem(str(error))
+                        self._cue_lost(cued, str(error))
             self.publisher.publish_queue()
             self._save_session()
 

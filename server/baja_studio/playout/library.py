@@ -191,14 +191,32 @@ class LibraryStore:
         duration_s: float | None,
         thumbnail_path: str | None,
         error: str | None,
+        fps: float | None = None,
     ) -> None:
         """Store what ffprobe/ffmpeg found (or why they failed)."""
         with self._database.transaction() as connection:
             connection.execute(
-                "UPDATE playout_clips SET duration_s = ?, thumbnail_path = ?, probe_error = ? "
-                "WHERE id = ?",
-                (duration_s, thumbnail_path, error, clip_id),
+                "UPDATE playout_clips SET duration_s = ?, thumbnail_path = ?, probe_error = ?, "
+                "fps = ? WHERE id = ?",
+                (duration_s, thumbnail_path, error, fps, clip_id),
             )
+
+    def forget_probe_results(self) -> list[int]:
+        """Forget every duration, frame rate, thumbnail and probe failure ("Rescan library").
+
+        Returns the ids of the rows that had any, so they can be published.
+        The prober then measures every present file again.
+        """
+        with self._database.transaction() as connection:
+            rows = connection.execute(
+                "SELECT id FROM playout_clips WHERE duration_s IS NOT NULL OR fps IS NOT NULL "
+                "OR thumbnail_path IS NOT NULL OR probe_error IS NOT NULL ORDER BY id"
+            ).fetchall()
+            connection.execute(
+                "UPDATE playout_clips SET duration_s = NULL, fps = NULL, thumbnail_path = NULL, "
+                "probe_error = NULL"
+            )
+        return [row["id"] for row in rows]
 
     def clear_probe_errors(self) -> None:
         """Forget recorded probe failures so the prober tries those files again."""
@@ -256,12 +274,21 @@ class LibraryStore:
             self._update(clip_id, "played_count = 0, last_played_at = NULL", ())
 
     def summary(self) -> dict[str, Any]:
-        """Counts for the page header: per group, missing, unplayed, unmatched, total."""
+        """Counts for the page header: per group, missing, unplayed, unmatched, total.
+
+        `pending_probe` counts present files not measured yet (and not failed):
+        the settings page shows a rescan's progress from it.
+        """
         clips = self.all()
         per_group = Counter(clip["group"] for clip in clips)
         return {
             "total": len(clips),
             "missing": sum(1 for clip in clips if clip["missing"]),
+            "pending_probe": sum(
+                1
+                for clip in clips
+                if not clip["missing"] and clip["duration_s"] is None and not clip["probe_error"]
+            ),
             "unplayed": sum(1 for clip in clips if clip["played_count"] == 0),
             "unmatched": sum(1 for clip in clips if clip["kind"] == "unmatched"),
             "per_group": dict(sorted(per_group.items())),

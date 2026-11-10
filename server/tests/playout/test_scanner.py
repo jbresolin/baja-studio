@@ -101,3 +101,43 @@ def test_files_found_through_the_receiver_root_are_flagged(tmp_path: Path) -> No
 
     flags = {Path(found.path).name: found.in_receiver_root for found in scan.files}
     assert flags == {"old.mp4": True, "sae.mp4": False}
+
+
+def test_a_labelled_folder_inside_the_receiver_root_claims_its_own_files(
+    tmp_path: Path,
+) -> None:
+    # v0.2.0 bench (2026-11-09): sponsor clips kept in a folder *inside* the
+    # clip root (E:\clips\patrocinadores, labelled "Patrocinadores") showed
+    # as "Unmatched", because the root was walked first and took them. The
+    # more specific folder must win, whatever order the settings list them in.
+    root = tmp_path / "clips"
+    make_file(root / "enduro" / "42" / "3.mp4")
+    make_file(root / "patrocinadores" / "logo.mp4")
+    receiver_root = LocalFolder(path=str(root), receiver_root=True)
+    sponsors = LocalFolder(path=str(root / "patrocinadores"), label="Patrocinadores")
+
+    scan = scan_folders([receiver_root, sponsors], receiver_root)
+
+    # The sponsor clip has its folder's label and is not from the receiver
+    # root (so the library groups it as "Patrocinadores", not "Unmatched");
+    # its path is relative to its own folder. The delivery is untouched.
+    found = {Path(file.path).name: file for file in scan.files}
+    assert len(scan.files) == 2
+    assert found["logo.mp4"].folder_label == "Patrocinadores"
+    assert found["logo.mp4"].in_receiver_root is False
+    assert found["logo.mp4"].relative_path == "logo.mp4"
+    assert found["3.mp4"].in_receiver_root is True
+    assert found["3.mp4"].relative_path == "enduro/42/3.mp4"
+
+
+def test_the_same_folder_written_with_a_trailing_separator_is_still_one_folder(
+    tmp_path: Path,
+) -> None:
+    # "E:\clips\patrocinadores\" typed with a trailing backslash is the same folder.
+    root = tmp_path / "clips"
+    make_file(root / "patrocinadores" / "logo.mp4")
+    sponsors = LocalFolder(path=str(root / "patrocinadores") + "/", label="Patrocinadores")
+
+    scan = scan_folders([LocalFolder(path=str(root)), sponsors])
+
+    assert [file.folder_label for file in scan.files] == ["Patrocinadores"]
