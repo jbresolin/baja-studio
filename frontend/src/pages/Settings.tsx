@@ -35,6 +35,7 @@ const TRANSFER_SECTION = "transfer";
 
 /** Modules configured on their own page: here they get that link and their JSON only. */
 export const MODULE_SETTINGS_PAGES: Record<string, { path: string; title: string }> = {
+  cameras: { path: "/cameras/config", title: "Camera setup" },
   playout: { path: "/playout/settings", title: "Playout setup" },
 };
 

@@ -140,6 +140,14 @@ export function CamerasPage() {
           <div className="page-header">
             <h1>{camera.label}</h1>
             <CameraBadges camera={camera} />
+            <Link
+              className="settings-gear"
+              to="/cameras/config"
+              aria-label="Camera settings"
+              title="Camera settings"
+            >
+              ⚙
+            </Link>
           </div>
           {camera.status_reason && <div className="card-message">{camera.status_reason}</div>}
           <div className="preview-slot">preview — WP6</div>
