@@ -355,3 +355,155 @@ describe("Audio setup → Seats (WP9b)", () => {
     expect(within(screen.getByTestId("seat-audio-table")).getByText("Bruno")).toBeInTheDocument();
   });
 });
+
+describe("Restore defaults (WP9b)", () => {
+  const CUSTOM = {
+    id: "jingle-duck",
+    label: "Duck for the jingle",
+    color: "#123456",
+    mode: "toggle" as const,
+    on_steps: [],
+    off_steps: [],
+  };
+  const NEW_HOST1 = {
+    id: "host1-talk-prod",
+    label: "Host 1 → Prod",
+    color: "#e74c3c",
+    mode: "toggle" as const,
+    on_steps: [{ op: "set_lr_assign" as const, channel: "1", on: false }],
+    off_steps: [{ op: "set_lr_assign" as const, channel: "1", on: true }],
+  };
+  const GUEST1 = { ...NEW_HOST1, id: "guest1-talk-prod", label: "Guest 1 → Prod" };
+
+  /** Answers the last command the page sent; returns it. */
+  function reply(command: string, result: unknown, ok = true): SentCommand {
+    const sent = lastCommand();
+    expect(sent.command).toBe(command);
+    act(() =>
+      server.receive(
+        ok
+          ? { type: "reply", request_id: sent.request_id, ok, result }
+          : { type: "reply", request_id: sent.request_id, ok, error: result },
+      ),
+    );
+    return sent;
+  }
+
+  async function previewMacros() {
+    stored.values.macros = [...stored.values.macros, CUSTOM];
+    await showSetup();
+    openSection("Macros");
+    fireEvent.click(screen.getByRole("button", { name: "Restore defaults…" }));
+    const [host1, prod1] = stored.values.macros;
+    const preview = reply("preview_defaults", {
+      macros: [NEW_HOST1, prod1, CUSTOM, GUEST1],
+      changes: [
+        { id: "host1-talk-prod", label: "Host 1 → Prod", change: "replaced" },
+        { id: "prod1-talk-hosts", label: "Prod 1 → Hosts", change: "unchanged" },
+        { id: "jingle-duck", label: "Duck for the jingle", change: "custom" },
+        { id: "guest1-talk-prod", label: "Guest 1 → Prod", change: "added" },
+      ],
+    });
+    expect(preview.args).toMatchObject({ part: "macros" });
+    expect((preview.args.macros as { id: string }[]).map((m) => m.id)).toEqual([
+      host1!.id,
+      "prod1-talk-hosts",
+      "jingle-duck",
+    ]);
+    return await screen.findByTestId("macro-restore");
+  }
+
+  it("lists each macro, saves the restore with the page's version and logs it", async () => {
+    const list = await previewMacros();
+    expect(list).toHaveTextContent("Host 1 → Prod host1-talk-prod: replaced by the default");
+    expect(list).toHaveTextContent("Guest 1 → Prod guest1-talk-prod: added");
+    expect(list).toHaveTextContent("Prod 1 → Hosts prod1-talk-hosts: unchanged");
+    expect(list).toHaveTextContent("Duck for the jingle jingle-duck: kept (not a default)");
+    expect(saves).toHaveLength(0); // nothing saved yet
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(saves).toHaveLength(1));
+    expect(saves[0]!.version).toBe(4);
+    expect(saves[0]!.values.macros.map((macro) => macro.id)).toEqual([
+      "host1-talk-prod",
+      "prod1-talk-hosts",
+      "jingle-duck",
+      "guest1-talk-prod",
+    ]);
+    expect(saves[0]!.values.macros[2]).toEqual(CUSTOM);
+    await waitFor(() => expect(lastCommand().command).toBe("restore_defaults"));
+    expect(lastCommand().args).toMatchObject({ part: "macros", version: 5 });
+    reply("restore_defaults", { version: 5, macros: [] });
+    await waitFor(() => expect(screen.queryByTestId("macro-restore")).toBeNull());
+  });
+
+  it("Discard drops the restore and leaves the macros as they were", async () => {
+    await previewMacros();
+
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+
+    expect(screen.queryByTestId("macro-restore")).toBeNull();
+    expect(screen.getByTestId("save-bar")).toHaveTextContent("No unsaved changes");
+    expect(screen.queryByText("Guest 1 → Prod")).toBeNull();
+    expect(saves).toHaveLength(0);
+  });
+
+  it("a stale save of the restore is still a conflict, and nothing is logged", async () => {
+    await previewMacros();
+    const before = server.sent.length;
+    nextSaveAnswer = Response.json(
+      { detail: { message: "stale", current_version: 5 } },
+      { status: 409 },
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await screen.findByText(/Someone else saved the audio setup \(now version 5\)/);
+    expect(server.sent).toHaveLength(before);
+    expect(screen.getByTestId("macro-restore")).toBeInTheDocument();
+  });
+
+  it("lists the link changes and applies them only on Save", async () => {
+    await showSetup();
+    openSection("Link matrix");
+    fireEvent.click(screen.getByRole("button", { name: "Restore defaults…" }));
+    const current = { "5": { bus1: "linked" } };
+    reply("preview_defaults", {
+      links: {},
+      current,
+      changes: [{ channel: "5", bus: "bus1", before: "linked", after: "unlinked" }],
+    });
+    expect(await screen.findByTestId("link-restore")).toHaveTextContent(
+      "PROD 1 → IEM HOST 1: linked → unlinked",
+    );
+    const sentBefore = server.sent.length;
+
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(lastCommand().command).toBe("restore_defaults"));
+    expect(server.sent).toHaveLength(sentBefore + 1);
+    expect(lastCommand().args).toEqual({ part: "links", expected: current });
+    expect(saves).toHaveLength(0); // the settings had no edits
+    reply("restore_defaults", { links: {}, changes: [] });
+    await waitFor(() => expect(screen.queryByTestId("link-restore")).toBeNull());
+  });
+
+  it("Discard drops a pending link matrix restore without sending it", async () => {
+    await showSetup();
+    openSection("Link matrix");
+    fireEvent.click(screen.getByRole("button", { name: "Restore defaults…" }));
+    reply("preview_defaults", {
+      links: {},
+      current: {},
+      changes: [{ channel: "5", bus: "bus1", before: "unlinked", after: "linked" }],
+    });
+    await screen.findByTestId("link-restore");
+    const sentBefore = server.sent.length;
+
+    fireEvent.click(screen.getByRole("button", { name: "Discard" }));
+
+    expect(screen.queryByTestId("link-restore")).toBeNull();
+    expect(server.sent).toHaveLength(sentBefore);
+  });
+});

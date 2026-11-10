@@ -180,7 +180,7 @@ def macros() -> list[dict[str, Any]]:
 
 
 # The link matrix a fresh install starts with (an existing install keeps its
-# own and changes it on Audio setup → Link matrix). A missing pair is
+# own until Audio setup → Link matrix → "Restore defaults…"). A missing pair is
 # "unlinked"; in 2026 a missing entry silently meant "linked" (ADR 0006).
 #
 # - The in-ear buses 1-4 are a copy of the main mix plus each seat's offsets

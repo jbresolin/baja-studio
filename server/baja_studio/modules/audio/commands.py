@@ -23,7 +23,8 @@ Levels are 0..1 (`level`) or decibels (`db`), whichever is given.
 From the hosts screen's personal-mix overlay (checked against the seat,
 `seat_commands.py`): `set_seat_offset`, `reset_seat_offsets`. From the
 settings export/import page (`routing_commands.py`): `export_routing`,
-`import_routing`.
+`import_routing`. From Audio setup's "Restore defaults…"
+(`restore_commands.py`): `preview_defaults`, `restore_defaults`.
 
 A page dragging a fader marks the in-between values `dragging: true`; only
 the value it lets go at is kept in the command log (`wants_logged`).
@@ -51,11 +52,14 @@ from baja_studio.core.settings import SettingsConflictError, SettingsStore
 from baja_studio.core.worker import DeviceOfflineError
 from baja_studio.modules.audio.controller import AudioController
 from baja_studio.modules.audio.midi_worker import MidiWorker
+from baja_studio.modules.audio.restore_commands import RESTORE_COMMANDS, run_restore_command
 from baja_studio.modules.audio.routing_commands import ROUTING_COMMANDS, run_routing_command
 from baja_studio.modules.audio.seat_commands import SEAT_COMMANDS, run_seat_command
 from baja_studio.modules.audio.surface import MvaveSurface
 
 DRAG_COMMANDS = ("set_fader", "set_aux", "set_pan")
+# Read only, and a macro preview carries the whole draft: not worth a log entry.
+UNLOGGED_COMMANDS = ("preview_defaults",)
 _STEPS = TypeAdapter(list[MacroStep])
 
 
@@ -140,6 +144,8 @@ def run_command(
         return run_seat_command(controller, command, args, source)
     if command in ROUTING_COMMANDS:
         return run_routing_command(controller, command, args, source)
+    if command in RESTORE_COMMANDS:
+        return run_restore_command(controller, command, args, source)
     if command in ("set_fader", "set_aux", "nudge"):
         to_send = command == "set_aux" or (
             command == "nudge" and args.get("bus") not in (None, MAIN_POINT)

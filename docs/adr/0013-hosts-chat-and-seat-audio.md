@@ -97,7 +97,7 @@ page "15 — WP9b brief". Read with ADR 0006 (audio) and ADR 0011 (hosts).
    the default matrix, within the budget).
 10. **The default link seed changed** (`audio/defaults.py`, fresh installs
     only: the seed is written once, so an existing install keeps its
-    matrix and changes it on Audio setup → Link matrix). The sources of the
+    matrix until "Restore defaults…", decision 23). The sources of the
     main mix (HOST 1-2, GUEST 1-2, SHOTGUN, **PC AUDIO**) are linked to the
     in-ear buses 1-4 (LIVESTACK-34: in-ear = main plus offsets); 2026 left
     out PC AUDIO and the shotgun on buses 2-3. **Production microphones
@@ -173,6 +173,21 @@ page "15 — WP9b brief". Read with ADR 0006 (audio) and ADR 0011 (hosts).
     follow-up once WP10 (which owns core) has merged.
 22. **`/settings/audio` is JSON-only** with a link to Audio setup, and the
     audio page has the ⚙ link (WP5c's rule).
+23. **"Restore defaults…" for the macros and the link matrix**, because an
+    existing install keeps both when the defaults change (decision 10).
+    It goes through the page's draft, Save and Discard, and shows what
+    changes before saving (`modules/audio/restore_commands.py`):
+    - Macros: the macros with a default id are replaced by the default,
+      missing defaults are added, macros with other ids are kept. The
+      result is saved with the usual settings save, so a stale version
+      is still refused with 409.
+    - Link matrix: the seed, pauses included; offsets are kept. It waits
+      beside the draft and is applied on Save, refused if the matrix
+      changed since the preview.
+    - Both are in the command log under the page's client id. Settings
+      saves are not logged by core, so after the macros are saved the
+      page sends `audio.restore_defaults`, which checks the saved setup
+      carries the defaults. No core change.
 
 ## Left open
 
@@ -180,10 +195,9 @@ page "15 — WP9b brief". Read with ADR 0006 (audio) and ADR 0011 (hosts).
   "talk to production" depends on: **bench**. If the XR18 does not obey it
   over OSC, the macro cannot work as designed; there is no silent fallback
   (decision 9's check warns) and the decision comes back to João.
-- Existing installs keep their link matrix (decision 10): on the bench PC,
-  link PC AUDIO to buses 1-4 and unlink PROD 1-4 from buses 1-4 by hand on
-  Audio setup → Link matrix; the macros are settings, so an existing
-  install keeps its old "Host N → Prod" until it is reset or edited.
+- Existing installs keep their link matrix and macros (decision 10) until
+  someone presses "Restore defaults…" on each (decision 23); the bench
+  sheet does it in setup.
 - Production can display, not route, a production microphone into one
   host's in-ears (out of scope).
 - The bench (`docs/bench/wp9b.md`) has not been run.

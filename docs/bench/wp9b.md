@@ -31,15 +31,21 @@ pre-fader, and every send at -inf.
 3. **Hosts → Canned messages and replies**: the hosts' one-tap phrases
    ("preciso de 1 min", "problema no áudio", "repete?", "pronto") and *Chime
    on this page when a host writes* (on).
-4. **Audio setup → Link matrix** (only on a PC that ran an earlier
-   version; a fresh install starts this way, ADR 0013 decision 10): PC
-   AUDIO and SHOTGUN linked to buses 1-4; PROD 1-4 **not** linked to buses
-   1-4.
-5. **Audio setup → Macros** (same PCs): an existing install keeps its old
-   "Host 1/2 → Prod" (they close the fader). Check they now read: *On / off
-   the main mix* off, then *Link / pause* of the other seats' in-ear
-   buses, then *Close* of those sends; the off steps undo them in reverse
-   (dry-run shows it). A fresh install also has "Guest 1/2 → Prod".
+4. **Restore defaults on both, check the change lists, save.** An
+   existing install keeps its old macros and link matrix (a fresh one
+   starts with the defaults, ADR 0013 decision 10), so on **Audio setup →
+   Macros** and on **Audio setup → Link matrix** press **Restore
+   defaults…** and read the lists before **Save**:
+   - Macros: "Host 1/2 → Prod" *replaced by the default*, "Guest 1/2 →
+     Prod" *added*, every macro you made yourself *kept (not a default)*.
+     After saving, "Host 1 → Prod" reads *On / off the main mix* off, then
+     *Link / pause* of the other seats' in-ear buses, then *Close* of
+     those sends, and the off steps undo them in reverse (dry-run shows it).
+   - Link matrix: PROD 1-4 → buses 1-4 *linked → unlinked*, PC AUDIO and
+     SHOTGUN → buses 1-4 *→ linked*. Nothing changes on the mixer until
+     **Save**; **Discard** drops it.
+   - The command log (`/logs`) shows both `restore_defaults` under this
+     browser's client id.
 
 ## Steps
 

@@ -25,7 +25,7 @@ from baja_studio.core.hosts_cards import HostsCard
 from baja_studio.core.module import CommandError, Module, ModuleContext
 from baja_studio.core.readiness import ReadinessCheck
 from baja_studio.core.supervisor import Health, HealthState, WorkerSpec
-from baja_studio.modules.audio.commands import DRAG_COMMANDS, run_command
+from baja_studio.modules.audio.commands import DRAG_COMMANDS, UNLOGGED_COMMANDS, run_command
 from baja_studio.modules.audio.controller import AudioController
 from baja_studio.modules.audio.d200_routes import d200_routes
 from baja_studio.modules.audio.hosts_card import audio_hosts_card
@@ -184,8 +184,12 @@ class AudioModule(Module):
     def wants_logged(
         self, command: str, args: dict[str, Any], source: str, result: Any, failed: bool
     ) -> bool:
-        """Everything but a dragged fader's in-between values."""
-        return failed or not (command in DRAG_COMMANDS and args.get("dragging") is True)
+        """Everything but a dragged fader's in-between values and the defaults preview."""
+        if failed:
+            return True
+        if command in UNLOGGED_COMMANDS:
+            return False
+        return not (command in DRAG_COMMANDS and args.get("dragging") is True)
 
     def readiness_checks(self) -> list[ReadinessCheck]:
         """XR18, M-VAVE, D200, linked taps, LR assigns, the link matrix (`readiness.py`)."""

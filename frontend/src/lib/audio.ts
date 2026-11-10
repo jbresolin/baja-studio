@@ -141,6 +141,28 @@ export interface SeatAudioConfig {
   iem_bus: AuxBus;
 }
 
+/** One macro in a "Restore defaults…" preview (server: modules/audio/restore_commands.py). */
+export interface MacroRestoreChange {
+  id: string;
+  label: string;
+  change: "replaced" | "added" | "unchanged" | "custom";
+}
+
+/** One send whose link state the restored matrix changes. */
+export interface LinkRestoreChange {
+  channel: string;
+  bus: AuxBus;
+  before: LinkState;
+  after: LinkState;
+}
+
+/** The link matrix's "Restore defaults…" preview; `current` is what it was made from. */
+export interface LinkRestore {
+  links: Record<string, Record<string, LinkState>>;
+  current: Record<string, Record<string, LinkState>>;
+  changes: LinkRestoreChange[];
+}
+
 // --- the XR18 fader law ------------------------------------------------------------
 
 const SEGMENTS: [number, number, number][] = [
