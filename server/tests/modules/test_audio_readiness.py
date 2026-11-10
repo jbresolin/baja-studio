@@ -132,10 +132,24 @@ def writes_to_the_mixer(audio: AudioStudio) -> list[object]:
     return [message for _, message in audio.mixer.received if message.arguments]
 
 
+def connect_and_read_taps(audio: AudioStudio) -> None:
+    """Connect, and wait until the tap of every send in the matrix has been read.
+
+    The last answers of the initial read can still be on their way when
+    `connect_mixer` returns (seen on Windows CI).
+    """
+    audio.connect_mixer()
+    controller = audio.module.controller
+    pairs = [
+        (channel, bus) for channel, buses in controller.links.matrix().items() for bus in buses
+    ]
+    audio.soon(lambda: all(controller.cache.send_taps.get(pair) is not None for pair in pairs))
+
+
 def test_linked_sends_taken_before_the_fader_pass(audio: AudioStudio) -> None:
     # A fresh fake takes every send pre-fader; the default matrix has 37
     # linked sends (paused ones, like PROD 1-2 on buses 5-6, are not copied).
-    audio.connect_mixer()
+    connect_and_read_taps(audio)
 
     result = run_module_checks(audio.services, "audio", audio.clock)["linked_taps"]
 
@@ -148,7 +162,7 @@ def test_a_linked_send_after_the_fader_warns_and_is_only_read(audio: AudioStudio
     # The studio copies the fader into that send, so the fader would cut it
     # twice. The check warns with the fix and writes nothing: the tap is
     # the desk's configuration.
-    audio.connect_mixer()
+    connect_and_read_taps(audio)
     audio.change_on_mixer(send_tap_address("1", "bus2"), 4)
     audio.soon(lambda: audio.module.controller.cache.send_taps.get(("1", "bus2")) == 4)
     writes_before = writes_to_the_mixer(audio)
@@ -163,7 +177,7 @@ def test_a_linked_send_after_the_fader_warns_and_is_only_read(audio: AudioStudio
 
 def test_a_paused_or_unlinked_send_after_the_fader_is_not_a_problem(audio: AudioStudio) -> None:
     # The studio does not copy the fader into it, so nothing is cut twice.
-    audio.connect_mixer()
+    connect_and_read_taps(audio)
     audio.command("set_link", channel="1", bus="bus2", state="unlinked")
     audio.change_on_mixer(send_tap_address("1", "bus2"), 4)
     audio.soon(lambda: audio.module.controller.cache.send_taps.get(("1", "bus2")) == 4)
