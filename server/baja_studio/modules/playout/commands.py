@@ -256,11 +256,13 @@ def _set_cue_speed(controller: PlayoutController, args: dict[str, Any], source: 
 
 
 def _set_program_speed(controller: PlayoutController, args: dict[str, Any], source: str) -> Any:
-    """`{speed_percent: 100|50|25}` for the clip on air (method: `obs.live_speed_change`)."""
+    """`{speed_percent: 100|50|25}` for the clip on air (method: `obs.live_speed_change`).
+
+    One change at a time: while one runs, this replaces the waiting wish and
+    answers `queued` at once (`speed_change.py`).
+    """
     speed = check_speed(args.get("speed_percent"))
-    with controller.lock:
-        controller.transport.set_program_speed(speed, source)
-        return {"speed_percent": speed}
+    return controller.speed_changes.request(speed, source)
 
 
 def _playlist_queue(controller: PlayoutController, args: dict[str, Any], source: str) -> Any:

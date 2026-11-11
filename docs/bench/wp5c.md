@@ -38,3 +38,21 @@ real OBS).
   within a frame or two of OBS's request latency).
 - `playout.program.transport` in the state: state, position, fps (ffprobe's;
   30 when unknown) and speed.
+
+## Live speed change, fixed (LIVESTACK-56, ADR 0015)
+
+Without OBS, `python -m baja_studio.fakes.fake_obs --port 4455 --password P
+--seed 7` makes opens, seeks and events take random (repeatable) time, as
+OBS does. To see each step, start the service with
+`BAJA_STUDIO_DEBUG_LOGGERS=baja_studio.playout` (PowerShell:
+`$env:BAJA_STUDIO_DEBUG_LOGGERS="baja_studio.playout"`): every step logs its
+input, request number, and target and confirmed positions (Logs page, log
+file); INFO has one line per change with its result.
+
+| # | Do | Expect / record |
+|---|---|---|
+| 7 | *Swap* (default). Take a clip, unlock the media controls, then 10 speed changes in a row on air (100/50/25), including rapid double clicks. | Each change takes effect (strip and OBS agree on the speed); the clip keeps its position (no jump back, no restart from 0); no black on program. While a change runs the speed buttons say "changing…" and are disabled; a double click makes one change. Note the longest change (INFO log, "in N s"). |
+| 8 | *Reload* (Playout setup → OBS). One change 100 → 50 on air. | Takes effect, position kept (program may show a reload hiccup). |
+| 9 | *Swap*, a clip less than 2 s from its end: change the speed. | Either it changes on the frame, or "too close to the end of the clip" beside the speed buttons; the clip ends normally either way (post-clip / auto-play as usual). |
+| 10 | Optional: make OBS slow (open a huge file in the other source) or stop OBS's media source mid-change. | After at most 2 s: no cut, the clip plays on at its old speed, "Speed not changed: …" shown. |
+| 11 | Cues now use the same steps (load, wait for the start, pause, seek and read back). Re-check: Cue a clip at 100 % and one at 50 %, Take each; turn auto-play next on with two clips queued and let the first end; let the last one end with a return scene set. | Each cue shows its first frame in preview (no black); Take cuts on that frame; auto-play takes the next clip without black; after the last clip program goes to the return scene. Nothing in the log about "did not start". |

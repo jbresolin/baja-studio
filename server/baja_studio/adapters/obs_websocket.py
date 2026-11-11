@@ -9,6 +9,12 @@ here knows about playout; modules decide what to request and when.
 Offline rule: connecting gives up after `connect_timeout_s` (3 s), each
 request after `request_timeout_s` (2 s). A closed socket fails every waiting
 request at once and tells the disconnect listeners.
+
+Requests are numbered (1, 2, 3, ... per client). OBS sends everything on one
+socket in order, so an event read after the response to request N was sent
+after OBS handled N. `expecting_event(..., after_next_request=True)` uses
+that to ignore events left over from before the request that should cause
+them (a "started" of an earlier open of the same source).
 """
 
 import contextlib
@@ -60,10 +66,19 @@ class _PendingRequest:
 
 
 @dataclass(eq=False)
-class _ExpectedEvent:
+class ExpectedEvent:
+    """An event a caller waits for (see `ObsWebsocketClient.expecting_event`)."""
+
     event_type: str
     match: dict[str, Any]
+    # Set when a matching event arrives (once armed).
     arrived: threading.Event = field(default_factory=threading.Event)
+    # Only events read after this request's response count (None: any event).
+    request_number: int | None = None
+    # True once that response was read (always, without a request number).
+    armed: bool = True
+    # The thread whose next request arms it, until that request is sent.
+    arming_thread: int | None = None
 
 
 @dataclass
@@ -122,7 +137,7 @@ class ObsWebsocketClient(ObsRequestsMixin):
         self._request_ids = itertools.count(1)
         self._event_listeners: list[EventListener] = []
         self._disconnect_listeners: list[DisconnectListener] = []
-        self._expected_events: list[_ExpectedEvent] = []
+        self._expected_events: list[ExpectedEvent] = []
         self._expected_lock = threading.Lock()
 
     @property
@@ -144,18 +159,25 @@ class ObsWebsocketClient(ObsRequestsMixin):
         self._disconnect_listeners.append(listener)
 
     @contextlib.contextmanager
-    def expecting_event(self, event_type: str, **match: Any) -> Iterator[threading.Event]:
-        """While inside, the yielded event is set when OBS sends `event_type` matching `match`.
+    def expecting_event(
+        self, event_type: str, *, after_next_request: bool = False, **match: Any
+    ) -> Iterator[ExpectedEvent]:
+        """While inside, `arrived` is set when OBS sends `event_type` matching `match`.
 
         Used to wait for something OBS reports only as an event (a media
         source that started, for one): enter before the request that causes
-        it, then wait on the event with the clock.
+        it, then wait on `arrived` with the clock. With `after_next_request`,
+        the next request this thread sends arms it (`request_number`), and
+        only events read after that request's response count.
         """
-        expected = _ExpectedEvent(event_type, match)
+        expected = ExpectedEvent(event_type, match)
+        if after_next_request:
+            expected.armed = False
+            expected.arming_thread = threading.get_ident()
         with self._expected_lock:
             self._expected_events.append(expected)
         try:
-            yield expected.arrived
+            yield expected
         finally:
             with self._expected_lock:
                 self._expected_events.remove(expected)
@@ -212,10 +234,12 @@ class ObsWebsocketClient(ObsRequestsMixin):
             raise ObsNotConnectedError("not connected to OBS")
         if threading.current_thread() is session.reader:
             raise RuntimeError("OBS requests cannot be made from an event listener")
-        request_id = str(next(self._request_ids))
+        request_number = next(self._request_ids)
+        request_id = str(request_number)
         pending = _PendingRequest()
         with session.lock:
             session.pending[request_id] = pending
+        self._arm_expected_events(request_number)
         try:
             session.transport.send(request_message(request_type, request_id, request_data or {}))
         except ObsConnectionClosedError as error:
@@ -256,6 +280,7 @@ class ObsWebsocketClient(ObsRequestsMixin):
             session.identified = True
             session.handshake_done.set()
         elif op == OpCode.REQUEST_RESPONSE:
+            self._response_read(str(data.get("requestId")))
             with session.lock:
                 pending = session.pending.get(str(data.get("requestId")))
             if pending is not None:
@@ -280,11 +305,29 @@ class ObsWebsocketClient(ObsRequestsMixin):
             )
         session.transport.send(identify_message(authentication, self._event_subscriptions))
 
+    def _arm_expected_events(self, request_number: int) -> None:
+        """This thread is sending request `request_number`: it arms what it waits for."""
+        thread = threading.get_ident()
+        with self._expected_lock:
+            for expected in self._expected_events:
+                if expected.arming_thread == thread:
+                    expected.arming_thread = None
+                    expected.request_number = request_number
+
+    def _response_read(self, request_id: str) -> None:
+        """Reader thread: events read from now on came after that request was handled."""
+        with self._expected_lock:
+            for expected in self._expected_events:
+                if not expected.armed and str(expected.request_number) == request_id:
+                    expected.armed = True
+
     def _dispatch_event(self, event_type: str, event_data: dict[str, Any]) -> None:
         with self._expected_lock:
             for expected in self._expected_events:
-                if expected.event_type == event_type and all(
-                    event_data.get(key) == value for key, value in expected.match.items()
+                if (
+                    expected.armed
+                    and expected.event_type == event_type
+                    and all(event_data.get(key) == value for key, value in expected.match.items())
                 ):
                     expected.arrived.set()
         for listener in list(self._event_listeners):

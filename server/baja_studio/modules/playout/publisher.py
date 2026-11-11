@@ -7,6 +7,8 @@ Layout (brief §4 plus what the page needs):
 - `program`: clip on air, slot, started_at, position_s, duration_s,
   remaining_s, speed_percent, and `transport` ({state: playing | paused |
   other, position_s, fps, speed_percent}) for the media controls (WP5c)
+- `speed_change`: a live speed change running ({changing, target, error};
+  `modules/playout/speed_change.py`)
 - `preview`: the cued clip, its slot and its replay speed; `cue_speed_percent`
   the speed the next cue gets when nothing is cued
 - `queue`: entries in play order (entry_id, clip_id, added_by, added_at,
@@ -34,8 +36,9 @@ from typing import Any
 from baja_studio.adapters.obs_protocol import MediaState
 from baja_studio.adapters.obs_requests import MediaStatus
 from baja_studio.modules.playout.hosts_view import build_hosts_view
-from baja_studio.modules.playout.transport import frames_per_second
+from baja_studio.modules.playout.speed_change import initial_speed_change_state
 from baja_studio.playout.library import LibraryStore
+from baja_studio.playout.parking import frames_per_second
 from baja_studio.playout.playlists import PlaylistStore
 from baja_studio.playout.queue_store import QueueStore
 from baja_studio.playout.switcher import OnAir, ProgramSwitcher
@@ -48,6 +51,7 @@ def initial_playout_state() -> dict[str, Any]:
     return {
         "obs": {"connection": "not_configured", "message": "", "current_scene": None, "scenes": []},
         "program": None,
+        "speed_change": initial_speed_change_state(),
         "preview": None,
         "cue_speed_percent": 100,
         "queue": [],
@@ -218,6 +222,10 @@ class PlayoutPublisher:
             else None,
         )
         self.publish_hosts_view()
+
+    def publish_speed_change(self, change: dict[str, Any]) -> None:
+        """Whether a live speed change runs, to what, and the last one's error."""
+        self._update("speed_change", change)
 
     def publish_next_cue_speed(self, speed_percent: int) -> None:
         """The replay speed the next cue gets (100 unless the operator chose slow motion)."""

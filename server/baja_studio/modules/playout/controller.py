@@ -21,6 +21,7 @@ from baja_studio.modules.playout.airing import AiringBookkeeper
 from baja_studio.modules.playout.publisher import PlayoutPublisher
 from baja_studio.modules.playout.return_target import ReturnMode, ReturnTarget
 from baja_studio.modules.playout.session import restore_switcher, save_switcher
+from baja_studio.modules.playout.speed_change import SpeedChangeQueue
 from baja_studio.modules.playout.take_confirmation import (
     TAKE_CONFIRMATION_WINDOW_SECONDS,
     TakeConfirmation,
@@ -69,6 +70,10 @@ class PlayoutController:
         self.transport = ProgramTransport(
             switcher, settings, clock, logger, self._save_session, self._cue_lost
         )
+        # Live speed changes, one at a time (they take the lock one change at a time).
+        self.speed_changes = SpeedChangeQueue(
+            self._change_program_speed, publisher.publish_speed_change
+        )
 
     # --- session --------------------------------------------------------------------------
 
@@ -87,6 +92,10 @@ class PlayoutController:
         self.publisher.publish_program(self.switcher)
         self.publisher.publish_preview(self.switcher)
         self.publisher.publish_next_cue_speed(self.transport.next_cue_speed)
+
+    def _change_program_speed(self, speed_percent: int, source: str) -> None:
+        with self.lock:
+            self.transport.set_program_speed(speed_percent, source)
 
     def _cue_lost(self, cued: Cued, reason: str) -> None:
         """A clip that was cued could not be cued again: back to the head of the queue."""

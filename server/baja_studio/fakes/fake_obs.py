@@ -3,7 +3,10 @@
 It speaks the handshake (Hello, Identify with optional password, Identified),
 answers the requests in `fake_obs_requests.py`, plays media sources against
 ffprobe durations or a fixed duration, and sends the events playout listens
-to (program scene changed, media started and ended).
+to (program scene changed, media started and ended). With a seed
+(`--seed`, or `timing=ObsTiming(seed)`), opens, seeks and events take
+random but repeatable time, as on real OBS (`obs_timing.py`), and program
+is watched for black (`fake_obs_media.py`).
 
 Run it for the bench without OBS:
 
@@ -34,12 +37,14 @@ from baja_studio.adapters.obs_protocol import (
     encode,
 )
 from baja_studio.core.clock import Clock, SystemClock
+from baja_studio.fakes.fake_obs_media import MediaTimeline
 from baja_studio.fakes.fake_obs_requests import (
     FakeInput,
     FakeObsRequests,
     FakeRequestRefusedError,
     FakeSceneItem,
 )
+from baja_studio.fakes.obs_timing import ObsTiming
 
 logger = logging.getLogger(__name__)
 
@@ -79,8 +84,12 @@ class FakeObs(FakeObsRequests):
         clock: Clock,
         password: str = "",
         duration_for: Callable[[str], float | None] | None = None,
+        timing: ObsTiming | None = None,
     ) -> None:
-        """An empty OBS; add scenes and inputs, or use `with_playout_scenes`."""
+        """An empty OBS; add scenes and inputs, or use `with_playout_scenes`.
+
+        `timing` makes media take seeded random time (None: no delays).
+        """
         self.clock = clock
         self.password = password
         self._duration_for = duration_for or (lambda _file: DEFAULT_MEDIA_DURATION_SECONDS)
@@ -95,6 +104,7 @@ class FakeObs(FakeObsRequests):
         self.program_history: list[str] = []
         # Files that never finish opening (tests of the cue timeout).
         self.stuck_files: set[str] = set()
+        self.timeline = MediaTimeline(timing)
         self._sessions: list[FakeObsSession] = []
         self._next_item_id = 1
 
@@ -144,6 +154,34 @@ class FakeObs(FakeObsRequests):
         """How long a file plays, from the injected `duration_for`."""
         return self._duration_for(file) if file else None
 
+    def opening_delays(self, input_name: str) -> tuple[float, float]:
+        """(opening, first frame) delays for one open of `input_name`."""
+        return self.timeline.opening_delays(input_name)
+
+    def seek_delay(self, input_name: str) -> float:
+        """How long a seek on `input_name` takes to land."""
+        return self.timeline.seek_delay(input_name)
+
+    def next_change_at(self) -> float | None:
+        """When a media source next changes or a held event is due (for simulations)."""
+        with self.lock:
+            times = [source.media.next_change_at() for source in self.inputs.values()]
+            times.append(self.timeline.next_event_at())
+            due = [time for time in times if time is not None]
+            return min(due) if due else None
+
+    def program_is_black(self) -> bool:
+        """True when the program scene holds media sources and none shows a frame."""
+        with self.lock:
+            media = [
+                self.inputs[item.source_name].media
+                for item in self.scenes.get(self.program_scene, [])
+                if item.enabled
+                and item.source_name in self.inputs
+                and self.inputs[item.source_name].kind == "ffmpeg_source"
+            ]
+            return bool(media) and not any(source.has_frame for source in media)
+
     def requests_of(self, request_type: str) -> list[RequestRecord]:
         """The answered requests of one type, oldest first."""
         with self.lock:
@@ -188,19 +226,22 @@ class FakeObs(FakeObsRequests):
                 self._identify(session, data)
             elif op == OpCode.REQUEST and session.identified:
                 session.deliver(encode(OpCode.REQUEST_RESPONSE, self._answer(data)))
+                self._look_at_program()
 
     def tick(self) -> None:
-        """Let media time pass: opening sources start, finished ones end (with their events)."""
+        """Let media time pass: opening sources start, finished ones end (with their events).
+
+        Events are sent once due (at once without timing), in the order due.
+        """
         with self.lock:
             now = self.now()
             for name, source in self.inputs.items():
                 happened = source.media.advance(now)
                 if happened is not None:
-                    self.emit(
-                        MEDIA_EVENTS[happened],
-                        {"inputName": name},
-                        EventSubscription.MEDIA_INPUTS,
-                    )
+                    self.timeline.media_event(now, name, MEDIA_EVENTS[happened])
+            for event_type, event_data in self.timeline.due_events(now):
+                self.emit(event_type, event_data, EventSubscription.MEDIA_INPUTS)
+            self._look_at_program()
 
     def emit(self, event_type: str, event_data: dict[str, Any], category: int) -> None:
         """Send an event to every identified client subscribed to its category."""
@@ -218,6 +259,7 @@ class FakeObs(FakeObsRequests):
         with self.lock:
             self.program_scene = scene_name
             self.program_history.append(scene_name)
+            self.timeline.program_cuts.append((self.now(), scene_name))
             self.emit(
                 "CurrentProgramSceneChanged", {"sceneName": scene_name}, EventSubscription.SCENES
             )
@@ -226,6 +268,9 @@ class FakeObs(FakeObsRequests):
         """The `SimulatedMedia` of an input, for tests to inspect."""
         with self.lock:
             return self.inputs[input_name].media
+
+    def _look_at_program(self) -> None:
+        self.timeline.look_at_program(self.now(), self.program_scene, self.program_is_black())
 
     def _identify(self, session: FakeObsSession, data: dict[str, Any]) -> None:
         if self.password:
@@ -308,6 +353,12 @@ def main(argv: list[str] | None = None) -> None:
         "--duration", type=float, default=DEFAULT_MEDIA_DURATION_SECONDS, help="clip length (s)"
     )
     parser.add_argument("--ffprobe", default=None, help="probe real durations with this ffprobe")
+    parser.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        help="opens, seeks and events take random time drawn from this seed (as on real OBS)",
+    )
     options = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     fixed_duration: float = options.duration
@@ -323,7 +374,10 @@ def main(argv: list[str] | None = None) -> None:
         return fixed_duration
 
     fake = FakeObs.with_playout_scenes(
-        SystemClock(), password=options.password, duration_for=duration_for
+        SystemClock(),
+        password=options.password,
+        duration_for=duration_for,
+        timing=ObsTiming(options.seed) if options.seed is not None else None,
     )
     with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(serve_fake_obs(fake, options.host, options.port))

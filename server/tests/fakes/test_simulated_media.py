@@ -159,3 +159,61 @@ def test_actions_on_an_empty_source_do_nothing() -> None:
     media.stop(1.0)
 
     assert media.state == MediaState.NONE
+
+
+def test_with_delays_status_says_playing_before_there_is_a_frame() -> None:
+    # Opening for 0.02 s, then "playing" with no picture (black) until the
+    # first frame at 0.32 s, which is when it says "started".
+    media = SimulatedMedia()
+    media.load("clip.mp4", 10.0, 0.0, opening_s=0.02, first_frame_s=0.3)
+
+    assert media.advance(0.01) is None
+    assert media.state == MediaState.OPENING
+    assert media.advance(0.02) is None
+    assert (media.state, media.has_frame) == (MediaState.PLAYING, False)
+    assert media.next_change_at() == pytest.approx(0.32)
+    assert media.advance(0.32) == "started"
+    assert media.has_frame
+    assert media.cursor(1.32) == pytest.approx(1.0)
+
+
+def test_a_seek_while_the_first_frame_loads_is_ignored() -> None:
+    media = SimulatedMedia()
+    media.load("clip.mp4", 10.0, 0.0, opening_s=0.0, first_frame_s=0.3)
+    media.advance(0.0)
+
+    media.seek(5.0, 0.1)
+    media.advance(0.3)
+
+    assert media.cursor(0.3) == 0.0
+
+
+def test_a_pause_while_the_first_frame_loads_leaves_it_paused_on_the_first_frame() -> None:
+    media = SimulatedMedia()
+    media.load("clip.mp4", 10.0, 0.0, opening_s=0.0, first_frame_s=0.3)
+    media.advance(0.0)
+
+    media.pause(0.1)
+
+    assert media.advance(0.3) == "started"
+    assert (media.state, media.cursor(5.0)) == (MediaState.PAUSED, 0.0)
+
+
+def test_a_delayed_seek_lands_later_and_counts_from_when_it_landed() -> None:
+    media = playing()
+
+    media.seek(5.0, 1.0, seek_s=0.1)
+
+    assert media.cursor(1.05) == pytest.approx(1.05)
+    assert media.next_change_at() == pytest.approx(1.1)
+    media.advance(1.2)
+    assert media.cursor(1.2) == pytest.approx(5.1)
+
+
+def test_a_source_with_no_frame_is_black() -> None:
+    media = playing()
+    assert media.has_frame
+
+    media.stop(1.0)
+
+    assert not media.has_frame

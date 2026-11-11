@@ -1,5 +1,6 @@
 """Tests for the app factory and data directory choice (main.py)."""
 
+import logging
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -15,6 +16,7 @@ from baja_studio.core.state import Message
 from baja_studio.main import (
     DATA_DIRECTORY_ENVIRONMENT_VARIABLE,
     DATABASE_FILE_NAME,
+    apply_debug_loggers,
     create_app,
     default_data_directory,
 )
@@ -28,6 +30,25 @@ def test_the_data_directory_can_be_set_by_environment_variable(
     monkeypatch.setenv(DATA_DIRECTORY_ENVIRONMENT_VARIABLE, str(tmp_path / "custom"))
 
     assert default_data_directory() == tmp_path / "custom"
+
+
+def test_named_loggers_run_at_debug_and_the_others_do_not() -> None:
+    # The bench sets BAJA_STUDIO_DEBUG_LOGGERS=baja_studio.playout to see
+    # every step of a speed change; the rest of the studio stays at INFO.
+    playout = logging.getLogger("baja_studio.playout")
+    audio = logging.getLogger("baja_studio.audio")
+    try:
+        applied = apply_debug_loggers(" baja_studio.playout, ,")
+
+        assert applied == ["baja_studio.playout"]
+        assert logging.getLogger("baja_studio.playout.live_speed").isEnabledFor(logging.DEBUG)
+        assert audio.level == logging.NOTSET
+    finally:
+        playout.setLevel(logging.NOTSET)
+
+
+def test_no_debug_loggers_changes_nothing() -> None:
+    assert apply_debug_loggers(None) == []
 
 
 def test_the_default_data_directory_depends_on_the_platform(

@@ -51,6 +51,8 @@ logger = logging.getLogger(__name__)
 DEFAULT_PORT = 8888
 DATA_DIRECTORY_ENVIRONMENT_VARIABLE = "BAJA_STUDIO_DATA"
 FRONTEND_DIRECTORY_ENVIRONMENT_VARIABLE = "BAJA_STUDIO_FRONTEND"
+# Comma-separated loggers to run at DEBUG (e.g. "baja_studio.playout" on the bench).
+DEBUG_LOGGERS_ENVIRONMENT_VARIABLE = "BAJA_STUDIO_DEBUG_LOGGERS"
 DATABASE_FILE_NAME = "baja-studio.sqlite3"
 # Root paths owned by the core; a module's `root_routes` may not use them.
 RESERVED_ROOTS = ("/api", "/ws")
@@ -104,6 +106,19 @@ def default_data_directory() -> Path:
     return Path.home() / ".local" / "share" / "baja-studio"
 
 
+def apply_debug_loggers(names: str | None) -> list[str]:
+    """Run the named loggers (and their children) at DEBUG; returns the names applied.
+
+    Read from `BAJA_STUDIO_DEBUG_LOGGERS` at startup. The studio's handlers
+    have no level of their own, so DEBUG records of these loggers reach the
+    console, the log file and the Logs page; everything else stays at INFO.
+    """
+    applied = [name.strip() for name in (names or "").split(",") if name.strip()]
+    for name in applied:
+        logging.getLogger(name).setLevel(logging.DEBUG)
+    return applied
+
+
 def default_frontend_directory() -> Path:
     """The built frontend: `frontend/dist` next to `server/` unless overridden."""
     override = os.environ.get(FRONTEND_DIRECTORY_ENVIRONMENT_VARIABLE)
@@ -131,6 +146,7 @@ def create_app(
 
     log_hub = LogHub()
     configure_logging(data_directory / LOG_DIRECTORY_NAME if log_to_file else None, log_hub)
+    apply_debug_loggers(os.environ.get(DEBUG_LOGGERS_ENVIRONMENT_VARIABLE))
 
     database = Database(data_directory / DATABASE_FILE_NAME)
     settings = SettingsStore(database, clock)

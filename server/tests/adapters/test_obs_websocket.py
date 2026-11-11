@@ -311,17 +311,55 @@ def test_an_expected_event_is_signalled_only_while_expected_and_only_if_it_match
         client.set_input_settings("baja_program_a", {"local_file": "a.mp4"})
         fake_obs.tick()
         client.get_version()  # a round trip, so the event has surely been read
-        assert not seen.is_set()
+        assert not seen.arrived.is_set()
 
         client.set_input_settings("baja_program_b", {"local_file": "b.mp4"})
         fake_obs.tick()
-        eventually(seen.is_set, "the expected start was not signalled")
+        eventually(seen.arrived.is_set, "the expected start was not signalled")
 
     # Once the block is left, nothing is listening any more (no leak).
     client.set_input_settings("baja_program_b", {"local_file": "c.mp4"})
     fake_obs.tick()
     client.get_version()
     assert client._expected_events == []
+
+
+def test_an_event_expected_after_a_request_ignores_events_from_before_its_response(
+    client: ObsWebsocketClient, fake_obs: FakeObs
+) -> None:
+    # A source was loaded earlier and its "started" is still on its way when
+    # playout loads it again. Only a start read after the new load's
+    # response may count, or playout would seek a file that has no frame.
+    client.set_input_settings("baja_program_a", {"local_file": "old.mp4"})
+    with client.expecting_event(
+        "MediaInputPlaybackStarted", after_next_request=True, inputName="baja_program_a"
+    ) as started:
+        # The earlier open finishes and its event is sent: not armed yet.
+        fake_obs.tick()
+        client.get_version()  # a round trip, so the event has surely been read
+        assert started.request_number is not None  # GetVersion armed it...
+        assert not started.arrived.is_set()  # ...after the stale event was read
+
+    with client.expecting_event(
+        "MediaInputPlaybackStarted", after_next_request=True, inputName="baja_program_a"
+    ) as started:
+        client.set_input_settings("baja_program_a", {"local_file": "new.mp4"})
+        fake_obs.tick()  # the new open finishes: this start counts
+        eventually(started.arrived.is_set, "the start after the request was not signalled")
+
+
+def test_request_numbers_increase_with_every_request(
+    client: ObsWebsocketClient, fake_obs: FakeObs
+) -> None:
+    numbers: list[int] = []
+    for _ in range(3):
+        with client.expecting_event("X", after_next_request=True) as expected:
+            client.get_version()
+        assert expected.request_number is not None
+        numbers.append(expected.request_number)
+
+    assert numbers == sorted(numbers)
+    assert len(set(numbers)) == 3
 
 
 def test_the_disconnect_listener_hears_obs_going_away(

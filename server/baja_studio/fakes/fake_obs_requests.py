@@ -65,6 +65,14 @@ class FakeObsRequests:
         """Implemented by `FakeObs`."""
         raise NotImplementedError
 
+    def opening_delays(self, input_name: str) -> tuple[float, float]:
+        """Implemented by `FakeObs`."""
+        raise NotImplementedError
+
+    def seek_delay(self, input_name: str) -> float:
+        """Implemented by `FakeObs`."""
+        raise NotImplementedError
+
     def emit(self, event_type: str, event_data: dict[str, Any], category: int) -> None:
         """Implemented by `FakeObs`."""
         raise NotImplementedError
@@ -112,21 +120,24 @@ class FakeObsRequests:
             raise FakeRequestRefusedError(
                 RequestStatus.MISSING_REQUEST_FIELD, "inputSettings missing"
             )
-        old_file = source.settings.get("local_file", "")
-        old_speed = source.settings.get("speed_percent", 100)
+        old_settings = source.settings
+        old_file = old_settings.get("local_file", "")
         source.settings = (
             {**source.settings, **new_settings} if data.get("overlay", True) else dict(new_settings)
         )
+        if source.settings == old_settings:
+            # Identical settings: OBS reopens nothing and sends no started event.
+            return {}
         new_file = str(source.settings.get("local_file", ""))
-        new_speed = source.settings.get("speed_percent", 100)
-        source.media.speed = float(new_speed) / 100
+        source.media.speed = float(source.settings.get("speed_percent", 100)) / 100
+        delays = self.opening_delays(self._input_name(data))
         if new_file != old_file:
-            # It opens now and starts on the next tick (MediaInputPlaybackStarted then).
-            source.media.load(new_file, self.duration_of(new_file), self.now())
+            # It opens now and starts at its first frame (MediaInputPlaybackStarted then).
+            source.media.load(new_file, self.duration_of(new_file), self.now(), *delays)
             source.media.stuck = new_file in self.stuck_files
-        elif new_speed != old_speed:
-            # A new speed reopens the file from the top (assumed; bench step 6 checks OBS 32).
-            source.media.reload(self.now())
+        else:
+            # Other settings (a new speed) reopen the file from the top.
+            source.media.reload(self.now(), *delays)
         return {}
 
     def _request_SetInputMute(self, data: dict[str, Any]) -> dict[str, Any]:  # noqa: N802
@@ -140,13 +151,13 @@ class FakeObsRequests:
         media, now = self._input(data).media, self.now()
         action = data.get("mediaAction")
         if action == MediaAction.PLAY:
-            media.play(now)
+            media.play(now, *self.opening_delays(self._input_name(data)))
         elif action == MediaAction.PAUSE:
             media.pause(now)
         elif action == MediaAction.STOP:
             media.stop(now)
         elif action == MediaAction.RESTART:
-            media.restart(now)
+            media.restart(now, *self.opening_delays(self._input_name(data)))
         else:
             raise FakeRequestRefusedError(
                 RequestStatus.MISSING_REQUEST_FIELD, f"bad action {action}"
@@ -166,7 +177,8 @@ class FakeObsRequests:
                 RequestStatus.INVALID_RESOURCE_STATE,
                 "The media input must be playing or paused in order to set the cursor position.",
             )
-        media.seek(cursor_ms / 1000, self.now())
+        # Accepted, but it lands later (and not at all before the first frame).
+        media.seek(cursor_ms / 1000, self.now(), self.seek_delay(self._input_name(data)))
         return {}
 
     def _request_GetMediaInputStatus(self, data: dict[str, Any]) -> dict[str, Any]:  # noqa: N802

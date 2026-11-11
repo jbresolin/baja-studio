@@ -159,6 +159,7 @@ export function PlayoutPage() {
       {state.program && (
         <MediaControls
           program={state.program}
+          speedChange={state.speed_change}
           enabled={transportEnabled}
           onEnabledChange={(enabled) =>
             setUnlockedFor(enabled ? (state.program?.started_at ?? null) : null)

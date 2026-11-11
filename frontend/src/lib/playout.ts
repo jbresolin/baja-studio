@@ -71,6 +71,14 @@ export interface ProgramView {
   transport?: TransportView;
 }
 
+/** A live speed change: one runs at a time; `target` is the last wish (LIVESTACK-56). */
+export interface SpeedChangeView {
+  changing: boolean;
+  target: number | null;
+  /** Why the last change failed (nothing was cut), or null. */
+  error: string | null;
+}
+
 export interface PreviewView {
   clip: PlayoutClip;
   slot: "a" | "b";
@@ -132,6 +140,7 @@ export interface PlayoutState {
   preview: PreviewView | null;
   /** The replay speed the next cue gets while nothing is cued. */
   cue_speed_percent?: number;
+  speed_change?: SpeedChangeView;
   queue: QueueEntry[];
   queue_total_s: number;
   /** Queue entries whose duration is unknown. */

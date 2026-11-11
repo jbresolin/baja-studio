@@ -10,6 +10,11 @@
  *
  * Every control is a `transport` or `set_program_speed` command; the
  * server acts on the program source only and never on the cued clip.
+ *
+ * A speed change takes OBS up to 2 s. Meanwhile the speed buttons say
+ * "changing…" and are disabled (from the click until the server says the
+ * change is over, so a double click sends one command); a change that
+ * failed says why beside them (nothing was cut).
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -20,18 +25,26 @@ import {
   NUDGE_SECONDS,
   REPLAY_SPEEDS,
   type ProgramView,
+  type SpeedChangeView,
 } from "../../lib/playout";
 
 type Run = (command: string, args?: Record<string, unknown>) => Promise<unknown>;
 
 interface MediaControlsProps {
   program: ProgramView;
+  speedChange?: SpeedChangeView;
   enabled: boolean;
   onEnabledChange: (enabled: boolean) => void;
   run: Run;
 }
 
-export function MediaControls({ program, enabled, onEnabledChange, run }: MediaControlsProps) {
+export function MediaControls({
+  program,
+  speedChange,
+  enabled,
+  onEnabledChange,
+  run,
+}: MediaControlsProps) {
   if (!enabled) return <HoldToUnlock onUnlocked={() => onEnabledChange(true)} />;
   const transport = program.transport;
   const paused = transport?.state === "paused";
@@ -85,25 +98,63 @@ export function MediaControls({ program, enabled, onEnabledChange, run }: MediaC
         +{NUDGE_SECONDS} s
       </button>
       <ScrubBar program={program} onSeek={(position_s) => send({ action: "seek", position_s })} />
-      <span className="speed-buttons" role="radiogroup" aria-label="Speed on air">
-        {REPLAY_SPEEDS.map((value) => (
-          <button
-            key={value}
-            role="radio"
-            aria-checked={speed === value}
-            className={speed === value ? "active" : ""}
-            onClick={() => {
-              if (speed !== value) void run("set_program_speed", { speed_percent: value });
-            }}
-          >
-            {value} %
-          </button>
-        ))}
-      </span>
+      <SpeedButtons speed={speed} speedChange={speedChange} run={run} />
       <button className="small" onClick={() => onEnabledChange(false)}>
         Lock
       </button>
     </div>
+  );
+}
+
+/** The live speed: one change at a time, "changing…" while it runs, its error after. */
+function SpeedButtons({
+  speed,
+  speedChange,
+  run,
+}: {
+  speed: number;
+  speedChange?: SpeedChangeView;
+  run: Run;
+}) {
+  const [sending, setSending] = useState(false);
+  const changing = sending || (speedChange?.changing ?? false);
+  const choose = (value: number) => {
+    setSending(true);
+    // The answer comes once the change (and any wished meanwhile) is over.
+    void run("set_program_speed", { speed_percent: value }).finally(() => setSending(false));
+  };
+  return (
+    <span
+      className="speed-buttons"
+      role="radiogroup"
+      aria-label="Speed on air"
+      aria-busy={changing}
+    >
+      {REPLAY_SPEEDS.map((value) => (
+        <button
+          key={value}
+          role="radio"
+          aria-checked={speed === value}
+          className={speed === value ? "active" : ""}
+          disabled={changing}
+          onClick={() => {
+            if (speed !== value) choose(value);
+          }}
+        >
+          {value} %
+        </button>
+      ))}
+      {changing && (
+        <span className="speed-changing" role="status">
+          changing{speedChange?.target ? ` to ${speedChange.target} %` : ""}…
+        </span>
+      )}
+      {!changing && speedChange?.error && (
+        <span className="speed-error" role="alert">
+          Speed not changed: {speedChange.error}
+        </span>
+      )}
+    </span>
   );
 }
 
