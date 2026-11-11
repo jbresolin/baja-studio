@@ -222,6 +222,16 @@ reading its tests.
   test fixtures, and live in the package under `baja_studio/fakes/` (e.g.
   `python -m baja_studio.fakes.fake_agent`). Tests reach them in-process,
   without opening ports.
+- **Every new fake is registered in the rehearsal rig** (`baja_studio/rig/`,
+  ADR 0016): started in `rig/fakes.py`, pointed at by the settings bundle
+  (`rig/bundle.py`), and reachable by scenarios through its own control
+  surface. The rig only launches fakes and uses the switches they already
+  have; a knob it needs is added to the fake as a flag or console command,
+  never as a change of behaviour.
+- The rig's integration tests (`tests/rig`, marked `rig`) are the one place
+  besides the agent conformance suite that opens sockets, on 127.0.0.1
+  only. They stay out of the default run (`addopts` deselects them) and CI
+  runs them on both OSes with `pytest -m rig`.
 - Threads on the fake clock: move time with `step_fake_time` /
   `step_fake_time_until` from `tests/conftest.py`, never a bare loop of
   `advance`. They wait for the workers (`module_worker_threads(module)`) to

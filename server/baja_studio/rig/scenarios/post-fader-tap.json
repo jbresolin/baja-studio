@@ -1,0 +1,6 @@
+{
+  "description": "At 20 s someone takes the linked send HOST 1 to IEM HOST 1 after the fader: the next readiness run warns.",
+  "steps": [
+    {"at_s": 20, "target": "xr18", "action": "console", "args": {"line": "tap 1 bus1 post"}}
+  ]
+}

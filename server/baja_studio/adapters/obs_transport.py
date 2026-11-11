@@ -124,6 +124,9 @@ def open_websocket_transport(address: ObsAddress, timeout_seconds: float) -> Obs
             max_size=MAX_MESSAGE_BYTES,
             # obs-websocket does not ping; neither do we (requests have their own timeouts).
             ping_interval=None,
+            # We keep the connection ourselves (closed in `close`), not in a `with` block:
+            # say so, or websockets 17.1+ warns on the first receive (ADR 0016).
+            legacy=True,
         )
     except (OSError, TimeoutError, InvalidHandshake, InvalidURI) as error:
         raise ObsUnreachableError(f"cannot reach OBS at {address.uri}: {error}") from error

@@ -1,0 +1,9 @@
+{
+  "description": "Agent 2 stops answering at 30 s for 15 s, then comes back: offline after 5 s, direct fallback after 10 s, resync on return.",
+  "steps": [
+    {"at_s": 30, "target": "agent2", "action": "switch", "args": {"switch": "delay", "body": {"ms": 5000}}},
+    {"at_s": 30, "target": "agent2", "action": "switch", "args": {"switch": "silence", "body": {"silent": true}}},
+    {"at_s": 45, "target": "agent2", "action": "switch", "args": {"switch": "delay", "body": {"ms": 0}}},
+    {"at_s": 45, "target": "agent2", "action": "switch", "args": {"switch": "silence", "body": {"silent": false}}}
+  ]
+}

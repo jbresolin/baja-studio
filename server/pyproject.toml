@@ -39,9 +39,15 @@ version = { attr = "baja_studio.__version__" }
 [tool.setuptools.packages.find]
 include = ["baja_studio*"]
 
+[tool.setuptools.package-data]
+# The rehearsal rig's scenarios are data (ADR 0016).
+"baja_studio.rig" = ["scenarios/*.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra"
+# The rig's integration tests open loopback sockets; they run on their own (`pytest -m rig`).
+addopts = "-ra -m 'not rig'"
+markers = ["rig: the rehearsal rig's integration tests (real fakes on loopback ports)"]
 # A test that hangs is a bug; this turns a hang into a clear failure.
 faulthandler_timeout = 60
 # Warnings are bugs (an unclosed pipe, a deprecated call): fail on them, in CI too.

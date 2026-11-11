@@ -1,0 +1,8 @@
+{
+  "description": "The XR18 stops answering at 20 s for 10 s, then loses 30 % of the time for 30 s.",
+  "steps": [
+    {"at_s": 20, "target": "xr18", "action": "console", "args": {"line": "drop on"}},
+    {"at_s": 30, "target": "xr18", "action": "console", "args": {"line": "drop off"}},
+    {"at_s": 30, "target": "xr18", "action": "lossy", "args": {"fraction": 0.3, "for_s": 30, "slot_s": 0.5}}
+  ]
+}

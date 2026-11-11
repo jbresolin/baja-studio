@@ -30,6 +30,19 @@ jobs:
       - name: Test (pytest)
         working-directory: server
         run: pytest
+      # The rehearsal rig's integration tests (ADR 0016): every fake on loopback
+      # ports, and playout's readiness wants ffmpeg/ffprobe on PATH.
+      - name: Install ffmpeg (rig tests)
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            choco install ffmpeg -y --no-progress
+          else
+            sudo apt-get update && sudo apt-get install -y ffmpeg
+          fi
+      - name: Test the rehearsal rig (pytest -m rig)
+        working-directory: server
+        run: pytest -m rig
 
   frontend:
     name: Frontend
