@@ -17,8 +17,8 @@ from baja_studio.adapters.obs_transport import ObsAddress
 from baja_studio.adapters.obs_websocket import ObsWebsocketClient
 from baja_studio.fakes.fake_obs import FakeObs
 from baja_studio.fakes.fake_obs_in_process import InProcessObsNetwork
-from baja_studio.playout.parking import MediaParker
-from tests.conftest import FakeClock
+from baja_studio.playout.parking import POLL_SECONDS, MediaParker
+from tests.conftest import FakeClock, eventually
 
 HOST, PORT = "obs.test", 4455
 SOURCE = "baja_program_a"
@@ -56,18 +56,20 @@ def rig(fake_clock: FakeClock) -> Iterator[Rig]:
     rig.client.close()
 
 
-def test_a_slow_clip_gets_its_speed_and_is_muted_before_it_is_restarted(rig: Rig) -> None:
+def test_a_slow_clip_gets_its_speed_and_is_muted_before_it_is_loaded(rig: Rig) -> None:
     # The speed goes in with the file, so the clip opens at that speed; the
-    # mute comes before the restart, so not one slowed-down sound is heard.
+    # mute comes before the load, so not one slowed-down sound is heard.
     rig.parker.park(SOURCE, CLIP, speed_percent=50)
 
     assert rig.asked() == [
-        ("SetInputSettings", 50),
+        ("GetInputSettings", None),
         ("SetInputMute", True),
-        ("TriggerMediaInputAction", MediaAction.RESTART),
+        ("SetInputSettings", 50),
         ("GetMediaInputStatus", None),
         ("TriggerMediaInputAction", MediaAction.PAUSE),
+        ("GetMediaInputStatus", None),
         ("SetMediaInputCursor", None),
+        ("GetMediaInputStatus", None),
     ]
     media = rig.fake.media_of(SOURCE)
     assert media.state == MediaState.PAUSED
@@ -100,12 +102,61 @@ def test_a_source_the_operator_muted_is_left_muted(rig: Rig) -> None:
     assert rig.fake.inputs[SOURCE].muted is True
 
 
-def test_waiting_for_a_paused_source_can_accept_it_paused(rig: Rig) -> None:
-    # A live speed change on a paused clip: if OBS applies the speed without
-    # reopening the file, the source stays paused, and that is settled too.
+def test_a_source_already_holding_the_file_is_emptied_first_so_obs_opens_it_again(
+    rig: Rig,
+) -> None:
+    # OBS reopens a source only when its settings change: loading the same
+    # file at the same speed again would open nothing and send no start.
     rig.parker.park(SOURCE, CLIP, speed_percent=100)
-    started = threading.Event()
+    before = len(rig.fake.requests)
 
-    rig.parker.wait_until_playing(SOURCE, started, "clip 1", paused_is_fine=True)
+    rig.parker.park(SOURCE, CLIP, speed_percent=100, at_s=2.0)
 
-    assert rig.fake.media_of(SOURCE).state == MediaState.PAUSED
+    loads = [
+        record.data["inputSettings"].get("local_file")
+        for record in rig.fake.requests[before:]
+        if record.request_type == "SetInputSettings"
+    ]
+    assert loads == ["", CLIP["file_path"]]
+    assert rig.fake.media_of(SOURCE).cursor(rig.clock.monotonic()) == pytest.approx(2.0)
+
+
+def test_a_seek_obs_has_not_carried_out_is_sent_again(rig: Rig) -> None:
+    # OBS accepts a seek but has not moved yet (or ignored it): the position
+    # read back is wrong, so the seek goes again (here OBS obeys the second).
+    rig.parker.park(SOURCE, CLIP, speed_percent=100)
+    media = rig.fake.media_of(SOURCE)
+    ignored = {"count": 0}
+    real_seek = media.seek
+
+    def ignore_first(cursor_s: float, now: float, seek_s: float = 0.0) -> None:
+        ignored["count"] += 1
+        if ignored["count"] > 1:
+            real_seek(cursor_s, now, seek_s)
+
+    media.seek = ignore_first
+    finished = threading.Event()
+    result: list[float] = []
+
+    def seek_in_background() -> None:
+        result.append(rig.parker.seek_confirmed(SOURCE, CLIP, 3.0, rig.clock.monotonic() + 2.0))
+        finished.set()
+
+    def between_polls() -> bool:
+        # Asleep in the short wait between two status reads (not inside a
+        # request, which waits up to 2 s for OBS's answer).
+        wake_ups = rig.clock.wake_up_times()
+        return bool(wake_ups) and wake_ups[0] <= rig.clock.monotonic() + POLL_SECONDS + 1e-6
+
+    # The seek waits on the fake clock, so it runs on its own thread while
+    # the test moves time, one poll at a time.
+    worker = threading.Thread(target=seek_in_background)
+    worker.start()
+    while not finished.is_set():
+        eventually(lambda: between_polls() or finished.is_set())
+        if not finished.is_set():
+            rig.clock.advance(POLL_SECONDS)
+    worker.join(timeout=5)
+
+    assert ignored["count"] == 2
+    assert result == [pytest.approx(3.0)]

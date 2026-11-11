@@ -2056,6 +2056,16 @@ button.small {
   color: var(--accent);
 }
 
+.speed-changing {
+  align-self: center;
+  font-style: italic;
+}
+
+.speed-error {
+  align-self: center;
+  color: var(--offline);
+}
+
 .replay-speed {
   display: flex;
   flex-wrap: wrap;

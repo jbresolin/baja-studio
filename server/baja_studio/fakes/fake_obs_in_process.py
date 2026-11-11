@@ -3,7 +3,9 @@
 `InProcessObsNetwork` maps addresses to fake OBS instances. Its `connect`
 method is handed to `ObsWebsocketClient` as the transport factory. Tests
 "quit OBS" with `unplug` (connections close, new ones are refused) and
-"start it again" with `plug`.
+"start it again" with `plug`. A simulation that moves time itself waits
+for `wait_until_idle` before each step, so the client has handled every
+message the fake sent (`tests/playout/obs_simulation.py`).
 """
 
 import queue
@@ -34,7 +36,12 @@ class InProcessObsTransport:
         self._incoming: queue.Queue[str | _Closed] = queue.Queue()
         self._closed: _Closed | None = None
         self._lock = threading.Lock()
-        self._session = fake.open_session(self._incoming.put, self._closed_by_obs)
+        # Messages handed to the client, and calls to `receive` (each one
+        # after the first means the message before was fully handled).
+        self._progress = threading.Condition()
+        self._delivered = 0
+        self._receive_calls = 0
+        self._session = fake.open_session(self._deliver, self._closed_by_obs)
 
     def send(self, text: str) -> None:
         """Hand a message to the fake, which answers on the same thread."""
@@ -46,11 +53,31 @@ class InProcessObsTransport:
 
     def receive(self) -> str:
         """Next message from the fake; raises once the connection closed."""
+        with self._progress:
+            self._receive_calls += 1
+            self._progress.notify_all()
         item = self._incoming.get()
         if isinstance(item, _Closed):
             self._incoming.put(item)  # every later receive raises too
             raise ObsConnectionClosedError(item.code, item.reason)
         return item
+
+    def wait_until_idle(self, timeout_s: float = 10.0) -> bool:
+        """Wait (real time) until the reader handled every message delivered so far.
+
+        True once it is back in `receive` with nothing left, or the
+        connection closed; False on timeout.
+        """
+        with self._progress:
+            return self._progress.wait_for(
+                lambda: self._receive_calls > self._delivered or self._closed is not None,
+                timeout_s,
+            )
+
+    def _deliver(self, text: str) -> None:
+        with self._progress:
+            self._delivered += 1
+        self._incoming.put(text)
 
     def close(self) -> None:
         """Hang up (like closing the WebSocket)."""

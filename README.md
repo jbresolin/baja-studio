@@ -122,6 +122,9 @@ python -m baja_studio --port 9000              # use another port
 python -m baja_studio --data-dir D:\StudioData   # keep data somewhere else
 ```
 
+`BAJA_STUDIO_DEBUG_LOGGERS=baja_studio.playout` (comma-separated logger
+names) runs those loggers at DEBUG, e.g. every step of a live speed change.
+
 The database and log files go in the **data folder**:
 
 - Windows: `C:\ProgramData\BajaStudio`
@@ -176,7 +179,8 @@ In **Settings → Playout**, set `obs` to `{"host": "127.0.0.1", "port": 4455,
 orchestrator (`http://127.0.0.1:8000`, token `T`), as shown in
 [docs/bench/wp5.md](docs/bench/wp5.md). Then open **Playout**: drop video
 files in the folder, queue them, Cue and Take. The fake plays every clip for
-10 seconds (`--duration` changes it). Clips laid out as
+10 seconds (`--duration` changes it; `--seed N` makes it take OBS-like random
+time to open files, seek and send events). Clips laid out as
 `<prova>/<car>/<passagem>.mp4` get their prova, car and team from the fake
 orchestrator.
 

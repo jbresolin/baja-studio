@@ -588,6 +588,63 @@ describe("media controls for the clip on air (WP5c)", () => {
     ]);
   });
 
+  it("a double click on a speed sends one change, and the buttons wait for its answer", async () => {
+    showPlayoutPage(onAirState());
+    unlockMediaControls();
+    const speeds = screen.getByRole("radiogroup", { name: "Speed on air" });
+
+    fireEvent.click(within(speeds).getByRole("radio", { name: "50 %" }));
+    fireEvent.click(within(speeds).getByRole("radio", { name: "50 %" }));
+
+    // One command; until it answers, every speed is disabled and says so.
+    expect(sent().filter((command) => command.command === "set_program_speed")).toHaveLength(1);
+    expect(within(speeds).getByRole("radio", { name: "25 %" })).toBeDisabled();
+    expect(within(speeds).getByRole("status")).toHaveTextContent("changing");
+
+    await reply(lastCommand(), { status: "done", speed_percent: 50 });
+
+    expect(within(speeds).getByRole("radio", { name: "25 %" })).toBeEnabled();
+  });
+
+  it("shows 'changing…' while the server runs a change, from any operator", () => {
+    showPlayoutPage(onAirState());
+    unlockMediaControls();
+
+    act(() =>
+      server.receive({
+        type: "patch",
+        seq: 2,
+        module: "playout",
+        path: "speed_change",
+        value: { changing: true, target: 25, error: null },
+      }),
+    );
+
+    const speeds = screen.getByRole("radiogroup", { name: "Speed on air" });
+    expect(within(speeds).getByRole("status")).toHaveTextContent("changing to 25 %…");
+    expect(within(speeds).getByRole("radio", { name: "100 %" })).toBeDisabled();
+  });
+
+  it("says why the last speed change failed", () => {
+    showPlayoutPage(onAirState());
+    unlockMediaControls();
+
+    act(() =>
+      server.receive({
+        type: "patch",
+        seq: 2,
+        module: "playout",
+        path: "speed_change",
+        value: { changing: false, target: null, error: "too close to the end of the clip" },
+      }),
+    );
+
+    const speeds = screen.getByRole("radiogroup", { name: "Speed on air" });
+    expect(within(speeds).getByRole("alert")).toHaveTextContent(
+      "Speed not changed: too close to the end of the clip",
+    );
+  });
+
   it("steps frames only while the clip on air is paused", () => {
     showPlayoutPage(onAirState("playing"));
     unlockMediaControls();

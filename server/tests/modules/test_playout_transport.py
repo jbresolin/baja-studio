@@ -7,10 +7,14 @@ positions only move when a test lets fake time pass (`pass_time`), so a
 position read right after a command is exactly where the command left it.
 """
 
+import threading
+from typing import Any
+
 import pytest
 
 from baja_studio.adapters.obs_protocol import MediaState
 from baja_studio.core.module import CommandError
+from tests.conftest import eventually
 from tests.modules.playout_studio import CLIP_FPS, HOOK_URL, PlayoutStudio, ready_studio
 
 ONE_FRAME = 1 / CLIP_FPS
@@ -27,6 +31,56 @@ def on_air(playout: PlayoutStudio, *files: str) -> list[int]:
 def use_method(playout: PlayoutStudio, method: str) -> None:
     """Choose how a live speed change is made (after `on_air`, which sets OBS up afresh)."""
     playout.configure(obs=playout.obs_settings(live_speed_change=method))
+
+
+# A change waits on the fake clock at most this long at a time (its longest
+# wait is for program to reach the parked frame, 0.25 s); a longer wait is a
+# request waiting for OBS's answer, during which time must not move.
+LONGEST_STEP_WAIT_SECONDS = 0.5
+
+
+def change_speed(playout: PlayoutStudio, speed_percent: int, source: str = "web:alice") -> Any:
+    """Send `set_program_speed` and let fake time pass, as OBS needs, until it answers.
+
+    A live change waits on the fake clock (for OBS's start, for program to
+    reach the parked frame), so it runs on its own thread. Time is moved
+    only while that thread sleeps between two steps, and exactly to when it
+    wakes, so positions come out as precise as on a real clock. Returns the
+    command's answer, or raises its `CommandError`.
+    """
+    answers: list[Any] = []
+
+    def send() -> None:
+        try:
+            answers.append(
+                playout.command("set_program_speed", source, speed_percent=speed_percent)
+            )
+        except CommandError as error:
+            answers.append(error)
+
+    thread = threading.Thread(target=send)
+    thread.start()
+
+    def wakes_in() -> float | None:
+        wakes_at = playout.clock.wake_up_time_of(thread.ident)
+        if wakes_at is None:
+            return None
+        return wakes_at - playout.clock.monotonic()
+
+    def between_steps() -> bool:
+        seconds = wakes_in()
+        return seconds is not None and seconds <= LONGEST_STEP_WAIT_SECONDS
+
+    while thread.is_alive():
+        eventually(lambda: between_steps() or not thread.is_alive())
+        seconds = wakes_in()
+        if thread.is_alive() and seconds is not None:
+            playout.clock.advance(max(seconds, 0.0))
+    thread.join()
+    (answer,) = answers
+    if isinstance(answer, CommandError):
+        raise answer
+    return answer
 
 
 def program_cursor(playout: PlayoutStudio) -> float:
@@ -284,30 +338,41 @@ def test_only_the_offered_speeds_are_accepted(playout: PlayoutStudio) -> None:
 def test_a_live_speed_change_keeps_the_position_within_one_frame(
     playout: PlayoutStudio, method: str
 ) -> None:
-    # 100 → 50 → 100 on the clip on air, by each method (bench step 6 decides
-    # which one is clean on OBS 32; the default is swap).
+    # 100 → 50 → 100 on the clip on air, by each method (the default is
+    # swap). Each change takes a moment (the swap waits for program to
+    # reach the frame it parked the other source on), during which the clip
+    # goes on: at the old speed until a swap's cut, at the new one since a
+    # reload. Timing races are tested in test_playout_transport_races.py.
     playout.configure(hooks={"on_air_webhook_url": HOOK_URL})
     on_air(playout)
     use_method(playout, method)
     playout.pass_time(2.0)
-    before = program_cursor(playout)
 
-    playout.command("set_program_speed", speed_percent=50)
+    def expected_after(target: int, old_speed: float, change: Any) -> float:
+        before, started_at = program_cursor(playout), playout.clock.monotonic()
+        cuts_before = len(playout.obs.timeline.program_cuts)
+        change()
+        cuts = playout.obs.timeline.program_cuts[cuts_before:]
+        switched_at = cuts[-1][0] if cuts else started_at
+        now = playout.clock.monotonic()
+        return before + old_speed * (switched_at - started_at) + target / 100 * (now - switched_at)
 
-    # Same frame as before the change, now at half speed and muted.
-    assert program_cursor(playout) == pytest.approx(before, abs=ONE_FRAME)
+    expected = expected_after(50, 1.0, lambda: change_speed(playout, 50))
+
+    # On the right frame, now at half speed and muted.
+    assert program_cursor(playout) == pytest.approx(expected, abs=ONE_FRAME)
     source = "baja_program_a" if playout.state("program.slot") == "a" else "baja_program_b"
     assert playout.obs.inputs[source].settings["speed_percent"] == 50
     assert playout.obs.inputs[source].muted is True
     assert playout.state("program.speed_percent") == 50
     assert playout.obs.media_of(source).state == MediaState.PLAYING
-    playout.pass_time(2.0)
     halfway = program_cursor(playout)
-    assert halfway == pytest.approx(before + 1.0, abs=0.15)
+    playout.pass_time(2.0)
+    assert program_cursor(playout) == pytest.approx(halfway + 1.0, abs=0.15)
 
-    playout.command("set_program_speed", speed_percent=100)
+    expected = expected_after(100, 0.5, lambda: change_speed(playout, 100))
 
-    assert program_cursor(playout) == pytest.approx(halfway, abs=ONE_FRAME)
+    assert program_cursor(playout) == pytest.approx(expected, abs=ONE_FRAME)
     source = "baja_program_a" if playout.state("program.slot") == "a" else "baja_program_b"
     assert playout.obs.inputs[source].muted is False
     # Still one airing: a speed change is not a new take (no webhook, no log entry).
@@ -323,7 +388,7 @@ def test_a_swap_cuts_to_the_other_source_and_stops_the_one_it_left(
     playout.pass_time(1.0)
     cuts_before = len(playout.obs.requests_of("SetCurrentProgramScene"))
 
-    playout.command("set_program_speed", speed_percent=50)
+    change_speed(playout, 50)
 
     # One cut, to the other playback scene; the source left behind is stopped.
     assert len(playout.obs.requests_of("SetCurrentProgramScene")) == cuts_before + 1
@@ -340,7 +405,7 @@ def test_a_reload_changes_the_source_on_air_without_a_cut(playout: PlayoutStudio
     use_method(playout, "reload")
     cuts_before = len(playout.obs.requests_of("SetCurrentProgramScene"))
 
-    playout.command("set_program_speed", speed_percent=50)
+    change_speed(playout, 50)
 
     assert len(playout.obs.requests_of("SetCurrentProgramScene")) == cuts_before
     assert playout.state("program.slot") == "a"
@@ -351,7 +416,7 @@ def test_a_swap_with_a_clip_cued_cues_it_again_afterwards(playout: PlayoutStudio
     _, second = on_air(playout)
     playout.command("cue_next")
 
-    playout.command("set_program_speed", speed_percent=50)
+    change_speed(playout, 50)
 
     # The clip on air moved to slot b; the cued clip is cued again in slot a,
     # parked on its first frame, at its own (normal) speed.
@@ -374,7 +439,7 @@ def test_a_paused_clip_stays_paused_through_a_speed_change(
     playout.command("transport", action="pause")
     before = program_cursor(playout)
 
-    playout.command("set_program_speed", speed_percent=25)
+    change_speed(playout, 25)
     playout.pass_time(1.0)
 
     assert program_cursor(playout) == pytest.approx(before, abs=ONE_FRAME)
@@ -384,7 +449,7 @@ def test_a_paused_clip_stays_paused_through_a_speed_change(
 
 def test_the_clip_on_air_and_its_speed_survive_a_restart(playout: PlayoutStudio) -> None:
     on_air(playout)
-    playout.command("set_program_speed", speed_percent=50)
+    change_speed(playout, 50)
 
     playout.configure(enabled=False)
     playout.configure(enabled=True)

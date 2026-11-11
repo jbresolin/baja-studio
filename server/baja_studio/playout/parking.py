@@ -1,11 +1,23 @@
 """Loading a clip into a media source and parking it, paused, on a chosen frame.
 
 A cue (park on the first frame of the off-air source) and the "swap" live
-speed change (park the clip on air, at its new speed, on the frame on air)
-are the same steps: set the file and the speed, restart, wait until OBS
-says it plays, pause, seek. OBS refuses to seek a source that has not
-started (the 2026-11-08 bench: "media must be playing or paused"), so the
-wait is what makes it work; split out of `switcher.py` in WP5c.
+speed change (park the clip on air, at its new speed, ahead of the frame on
+air) are the same steps, each one confirmed by OBS before the next:
+
+1. **Load**, forced: set the file and the speed. OBS reopens a source only
+   when its settings change, so a source already holding that file is
+   emptied first; otherwise nothing would open and no start would come.
+2. **Wait for the start**: `MediaInputPlaybackStarted` from that source,
+   read after the load request's response (`expecting_event(...,
+   after_next_request=True)`), so a start left over from an earlier open,
+   or of the other source, does not count. OBS's status is no proof: it
+   says "playing" before the first frame (the WP5c bench, LIVESTACK-56).
+3. **Pause**, until status says paused.
+4. **Seek**, then read the position back; a seek OBS ignored or has not
+   carried out yet is sent again, up to three times.
+
+All of it must finish by a deadline (3 s for a cue; the caller's for a
+speed change), or `ParkError` says which step OBS did not finish.
 
 Slow motion is OBS's `speed_percent` on the media source. Below 100 % the
 clip's audio is muted (its pitch would drop); playout unmutes only a source
@@ -13,18 +25,26 @@ it muted itself, so a source the operator muted in OBS stays muted.
 """
 
 import contextlib
+import logging
 import threading
 from typing import Any, Protocol
 
 from baja_studio.adapters.obs_protocol import MediaAction, MediaState
 from baja_studio.adapters.obs_requests import MediaStatus
 from baja_studio.adapters.obs_transport import ObsRequestFailedError
+from baja_studio.adapters.obs_websocket import ExpectedEvent
 from baja_studio.core.clock import Clock
 
-# A source must start playing within this long, or the cue fails.
-START_TIMEOUT_SECONDS = 3.0
-# While waiting for that start, OBS's status is asked again this often.
-START_POLL_SECONDS = 0.1
+# A whole cue (load, start, pause, seek) must be done within this long.
+CUE_TIMEOUT_SECONDS = 3.0
+# While waiting for OBS, its status is read again this often.
+POLL_SECONDS = 0.02
+# A seek is sent at most this many times...
+SEEK_ATTEMPTS = 3
+# ...each one given this long to show in OBS's status before the next.
+SEEK_CONFIRM_SECONDS = 0.25
+# Used for frame steps and seek tolerances when ffprobe gave no frame rate (WP5c §3).
+FALLBACK_FPS = 30.0
 # Media source settings for a clip: play once, keep the last frame (hold), never
 # restart on its own when its scene becomes visible.
 MEDIA_SOURCE_SETTINGS = {
@@ -38,6 +58,8 @@ NORMAL_SPEED_PERCENT = 100
 # The replay speeds offered (WP5c §4); OBS itself accepts 1..200.
 SPEEDS_PERCENT = (100, 50, 25)
 
+logger = logging.getLogger(__name__)
+
 
 class ParkError(Exception):
     """OBS would not start or park a clip; the message carries OBS's words."""
@@ -45,6 +67,9 @@ class ParkError(Exception):
 
 class MediaObs(Protocol):
     """The OBS requests parking needs (`ObsWebsocketClient` provides them)."""
+
+    def get_input_settings(self, input_name: str) -> dict[str, Any]:
+        """See `ObsRequestsMixin`."""
 
     def set_input_settings(
         self, input_name: str, settings: dict[str, Any], overlay: bool = True
@@ -64,9 +89,15 @@ class MediaObs(Protocol):
         """See `ObsRequestsMixin`."""
 
     def expecting_event(
-        self, event_type: str, **match: Any
-    ) -> contextlib.AbstractContextManager[threading.Event]:
+        self, event_type: str, *, after_next_request: bool = False, **match: Any
+    ) -> contextlib.AbstractContextManager[ExpectedEvent]:
         """See `ObsWebsocketClient`."""
+
+
+def frames_per_second(clip: dict[str, Any]) -> float:
+    """The clip's frame rate from ffprobe, else 30."""
+    fps = clip.get("fps")
+    return float(fps) if isinstance(fps, int | float) and fps > 0 else FALLBACK_FPS
 
 
 class MediaParker:
@@ -78,32 +109,105 @@ class MediaParker:
         self._obs = obs
         self._clock = clock
         self._muted_by_us: set[str] = set()
+        # Never set: waiting on it is a plain pause on the clock.
+        self._never = threading.Event()
 
     def park(
-        self, source: str, clip: dict[str, Any], speed_percent: int, at_s: float = 0.0
-    ) -> None:
-        """Load `clip` into `source` at `speed_percent` and leave it paused at `at_s`.
+        self,
+        source: str,
+        clip: dict[str, Any],
+        speed_percent: int,
+        at_s: float = 0.0,
+        deadline: float | None = None,
+    ) -> float:
+        """Load `clip` into `source` at `speed_percent`, paused at `at_s`; returns where it is.
 
-        Raises `ParkError` when the source does not start within 3 s or OBS
-        refuses the seek.
+        Raises `ParkError` when a step is not done by `deadline` (default:
+        3 s from now) or OBS refuses one.
         """
-        self._obs.set_input_settings(
-            source,
-            {
-                **MEDIA_SOURCE_SETTINGS,
-                "local_file": clip["file_path"],
-                "speed_percent": speed_percent,
-            },
-        )
+        if deadline is None:
+            deadline = self._clock.monotonic() + CUE_TIMEOUT_SECONDS
+        self.load(source, clip, speed_percent, deadline)
+        self.pause(source, clip["title"], deadline)
+        return self.seek_confirmed(source, clip, at_s, deadline)
+
+    def load(self, source: str, clip: dict[str, Any], speed_percent: int, deadline: float) -> int:
+        """Steps 1 and 2: open `clip` afresh in `source` and wait for its start.
+
+        Returns the number of the load request (its start was read after it).
+        """
+        title = clip["title"]
+        if self._obs.get_input_settings(source).get("local_file") == clip["file_path"]:
+            # Same file: OBS would reopen nothing (or only on a new speed). Empty it first.
+            self._obs.set_input_settings(source, {"local_file": ""})
+            logger.debug("%s: emptied (it held %r already)", source, title)
+        # Muted before it opens, so not one slowed-down sound is heard.
         self.apply_audio_rule(source, speed_percent)
-        with self._obs.expecting_event("MediaInputPlaybackStarted", inputName=source) as start:
-            self._obs.trigger_media_input_action(source, MediaAction.RESTART)
-            self.wait_until_playing(source, start, clip["title"])
-        self._obs.trigger_media_input_action(source, MediaAction.PAUSE)
-        self.seek(source, at_s, clip["title"])
+        settings = {
+            **MEDIA_SOURCE_SETTINGS,
+            "local_file": clip["file_path"],
+            "speed_percent": speed_percent,
+        }
+        with self._obs.expecting_event(
+            "MediaInputPlaybackStarted", after_next_request=True, inputName=source
+        ) as started:
+            self._obs.set_input_settings(source, settings)
+            request = started.request_number or 0
+            logger.debug(
+                "%s: loading %r at %d %% (request %d)", source, title, speed_percent, request
+            )
+            self._wait_for_start(source, title, started, deadline)
+        logger.debug("%s: started (request %d)", source, request)
+        return request
+
+    def pause(self, source: str, title: str, deadline: float) -> None:
+        """Step 3: pause `source` and wait until OBS says it is paused."""
+        while True:
+            self._obs.trigger_media_input_action(source, MediaAction.PAUSE)
+            status = self._obs.get_media_input_status(source)
+            if status.state == MediaState.PAUSED:
+                logger.debug("%s: paused at %.3f s", source, status.cursor_s or 0.0)
+                return
+            if self._clock.monotonic() >= deadline:
+                raise ParkError(f"OBS did not pause {title!r} in {source!r} ({status.state})")
+            self._clock.wait(self._never, POLL_SECONDS)
+
+    def seek_confirmed(
+        self, source: str, clip: dict[str, Any], at_s: float, deadline: float
+    ) -> float:
+        """Step 4: seek a paused `source` to `at_s`, read it back, try again (up to 3 times).
+
+        Returns the position OBS reports, within one frame of `at_s`.
+        """
+        tolerance = 1 / frames_per_second(clip)
+        position: float | None = None
+        for attempt in range(1, SEEK_ATTEMPTS + 1):
+            self.seek(source, at_s, clip["title"])
+            confirm_by = min(self._clock.monotonic() + SEEK_CONFIRM_SECONDS, deadline)
+            while True:
+                position = self._obs.get_media_input_status(source).cursor_s
+                if position is not None and abs(position - at_s) <= tolerance:
+                    logger.debug(
+                        "%s: seek to %.3f s confirmed at %.3f s (try %d)",
+                        source,
+                        at_s,
+                        position,
+                        attempt,
+                    )
+                    return position
+                if self._clock.monotonic() >= confirm_by:
+                    break
+                self._clock.wait(self._never, POLL_SECONDS)
+            logger.debug(
+                "%s: seek to %.3f s not seen (at %s) on try %d", source, at_s, position, attempt
+            )
+            if self._clock.monotonic() >= deadline:
+                break
+        shown = "nowhere" if position is None else f"{position:.2f} s"
+        raise ParkError(f"OBS did not move {clip['title']!r} to {at_s:.2f} s (it is at {shown})")
 
     def seek(self, source: str, at_s: float, title: str) -> None:
-        """Move `source` to `at_s` seconds (it must be playing or paused)."""
+        """Move `source` to `at_s` seconds, unconfirmed (it must be playing or paused)."""
         try:
             self._obs.set_media_input_cursor(source, at_s)
         except ObsRequestFailedError as error:
@@ -118,28 +222,17 @@ class MediaParker:
             self._obs.set_input_mute(source, False)
             self._muted_by_us.discard(source)
 
-    def wait_until_playing(
-        self, source: str, start: threading.Event, title: str, paused_is_fine: bool = False
+    def _wait_for_start(
+        self, source: str, title: str, started: ExpectedEvent, deadline: float
     ) -> None:
-        """Return once OBS says `source` plays; `start` is set by its started event.
-
-        `paused_is_fine`: a paused source OBS did not reopen also counts (a
-        live speed change on a paused clip, if OBS applies speed without a reload).
-        """
-        settled = (
-            {MediaState.PLAYING, MediaState.PAUSED} if paused_is_fine else {MediaState.PLAYING}
-        )
-        deadline = self._clock.monotonic() + START_TIMEOUT_SECONDS
+        """Until the start arrives; OBS's status is read meanwhile for the error message."""
         while True:
-            # The event only wakes us early; the status is the truth, because a
-            # started event left over from loading the file can arrive late.
             status = self._obs.get_media_input_status(source)
-            if status.state in settled:
+            if started.arrived.is_set():
                 return
             if self._clock.monotonic() >= deadline:
                 raise ParkError(
-                    f"OBS did not start {title!r} in {source!r} within "
-                    f"{START_TIMEOUT_SECONDS:g} s (media state {status.state})"
+                    f"OBS did not start {title!r} in {source!r} in time "
+                    f"(media state {status.state})"
                 )
-            self._clock.wait(start, START_POLL_SECONDS)
-            start.clear()
+            self._clock.wait(started.arrived, POLL_SECONDS)

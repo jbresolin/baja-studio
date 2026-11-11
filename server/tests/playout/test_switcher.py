@@ -91,19 +91,22 @@ def test_a_cue_waits_for_obs_to_start_the_source_before_pausing_and_rewinding(ri
     # seeking it before then is refused.
     rig.switcher.cue(clip(1))
 
-    # The order of what was asked: load the file, restart, ask the status
-    # until it plays, then pause and rewind.
+    # The order of what was asked (parking.py): read what the source holds,
+    # load the file, ask the status until OBS's start event came, pause and
+    # confirm it, rewind and read the position back.
     asked = [
         (kind, data.get("mediaAction", ""))
         for kind, data in rig.requests_since(0)
         if kind != "SetSceneSceneTransitionOverride"
     ]
     assert asked == [
+        ("GetInputSettings", ""),
         ("SetInputSettings", ""),
-        ("TriggerMediaInputAction", "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_RESTART"),
         ("GetMediaInputStatus", ""),
         ("TriggerMediaInputAction", "OBS_WEBSOCKET_MEDIA_INPUT_ACTION_PAUSE"),
+        ("GetMediaInputStatus", ""),
         ("SetMediaInputCursor", ""),
+        ("GetMediaInputStatus", ""),
     ]
     # And the clip sits on its first frame, ready for a take.
     assert rig.media("baja_program_a").state == MediaState.PAUSED
@@ -143,7 +146,7 @@ def test_a_cue_whose_source_never_starts_fails_after_three_seconds_naming_its_st
     # It gave up after about 3 s, saying what OBS reported, and nothing is cued.
     assert len(failures) == 1
     assert isinstance(failures[0], CueError)
-    assert "within 3 s" in str(failures[0])
+    assert "did not start" in str(failures[0])
     assert "OBS_MEDIA_STATE_OPENING" in str(failures[0])
     assert rig.clock.monotonic() == pytest.approx(3.0, abs=0.15)
     assert rig.switcher.cued is None
