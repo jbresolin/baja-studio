@@ -12,6 +12,8 @@ dependencies = [
     "fastapi==0.162.0",
     "starlette==1.10.0",
     "uvicorn==0.54.0",
+    # Stay below 18: the OBS transport uses the legacy sync client (connect(..., legacy=True),
+    # ADR 0016), which a major version may remove. LIVESTACK-61 moves to the current client.
     "websockets==17.4",
     "pydantic==2.14.2",
     # The agent client's HTTP side (and Starlette's TestClient in the tests).

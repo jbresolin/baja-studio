@@ -15,6 +15,7 @@ import {
   messageSize,
   movedLayout,
   saveScreenSeats,
+  seatsFromUrl,
   streamTime,
   toggledLayout,
   valueAt,
@@ -135,6 +136,15 @@ describe("the screen's seats and clocks", () => {
     expect(loadScreenSeats(localStorage)).toBeNull();
     localStorage.clear();
     expect(loadScreenSeats(localStorage)).toBeNull();
+  });
+
+  it("takes the seats from the address, dropping ones that do not exist", () => {
+    // How the rehearsal rig opens the screen: no picker, every seat.
+    expect(seatsFromUrl("?seats=1,2,3,4")).toEqual([1, 2, 3, 4]);
+    expect(seatsFromUrl("?seats=2, 2,9,x")).toEqual([2]);
+    // No seats named (or none valid): the screen falls back to storage and the picker.
+    expect(seatsFromUrl("")).toBeNull();
+    expect(seatsFromUrl("?seats=9")).toBeNull();
   });
 
   it("counts stream time from the marker as h:mm:ss", () => {

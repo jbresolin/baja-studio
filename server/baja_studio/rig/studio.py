@@ -7,16 +7,22 @@ Setting it up uses only what the pages use, so the rig exercises them:
    (preview, save, restore), as the audio setup page sends them;
 3. playout's "Return to" set to the scene OBS starts on, as on the playout page.
 
+Then (`--open`, on by default) the home page and a hosts screen for every
+seat open in the default browser.
+
 `StudioApi` takes any `httpx2.Client` aimed at the studio, so the tests hand it
 Starlette's `TestClient` around an in-process studio.
 """
 
 import time
+import webbrowser
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import httpx2
 
+from baja_studio.rig.bundle import SEATS
 from baja_studio.rig.fakes import STUDIO_ENVIRONMENT
 from baja_studio.rig.layout import LOOPBACK
 from baja_studio.rig.processes import RigProcess
@@ -33,6 +39,22 @@ READINESS_TIMEOUT_SECONDS = 30.0
 
 class StudioSetupError(Exception):
     """The studio refused a step of the setup; the message says which and why."""
+
+
+def pages_to_open(base_url: str) -> list[str]:
+    """`--open`: the home page, and a hosts screen showing every seat of the bundle.
+
+    The hosts screen takes its seats from the address (`?seats=1,2,3,4`), so it
+    registers without anyone tapping the picker, and readiness's "Hosts
+    screens" check is green as soon as it loads.
+    """
+    seats = ",".join(str(seat_id) for seat_id, _, _ in SEATS)
+    return [f"{base_url}/", f"{base_url}/hosts?seats={seats}"]
+
+
+def open_pages(urls: list[str], opener: Callable[[str], bool] = webbrowser.open) -> list[str]:
+    """Open each page in the default browser; returns the ones no browser took."""
+    return [url for url in urls if not opener(url)]
 
 
 def studio_process(

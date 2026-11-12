@@ -16,7 +16,14 @@ from baja_studio.rig.layout import LOOPBACK, RigLayout, default_rig_directory
 from baja_studio.rig.processes import ProcessStartError
 from baja_studio.rig.scenarios import DEFAULT_SCENARIO, load_scenario, scenario_names
 from baja_studio.rig.session import RigSession
-from baja_studio.rig.studio import STUDIO_PORT, StudioApi, StudioSetupError, studio_process
+from baja_studio.rig.studio import (
+    STUDIO_PORT,
+    StudioApi,
+    StudioSetupError,
+    open_pages,
+    pages_to_open,
+    studio_process,
+)
 
 # The fake OBS's timing seed unless `--seed` says otherwise; printed, so a run can be replayed.
 DEFAULT_SEED = 2026
@@ -40,6 +47,12 @@ def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
         action=argparse.BooleanOptionalAction,
         default=True,
         help=f"also start a studio on port {STUDIO_PORT} and import the bundle (default: on)",
+    )
+    parser.add_argument(
+        "--open",
+        action=argparse.BooleanOptionalAction,
+        default=True,
+        help="open the studio and a hosts screen in the browser once it answers (default: on)",
     )
     parser.add_argument("--reset", action="store_true", help="wipe the rig's folder first")
     parser.add_argument(
@@ -82,6 +95,10 @@ def main(argv: list[str] | None = None) -> int:
         if options.studio:
             start_studio(session, options.port)
         print_summary(session, options, scenario.description)
+        if options.studio and options.open:
+            base_url = f"http://{LOOPBACK}:{options.port}"
+            for url in open_pages(pages_to_open(base_url)):
+                say(f"no browser opened {url}; open it by hand")
         while True:
             time.sleep(WATCH_INTERVAL_SECONDS)
     except KeyboardInterrupt:
@@ -130,6 +147,8 @@ def print_summary(session: RigSession, options: argparse.Namespace, description:
     say(f"scenario {options.scenario}: {description}")
     if options.studio:
         say(f"Open http://{LOOPBACK}:{options.port}")
+        if not options.open:
+            say(f"(and {pages_to_open(f'http://{LOOPBACK}:{options.port}')[1]} for Readiness)")
     else:
         variables = " ".join(f"{key}={value}" for key, value in STUDIO_ENVIRONMENT.items())
         say("no studio started: import the bundle above on Settings → Export / import,")

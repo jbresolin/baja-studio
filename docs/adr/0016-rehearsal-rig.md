@@ -27,7 +27,19 @@ HTTP API, and plays a scenario. Code in `server/baja_studio/rig/`, tests in
 3. **The bundle's secrets are real values, written to the file.** They are the
    fakes' own constants (`rig-obs-password`, …), protect nothing outside
    127.0.0.1, and let `--no-studio` users import in one step. This is the one
-   exception to "secrets never go to a file", and it holds only for the rig.
+   exception to "secrets never go to a file", and it holds only for the rig,
+   because nothing it starts is reachable from another PC: every fake and the
+   rig's studio get `--host 127.0.0.1`. Pinned by tests: the command lines
+   (`tests/rig/test_fakes.py`, default suite) and the real sockets, which
+   answer on 127.0.0.1 and not on the PC's network address
+   (`test_no_fake_can_be_reached_from_another_pc`, `rig` suite).
+   A fake added without `--host` fails both.
+3a. **`--open`** (on by default) opens the home page and
+   `/hosts?seats=1,2,3,4` once the studio is set up, so bench step 1 is green
+   without opening or tapping anything. The hosts screen gained the `seats`
+   address parameter for it (`seatsFromUrl` in `frontend/src/lib/hosts.ts`):
+   seats named there are used and remembered instead of asking; an address
+   without it behaves as before. A page no browser takes is printed instead.
 4. **What the bundle sets beyond the brief's list**: channels 7 and 8 (PROD 3
    and 4) are made visible, because the default link matrix links them and the
    readiness run would warn about links on hidden channels; the hosts seats are
@@ -81,13 +93,18 @@ HTTP API, and plays a scenario. Code in `server/baja_studio/rig/`, tests in
   could never connect to a real (network) OBS in a test. `legacy=True` is the
   documented way to keep today's behaviour without the warning. No in-process
   test ever opened the real transport, which is why it went unseen.
+  websockets stays pinned at `==17.4` (an exact pin, already below 18, with a
+  comment saying why) until LIVESTACK-61 moves the transport to the current
+  client.
+
+- `frontend/src/pages/HostsScreen.tsx`: `/hosts?seats=…` (decision 3a).
 
 Nothing in `core/` changed.
 
 ## Left open
 
-- The hosts readiness check warns "no hosts screen is open" until `/hosts` is
-  open in a browser; bench step 1 needs that tab for an all-green run.
+- The hosts readiness check warns "no hosts screen is open" while the hosts
+  tab `--open` opened is closed (or with `--no-open` until it is opened).
 - With real PC probes, the rig studio's disk and clock checks are this PC's
   own: a nearly full disk or no internet shows there, as it would on the
   streaming PC.

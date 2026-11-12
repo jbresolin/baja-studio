@@ -11,6 +11,7 @@ so a CI runner with little disk still gets an all-green readiness run. It
 is set up exactly as the rig sets up its own studio, over the same HTTP API.
 """
 
+import socket
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -19,6 +20,9 @@ import httpx2
 import pytest
 from fastapi.testclient import TestClient
 
+from baja_studio.adapters.osc import OscMessage, encode_message
+from baja_studio.adapters.xr18_addresses import INFO
+from baja_studio.cameras.drivers import visca_packets
 from baja_studio.core.module import Module
 from baja_studio.core.registry import ModuleRegistry
 from baja_studio.main import build_module_list, create_app
@@ -135,6 +139,69 @@ def test_a_compressed_flaky_agent_flips_the_fakes_switches_and_back(session: Rig
         "state_frozen": False,
         "delay_ms": 0,
     }
+
+
+def this_pcs_network_address() -> str | None:
+    """This PC's address on its network (not 127.x), or None when it has none.
+
+    "Connecting" a UDP socket sends nothing; it only makes the system pick the
+    address it would send from. 192.0.2.1 is a documentation address.
+    """
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+        try:
+            probe.connect(("192.0.2.1", 9))
+        except OSError:
+            return None
+        address = str(probe.getsockname()[0])
+    return None if address.startswith("127.") or address == "0.0.0.0" else address
+
+
+def answers_at(host: str, port: int, datagram: bytes | None) -> bool:
+    """True when `host:port` accepts a TCP connection (or, with `datagram`, answers it over UDP)."""
+    if datagram is None:
+        try:
+            with socket.create_connection((host, port), timeout=1.0):
+                return True
+        except OSError:
+            return False
+    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as probe:
+        probe.settimeout(1.0)
+        try:
+            probe.sendto(datagram, (host, port))
+            probe.recvfrom(65535)
+        except OSError:  # refused (Windows reports it as a reset) or no answer
+            return False
+    return True
+
+
+def test_no_fake_can_be_reached_from_another_pc(session: RigSession) -> None:
+    # The bundle's passwords and tokens are plain text because of this test: each
+    # fake answers on 127.0.0.1, and nothing answers on this PC's network address,
+    # which is where another PC would reach it.
+    network_address = this_pcs_network_address()
+    if network_address is None:
+        pytest.skip("this PC has no network address to try from")
+    xinfo = encode_message(OscMessage(INFO, ()))
+    inquiry = visca_packets.wrap(
+        visca_packets.pan_tilt_position_inquiry(), visca_packets.PAYLOAD_INQUIRY, 1
+    )
+    ports = session.ports
+    listening = {
+        "obs": (ports.obs, None),
+        "xr18": (ports.xr18, xinfo),
+        "camera1": (ports.cameras[0], inquiry),
+        "camera2": (ports.cameras[1], inquiry),
+        "agent1": (ports.agents[0], None),
+        "agent2": (ports.agents[1], None),
+        "orchestrator": (ports.orchestrator, None),
+    }
+    assert set(listening) == set(session.fakes)
+
+    for name, (port, datagram) in listening.items():
+        assert answers_at(LOOPBACK, port, datagram), f"{name} does not answer on 127.0.0.1"
+        assert not answers_at(network_address, port, datagram), (
+            f"{name} answers on {network_address}:{port}: another PC could reach it"
+        )
 
 
 def test_stopping_the_rig_leaves_no_child_running(tmp_path: Path) -> None:
