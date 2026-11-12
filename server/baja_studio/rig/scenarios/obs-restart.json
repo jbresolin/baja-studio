@@ -1,0 +1,7 @@
+{
+  "description": "OBS quits at 20 s (its socket closes) and is back at 30 s, with its scenes as at start.",
+  "steps": [
+    {"at_s": 20, "target": "obs", "action": "stop"},
+    {"at_s": 30, "target": "obs", "action": "start"}
+  ]
+}

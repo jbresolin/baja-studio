@@ -5,11 +5,12 @@ docstring); the console that drives it is tested with a stand-in.
 """
 
 import io
+import threading
 from dataclasses import dataclass, field
 
 import pytest
 
-from baja_studio.adapters.osc import OscArgument
+from baja_studio.adapters.osc import OscArgument, OscMessage, encode_message
 from baja_studio.fakes.fake_xr18 import parse_value, run_console, shortcut_change
 from baja_studio.fakes.simulated_xr18 import SimulatedXr18
 
@@ -20,6 +21,7 @@ class ConsoleTarget:
 
     mixer: SimulatedXr18 = field(default_factory=SimulatedXr18)
     changes: list[tuple[str, OscArgument]] = field(default_factory=list)
+    lock: threading.Lock = field(default_factory=threading.Lock)
 
     def change(self, address: str, value: OscArgument) -> None:
         self.changes.append((address, value))
@@ -89,3 +91,23 @@ def test_the_console_applies_a_shortcut_as_a_change_from_the_desk(
     run_console(target)  # type: ignore[arg-type]
 
     assert target.changes == [("/ch/01/mix/lr", 0)]
+
+
+def test_a_forgotten_address_is_neither_answered_nor_written(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The rig's lr-assign-silent scenario: a firmware that never reports channel 1's LR assign.
+    target = ConsoleTarget()
+    monkeypatch.setattr("sys.stdin", io.StringIO("forget /ch/01/mix/lr\nquit\n"))
+
+    run_console(target)  # type: ignore[arg-type]
+
+    # A query for it now gets no answer, and a write to it is ignored.
+    query = encode_message(OscMessage("/ch/01/mix/lr", ()))
+    write = encode_message(OscMessage("/ch/01/mix/lr", (0,)))
+    assert target.mixer.handle("studio", query, 0.0) == []
+    assert target.mixer.handle("studio", write, 0.1) == []
+    assert "/ch/01/mix/lr" not in target.mixer.values
+    # Other addresses still answer.
+    fader = encode_message(OscMessage("/ch/01/mix/fader", ()))
+    assert len(target.mixer.handle("studio", fader, 0.2)) == 1

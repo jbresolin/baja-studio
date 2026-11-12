@@ -17,6 +17,7 @@ standard input while it runs:
     drop on | drop off           stop/start answering, like a pulled cable
     recover                      un-hang after a flood (more than 113 packets per 500 ms)
     snapshot 3                   store the current mix as snapshot 3 (for /-snap/load 3)
+    forget /ch/01/mix/lr         stop reporting an address (a firmware that never answers it)
     show /ch/01                  print values under a prefix
     quit
 
@@ -150,6 +151,10 @@ def run_console(fake: UdpFakeXr18) -> None:
             fake.mixer.recover()
         elif command == "snapshot" and len(words) == 2:
             fake.mixer.snapshots[int(words[1])] = dict(fake.mixer.values)
+        elif command == "forget" and len(words) == 2:
+            # An address the mixer does not hold is neither answered nor written.
+            with fake.lock:
+                fake.mixer.values.pop(words[1], None)
         elif command == "show":
             prefix = words[1] if len(words) > 1 else "/"
             for address, value in sorted(fake.mixer.values.items()):
@@ -159,7 +164,7 @@ def run_console(fake: UdpFakeXr18) -> None:
             print(
                 "commands: set ADDRESS VALUE | mute CH on|off | lr CH on|off | fader CH LEVEL | "
                 "send CH BUS LEVEL | sendon CH BUS on|off | tap CH BUS pre|post | "
-                "toggle ADDRESS | drop on|off | recover | snapshot N | show PREFIX"
+                "toggle ADDRESS | drop on|off | recover | snapshot N | forget ADDRESS | show PREFIX"
             )
         print(f"(hung: {fake.mixer.hung}, dropping: {fake.mixer.drop_packets})", flush=True)
 

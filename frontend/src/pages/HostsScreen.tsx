@@ -4,7 +4,8 @@
  * runs in a kiosk-mode browser window or on a tablet.
  *
  * On first open it asks which seats this screen is for (kept in
- * localStorage). Then: the cards production chose, in its order, the pushed
+ * localStorage), unless the address names them (`/hosts?seats=1,2,3,4`, how
+ * the rehearsal rig opens it). Then: the cards production chose, in its order, the pushed
  * card first; the messages card under them. A red border means the screen
  * is not live (`useHostsLink`): what it shows may be old. Reconnecting
  * brings a fresh snapshot, so missed messages appear by themselves.
@@ -31,6 +32,7 @@ import {
   loadScreenSeats,
   saveScreenSeats,
   seatName,
+  seatsFromUrl,
   valueAt,
   type HostsState,
   type Seat,
@@ -44,9 +46,13 @@ export function HostsScreen() {
   const tree = useStateTree();
   const state = tree.hosts as HostsState | undefined;
   const sendCommand = useSendCommand();
-  const [screenSeats, setScreenSeats] = useState<SeatId[] | null>(() =>
-    loadScreenSeats(window.localStorage),
-  );
+  const [screenSeats, setScreenSeats] = useState<SeatId[] | null>(() => {
+    // `/hosts?seats=1,2` chooses (and remembers) the seats without the picker.
+    const fromUrl = seatsFromUrl(window.location.search);
+    if (fromUrl === null) return loadScreenSeats(window.localStorage);
+    saveScreenSeats(window.localStorage, fromUrl);
+    return fromUrl;
+  });
   const [choosing, setChoosing] = useState(screenSeats === null);
   const stale = useHostsLink(choosing ? null : screenSeats);
   const [nowMs, setNowMs] = useState(() => Date.now());

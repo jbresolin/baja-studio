@@ -1,0 +1,6 @@
+{
+  "description": "The XR18 never reports channel 1's LR assign (seat 1's microphone), from before the studio connects: the readiness run warns 'Hosts can be taken off air'.",
+  "steps": [
+    {"at_s": 0, "target": "xr18", "action": "console", "args": {"line": "forget /ch/01/mix/lr"}}
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "description": "Agent 1 keeps answering HTTP but stops pushing state on its WebSocket at 20 s for 20 s (the 3 s stale rule).",
+  "steps": [
+    {"at_s": 20, "target": "agent1", "action": "switch", "args": {"switch": "freeze_state", "body": {"frozen": true}}},
+    {"at_s": 40, "target": "agent1", "action": "switch", "args": {"switch": "freeze_state", "body": {"frozen": false}}}
+  ]
+}

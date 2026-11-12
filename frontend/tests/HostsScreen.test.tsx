@@ -110,6 +110,20 @@ describe("seats", () => {
     expect(sentNamed("register_screen").at(-1)!.args).toEqual({ seats: [2] });
   });
 
+  it("takes its seats from the address without asking, and remembers them", () => {
+    // The rehearsal rig opens /hosts?seats=1,2 in a browser that never chose seats.
+    window.history.pushState({}, "", "/hosts?seats=1,2");
+    try {
+      showHostsScreen(tree(hostsState()), null);
+    } finally {
+      window.history.pushState({}, "", "/");
+    }
+
+    expect(screen.queryByRole("button", { name: "Done" })).not.toBeInTheDocument();
+    expect(sentNamed("register_screen").at(-1)!.args).toEqual({ seats: [1, 2] });
+    expect(localStorage.getItem("baja-studio.hosts-seats")).toBe("[1,2]");
+  });
+
   it("repeats which seats it shows every two seconds", () => {
     showHostsScreen(tree(hostsState()), [1, 2]);
     expect(sentNamed("register_screen")).toHaveLength(1);

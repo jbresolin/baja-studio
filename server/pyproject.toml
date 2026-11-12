@@ -12,6 +12,8 @@ dependencies = [
     "fastapi==0.162.0",
     "starlette==1.10.0",
     "uvicorn==0.54.0",
+    # Stay below 18: the OBS transport uses the legacy sync client (connect(..., legacy=True),
+    # ADR 0016), which a major version may remove. LIVESTACK-61 moves to the current client.
     "websockets==17.4",
     "pydantic==2.14.2",
     # The agent client's HTTP side (and Starlette's TestClient in the tests).
@@ -39,9 +41,15 @@ version = { attr = "baja_studio.__version__" }
 [tool.setuptools.packages.find]
 include = ["baja_studio*"]
 
+[tool.setuptools.package-data]
+# The rehearsal rig's scenarios are data (ADR 0016).
+"baja_studio.rig" = ["scenarios/*.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra"
+# The rig's integration tests open loopback sockets; they run on their own (`pytest -m rig`).
+addopts = "-ra -m 'not rig'"
+markers = ["rig: the rehearsal rig's integration tests (real fakes on loopback ports)"]
 # A test that hangs is a bug; this turns a hang into a clear failure.
 faulthandler_timeout = 60
 # Warnings are bugs (an unclosed pipe, a deprecated call): fail on them, in CI too.

@@ -249,6 +249,21 @@ export function loadScreenSeats(storage: Pick<Storage, "getItem">): SeatId[] | n
   }
 }
 
+/**
+ * Seats named in the address (`/hosts?seats=1,2`), or null when it names
+ * none. The rehearsal rig opens the screen this way, so it needs no taps;
+ * unknown seats are dropped.
+ */
+export function seatsFromUrl(search: string): SeatId[] | null {
+  const listed = new URLSearchParams(search).get("seats");
+  if (listed === null) return null;
+  const seats = listed
+    .split(",")
+    .map((seat) => Number(seat.trim()))
+    .filter((seat): seat is SeatId => [1, 2, 3, 4].includes(seat));
+  return seats.length > 0 ? [...new Set(seats)] : null;
+}
+
 /** Remember which seats this screen represents. */
 export function saveScreenSeats(storage: Pick<Storage, "setItem">, seats: SeatId[]): void {
   storage.setItem(SEATS_STORAGE_KEY, JSON.stringify(seats));

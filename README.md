@@ -144,6 +144,39 @@ Log files are in its `logs` subfolder, one JSON object per line.
 | Watch a worker recover | Heartbeat page → **Crash worker once** | The badge turns amber `degraded`. Counting resumes after about 1 s, and the badge returns to `ok` after 10 s without errors. |
 | Turn a module off | Settings → Heartbeat → untick *Enabled* → Save | The heartbeat card shows grey `stopped`. Tick it again to restart it. |
 
+## The whole studio without hardware (rehearsal rig)
+
+One command starts every fake (OBS, the XR18, two VISCA cameras, two
+camera-laptop agents, the orchestrator, the M-VAVE) and a second studio
+already pointed at all of them:
+
+```
+cd server
+python -m baja_studio.rig
+```
+
+The first run makes a demo clip library with ffmpeg (needs ffmpeg on PATH or
+an installed studio's bundled copy; it takes a minute). Then it prints each
+fake's address and opens two browser tabs: the studio at
+<http://127.0.0.1:8889>, with every module set up, and a hosts screen for
+every seat (`/hosts?seats=1,2,3,4`), which Readiness needs to be all green.
+The bench sheet is [docs/bench/wp11.md](docs/bench/wp11.md).
+`Ctrl+C` stops everything. The rig keeps its clips, its studio's data and
+its settings file in `%LOCALAPPDATA%\BajaStudioRig`
+(`~/.local/share/baja-studio-rig` on Linux), apart from your own studio, and
+each child's output in `logs/` there.
+
+| Option | What it does |
+|---|---|
+| `--scenario NAME` | Plays failures against the fakes on a timeline, printing each step: `calm` (default), `flaky-agent`, `mixer-drop`, `obs-restart`, `stale-state`, `post-fader-tap`, `lr-assign-silent`. They are JSON files in `server/baja_studio/rig/scenarios/`; add one there. |
+| `--seed N` | The fake OBS's timing seed (default 2026, printed at start), so an odd result can be replayed. |
+| `--fast-obs` | The fake OBS opens and seeks at once (no realistic timing). |
+| `--no-open` | Opens no browser tabs; the two addresses are printed instead. |
+| `--no-studio` | Fakes only. Import the printed `rig-settings.json` on **Settings → Export / import** of a studio started with `BAJA_STUDIO_MIDI_BACKEND=fake`. |
+| `--reset` | Wipes the rig's folder (clips included) first. |
+
+`BAJA_STUDIO_DEBUG_LOGGERS` reaches the rig's studio when it is set.
+
 ## A fake camera laptop on the bench
 
 You do not need a trackside laptop to try the agents module. In a second
@@ -227,6 +260,7 @@ With the virtual environment active:
 ```
 cd server
 pytest                 # all server tests; no hardware or network needed
+pytest -m rig          # the rehearsal rig's tests: real fakes on 127.0.0.1 ports (needs ffmpeg)
 ruff check .           # style and common mistakes
 ruff format --check .  # formatting
 mypy                   # strict type checking
@@ -296,6 +330,8 @@ server/baja_studio/
   fakes/           runnable stand-ins for external systems (fake_agent,
                    fake_visca_camera, fake_serial, fake_obs, fake_orchestrator,
                    fake_xr18, fake_midi, fake_caddy)
+  rig/             the rehearsal rig: every fake plus a studio pointed at
+                   them, demo clips, settings bundle, failure scenarios
   modules/         one folder per module (home, cameras, playout, audio,
                    gateway, agents, heartbeat, echo)
   childprocs/      programs run as child processes (echo_child, midi_child)
