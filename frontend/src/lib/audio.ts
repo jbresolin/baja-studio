@@ -161,6 +161,8 @@ export interface LinkRestore {
   links: Record<string, Record<string, LinkState>>;
   current: Record<string, Record<string, LinkState>>;
   changes: LinkRestoreChange[];
+  /** Held levels the restore releases ("5:bus1"): sends an old macro left closed. */
+  released: string[];
 }
 
 // --- the XR18 fader law ------------------------------------------------------------

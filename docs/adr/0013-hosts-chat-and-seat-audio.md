@@ -189,6 +189,24 @@ page "15 — WP9b brief". Read with ADR 0006 (audio) and ADR 0011 (hosts).
       page sends `audio.restore_defaults`, which checks the saved setup
       carries the defaults. No core change.
 
+24. **The defaults follow the patch** (2026-11-14 bench). The studio PC's
+    XR18 has SHOTGUN on 3, HOST 1-2 and GUEST 1-2 on 5-8, PROD 1-2 on 9-10;
+    the defaults took the 2026 patch (seats 1-4, PROD 5-8), so "Prod 1 →
+    Hosts" and "Prod 1 → Cam", off, held HOST 1's sends to buses 1, 2 and 6
+    closed and its fader moved nothing there. "Restore defaults…" now builds
+    the macros and the link matrix from `audio/patch.py`: the seats'
+    microphones (Seats), the production microphones, and the other inputs
+    shown on the audio page; the page sends its draft so unsaved Seats count.
+    A fresh install, with no seat mapped, gets the 2026 patch (same macros,
+    same ids). PROD 3-4 are now *paused* on buses 5-6 like PROD 1-2 (2026
+    linked them, so production heard them only while on air).
+25. **Restoring releases stale held levels.** A held (stored) level makes a
+    send ignore its fader. A level held on a seat's microphone or another
+    main-mix input that no macro holds in its current state (its on steps'
+    closes while active, its off steps' while not) is forgotten, and a
+    linked send snaps back to its fader. The preview lists them ("Held sends
+    released"); `restore_defaults` returns them as `released`.
+
 ## Left open
 
 - The XR18 addresses (decision 6), first of all `/ch/NN/mix/lr`, which

@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from baja_studio.adapters.xr18_addresses import send_address
 from baja_studio.audio import defaults
 from baja_studio.core.module import CommandError
 from baja_studio.modules.audio.restore_commands import default_macros
@@ -181,3 +182,128 @@ def test_restoring_a_link_matrix_changed_since_the_preview_is_refused(audio: Aud
 def test_part_must_be_macros_or_links(audio: AudioStudio) -> None:
     with pytest.raises(CommandError, match="part must be"):
         audio.command("preview_defaults", part="scenes")
+
+
+# --- the studio PC's patch (2026-11-14 bench) ---------------------------------------------------
+#
+# HOST 1-2 and GUEST 1-2 on channels 5-8, PROD 1-2 on 9-10. The 2026 macros
+# took 5-8 for production microphones: "Prod 1 → Hosts" and "Prod 1 → Cam",
+# off, held HOST 1's (channel 5) sends to buses 1, 2 and 6 closed, so its
+# fader moved nothing there.
+
+STUDIO_PC_SEATS = [
+    {"seat_id": 1, "channel": "5", "iem_bus": "bus1"},
+    {"seat_id": 2, "channel": "6", "iem_bus": "bus2"},
+    {"seat_id": 3, "channel": "7", "iem_bus": "bus3"},
+    {"seat_id": 4, "channel": "8", "iem_bus": "bus4"},
+]
+
+
+def studio_pc(audio: AudioStudio) -> None:
+    """Seats and production microphones as on the studio PC, with HOST 1's sends held closed."""
+    audio.connect_mixer()
+    audio.configure(seats=STUDIO_PC_SEATS, production_channels=["9", "10"])
+    # What the old macros left: HOST 1's sends to buses 1, 2 and 6 held (stored, silent).
+    for bus in ("bus1", "bus2", "bus6"):
+        audio.module.controller.stored.store(f"5:{bus}", 0.75)
+    audio.command("set_link", channel="5", bus="bus1", state="linked")
+
+
+def restore_macros(audio: AudioStudio) -> dict[str, Any]:
+    """Press Restore defaults… for the macros, Save, and log it, as the page does."""
+    document = saved_audio(audio)
+    preview = audio.command("preview_defaults", part="macros", macros=document["values"]["macros"])
+    response = audio.http.put(
+        "/api/settings/audio",
+        json={
+            "version": document["version"],
+            "values": {**document["values"], "macros": preview["macros"]},
+        },
+    )
+    assert response.status_code == 200
+    result: dict[str, Any] = audio.command(
+        "restore_defaults",
+        part="macros",
+        version=response.json()["version"],
+        changes=preview["changes"],
+    )
+    return {"preview": preview, "result": result}
+
+
+def test_restored_macros_follow_the_seats_and_production_microphones(audio: AudioStudio) -> None:
+    studio_pc(audio)
+
+    restore_macros(audio)
+
+    host1 = audio.module.settings().macro("host1-talk-prod")
+    prod1_to_hosts = audio.module.settings().macro("prod1-talk-hosts")
+    assert host1 is not None and prod1_to_hosts is not None
+    assert host1.on_steps[0].model_dump()["channel"] == "5"
+    assert prod1_to_hosts.on_steps[0].model_dump()["points"][0]["channel"] == "9"
+
+
+def test_restoring_releases_the_levels_old_macros_held_and_the_fader_moves_the_sends_again(
+    audio: AudioStudio,
+) -> None:
+    studio_pc(audio)
+
+    restored = restore_macros(audio)
+
+    # The preview says which held levels go, and the restore lets them go.
+    # (5:bus2 too: "Host 1 → Prod" closes it only while it is on, and it is off.)
+    assert restored["preview"]["released"] == ["5:bus1", "5:bus2", "5:bus6"]
+    assert restored["result"]["released"] == ["5:bus1", "5:bus2", "5:bus6"]
+    assert audio.module.controller.stored.all() == {}
+    # HOST 1's fader now moves its linked sends again.
+    audio.command("set_fader", channel="5", level=0.6)
+    audio.settle()
+    assert audio.mixer_value(send_address("5", "bus1")) == pytest.approx(0.6)
+
+
+def test_a_level_a_current_macro_holds_is_not_released(audio: AudioStudio) -> None:
+    # PROD 1 (channel 9) into the hosts' in-ears is held closed by "Prod 1 →
+    # Hosts" while that macro is off (its off steps close it); 9 is a
+    # production microphone anyway: it stays held.
+    studio_pc(audio)
+    audio.module.controller.stored.store("9:bus1", 0.6)
+
+    restored = restore_macros(audio)
+
+    assert "9:bus1" not in restored["result"]["released"]
+    assert audio.module.controller.stored.get("9:bus1") == 0.6
+
+
+def test_the_preview_uses_the_pages_unsaved_seats(audio: AudioStudio) -> None:
+    # João maps the seats on the Seats tab and presses Restore defaults…
+    # before saving: the preview follows the draft, not the saved setup.
+    document = saved_audio(audio)
+    draft = {**document["values"], "seats": STUDIO_PC_SEATS, "production_channels": ["9", "10"]}
+
+    preview = audio.command(
+        "preview_defaults", part="macros", macros=draft["macros"], settings=draft
+    )
+    links = audio.command("preview_defaults", part="links", settings=draft)
+
+    by_id = {macro["id"]: macro for macro in preview["macros"]}
+    assert by_id["host1-talk-prod"]["on_steps"][0]["channel"] == "5"
+    assert links["links"]["9"] == {"bus5": "paused", "bus6": "paused"}
+    assert links["links"]["5"]["bus1"] == "linked"
+
+
+def test_levels_an_active_macro_holds_are_kept(audio: AudioStudio) -> None:
+    # Host 1 is talking to production ("Host 1 → Prod" on): its sends to the
+    # other seats' in-ears are held closed on purpose, and stay held.
+    studio_pc(audio)
+    restore_macros(audio)
+    # HOST 1 linked into host 2's in-ears and at unity, so that send is open
+    # before the macro closes it.
+    audio.command("set_link", channel="5", bus="bus2", state="linked")
+    audio.command("set_fader", channel="5", level=0.75)
+    audio.settle()
+    audio.command("run_macro", macro="host1-talk-prod")
+    audio.settle()
+
+    preview = audio.command("preview_defaults", part="links")
+
+    assert preview["released"] == []
+    assert audio.module.controller.stored.get("5:bus2") is not None

@@ -408,6 +408,8 @@ describe("Restore defaults (WP9b)", () => {
       ],
     });
     expect(preview.args).toMatchObject({ part: "macros" });
+    // The draft goes along: the defaults follow its Seats, saved or not.
+    expect(preview.args.settings).toMatchObject({ seats: stored.values.seats });
     expect((preview.args.macros as { id: string }[]).map((m) => m.id)).toEqual([
       host1!.id,
       "prod1-talk-hosts",
@@ -490,6 +492,26 @@ describe("Restore defaults (WP9b)", () => {
     expect(saves).toHaveLength(0); // the settings had no edits
     reply("restore_defaults", { links: {}, changes: [] });
     await waitFor(() => expect(screen.queryByTestId("link-restore")).toBeNull());
+  });
+
+  it("lists the held sends the restore releases, by their labels", async () => {
+    // The 2026-11-14 bench: old macros held HOST 1's sends closed, so its
+    // fader moved nothing there. The restore releases them, and says so.
+    await showSetup();
+    openSection("Link matrix");
+    fireEvent.click(screen.getByRole("button", { name: "Restore defaults…" }));
+    const preview = reply("preview_defaults", {
+      links: {},
+      current: {},
+      changes: [],
+      released: ["1:bus2", "1:bus6"],
+    });
+
+    expect(preview.args).toMatchObject({ part: "links", settings: expect.any(Object) });
+    const list = await screen.findByTestId("released-levels");
+    // (The test setup has no labels on the buses: their plain names show.)
+    expect(list).toHaveTextContent("HOST 1 → Bus 2");
+    expect(list).toHaveTextContent("HOST 1 → Bus 6");
   });
 
   it("Discard drops a pending link matrix restore without sending it", async () => {

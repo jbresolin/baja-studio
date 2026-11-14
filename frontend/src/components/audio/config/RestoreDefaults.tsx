@@ -69,3 +69,32 @@ export function LinkRestoreList({
     </div>
   );
 }
+
+/**
+ * Held levels the restore lets go: sends an old macro left closed (a closed
+ * send ignores its fader). Shown only when there are some.
+ */
+export function ReleasedList({
+  points,
+  channels,
+}: {
+  points: string[];
+  channels: Record<string, ChannelConfig>;
+}) {
+  if (points.length === 0) return null;
+  return (
+    <div className="notice" role="status" data-testid="released-levels">
+      <strong>Held sends released</strong> on Save: they follow their fader again.
+      <ul>
+        {points.map((point) => {
+          const [channel, bus] = point.split(":") as [string, string];
+          return (
+            <li key={point}>
+              {channelLabel(channels, channel)} → {channelLabel(channels, bus)}
+            </li>
+          );
+        })}
+      </ul>
+    </div>
+  );
+}

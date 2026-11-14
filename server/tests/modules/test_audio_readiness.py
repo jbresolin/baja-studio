@@ -147,14 +147,15 @@ def connect_and_read_taps(audio: AudioStudio) -> None:
 
 
 def test_linked_sends_taken_before_the_fader_pass(audio: AudioStudio) -> None:
-    # A fresh fake takes every send pre-fader; the default matrix has 37
-    # linked sends (paused ones, like PROD 1-2 on buses 5-6, are not copied).
+    # A fresh fake takes every send pre-fader; the default matrix has 33
+    # linked sends (paused ones, like PROD 1-4 on buses 5-6, are not copied:
+    # 4 seats x 6 buses, the shotgun x 5, PC AUDIO x 4).
     connect_and_read_taps(audio)
 
     result = run_module_checks(audio.services, "audio", audio.clock)["linked_taps"]
 
     assert result.status == CheckStatus.OK
-    assert result.detail == "37 linked sends, all before the fader"
+    assert result.detail == "33 linked sends, all before the fader"
 
 
 def test_a_linked_send_after_the_fader_warns_and_is_only_read(audio: AudioStudio) -> None:
