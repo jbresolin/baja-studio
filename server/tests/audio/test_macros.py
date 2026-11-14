@@ -29,6 +29,11 @@ class FakeView:
     links: dict[tuple[str, str], str] = field(default_factory=dict)
     offsets: dict[tuple[str, str], float] = field(default_factory=dict)
     lr_assigns: dict[str, bool] = field(default_factory=dict)
+    # Each channel's reference bus (Audio setup → Channels); the fader when not given.
+    references: dict[str, str] = field(default_factory=dict)
+
+    def reference_bus(self, channel: str) -> str:
+        return self.references.get(channel, "main")
 
     def lr_assign(self, channel: str) -> bool | None:
         return self.lr_assigns.get(channel)
@@ -90,9 +95,64 @@ def test_opening_a_route_brings_back_the_stored_level() -> None:
 
 
 def test_opening_a_route_with_nothing_stored_goes_to_unity() -> None:
+    # Nothing stored, and the reference bus (the fader here) is not known yet.
     view = FakeView(levels={("5", "bus1"): 0.0})
 
     assert plan_open(view, "5", "bus1") == [PlannedChange("level", "5", "bus1", 0.75, 0.0)]
+
+
+def test_opening_a_route_with_nothing_stored_takes_the_level_on_the_reference_bus() -> None:
+    # "Prod 1 → Host 1" pressed for the first time: nothing was ever stored for
+    # PROD 1 (channel 9) into HOST 1's in-ears (bus 1). Its reference bus is
+    # the production bus (bus 5), where it sits at 0.6: bus 1 opens at 0.6
+    # rather than at nothing.
+    view = FakeView(
+        levels={("9", "bus1"): 0.0, ("9", "bus5"): 0.6, ("9", "main"): 0.0},
+        references={"9": "bus5"},
+    )
+
+    assert plan_open(view, "9", "bus1") == [PlannedChange("level", "9", "bus1", 0.6, 0.0)]
+
+
+def test_a_stored_minus_infinity_counts_as_nothing_stored() -> None:
+    # A level stored at -inf (0.0) would "restore" to silence: the reference
+    # bus's level is used instead, and the -inf is forgotten.
+    view = FakeView(
+        levels={("9", "bus1"): 0.0, ("9", "bus5"): 0.6},
+        stored_levels={"9:bus1": 0.0},
+        references={"9": "bus5"},
+    )
+
+    assert plan_open(view, "9", "bus1") == [
+        PlannedChange("forget", "9", "bus1", None, 0.0),
+        PlannedChange("level", "9", "bus1", 0.6, 0.0),
+    ]
+
+
+def test_a_stored_level_wins_over_the_reference_bus() -> None:
+    view = FakeView(
+        levels={("9", "bus1"): 0.0, ("9", "bus5"): 0.6},
+        stored_levels={"9:bus1": 0.4},
+        references={"9": "bus5"},
+    )
+
+    assert plan_open(view, "9", "bus1")[-1] == PlannedChange("level", "9", "bus1", 0.4, 0.0)
+
+
+def test_a_reference_bus_that_is_off_too_falls_back_to_unity() -> None:
+    # PROD 1's fader is down off air; with the fader as its reference, the
+    # send would open at nothing again: unity instead, as in 2026.
+    view = FakeView(levels={("9", "bus1"): 0.0, ("9", "main"): 0.0})
+
+    assert plan_open(view, "9", "bus1")[-1] == PlannedChange("level", "9", "bus1", 0.75, 0.0)
+
+
+def test_opening_the_reference_bus_itself_does_not_copy_its_own_silence() -> None:
+    # Reopening PROD 1 → bus 5 with nothing stored: bus 5 is its own reference,
+    # so its current (closed) level is no guide: unity.
+    view = FakeView(levels={("9", "bus5"): 0.0}, references={"9": "bus5"})
+
+    assert plan_open(view, "9", "bus5")[-1] == PlannedChange("level", "9", "bus5", 0.75, 0.0)
 
 
 def test_opening_a_linked_send_follows_its_fader_rather_than_the_old_level() -> None:

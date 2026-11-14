@@ -21,6 +21,7 @@ from pydantic import Field, field_validator, model_validator
 from baja_studio.adapters.xr18_addresses import (
     AUX_BUSES,
     CHANNEL_IDS,
+    MAIN_POINT,
     SEND_POINT_BUSES,
     SEND_SOURCES,
     XR18_PORT,
@@ -58,6 +59,21 @@ class ChannelConfig(StrictModel):
     label: str = Field(default="", max_length=24)
     color: str = Field(default="#5b7fff", pattern=COLOUR_PATTERN)
     visible: bool = Field(default=False, description="Shown on the audio page.")
+    reference_bus: str | None = Field(
+        default=None,
+        description=(
+            "Where a macro takes this input's level when it opens a send that has"
+            " no level stored: 'main' (its fader) or bus1-bus6. Empty: automatic,"
+            " the production bus for a production microphone, else the fader."
+        ),
+    )
+
+    @field_validator("reference_bus")
+    @classmethod
+    def _check_reference_bus(cls, value: str | None) -> str | None:
+        if value is not None and value not in SEND_POINT_BUSES:
+            raise ValueError(f"reference bus must be main or bus1-bus6, not {value!r}")
+        return value
 
 
 class SendPoint(StrictModel):
@@ -287,6 +303,18 @@ class AudioSettings(ModuleSettings):
     def macro(self, macro_id: str) -> MacroConfig | None:
         """The macro with this id, if any."""
         return next((macro for macro in self.macros if macro.id == macro_id), None)
+
+    def reference_bus(self, channel: str) -> str:
+        """Where a macro takes `channel`'s level to open a send with nothing stored.
+
+        The channel's own choice, else automatic: a production microphone's
+        level in the production bus (its fader is down while it is off air),
+        any other input's fader.
+        """
+        configured = self.channels.get(channel)
+        if configured is not None and configured.reference_bus is not None:
+            return configured.reference_bus
+        return self.production_bus if channel in self.production_channels else MAIN_POINT
 
     def label(self, channel: str) -> str:
         """The channel's label, or a plain name like "Ch 7" / "Bus 2"."""

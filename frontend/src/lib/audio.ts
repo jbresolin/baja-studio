@@ -63,6 +63,8 @@ export interface ChannelConfig {
   label: string;
   color: string;
   visible: boolean;
+  /** Where a macro takes this input's level to open a send with nothing stored; null: automatic. */
+  reference_bus?: string | null;
 }
 
 export interface SendPoint {

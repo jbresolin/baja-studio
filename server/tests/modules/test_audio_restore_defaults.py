@@ -307,3 +307,31 @@ def test_levels_an_active_macro_holds_are_kept(audio: AudioStudio) -> None:
 
     assert preview["released"] == []
     assert audio.module.controller.stored.get("5:bus2") is not None
+
+
+def test_prod_1_talks_to_host_1_at_its_production_bus_level_the_first_time(
+    audio: AudioStudio,
+) -> None:
+    # João, 2026-11-14: "Prod → Host" opened HOST 1's in-ears to nothing until
+    # someone set that send by hand. PROD 1 (channel 9) sits at its own level
+    # in the production bus (bus 5); its send to HOST 1's in-ears (bus 1) has
+    # never been stored, and is off.
+    studio_pc(audio)
+    restore_macros(audio)
+    # As the restored link matrix has it: a production microphone is not
+    # linked into the in-ears (the 2026 matrix linked 9, then the shotgun).
+    for bus in ("bus1", "bus2"):
+        audio.command("set_link", channel="9", bus=bus, state="unlinked")
+    audio.change_on_mixer(send_address("9", "bus5"), 0.6)
+    audio.change_on_mixer(send_address("9", "bus1"), 0.0)
+    cache = audio.module.controller.cache
+    audio.soon(lambda: cache.level("9", "bus5") == pytest.approx(0.6))
+    audio.soon(lambda: cache.level("9", "bus1") == 0.0)
+    assert audio.module.controller.stored.get("9:bus1") is None
+
+    audio.command("run_macro", macro="prod1-talk-hosts")  # Prod 1 → Host 1
+    audio.settle()
+
+    assert audio.mixer_value(send_address("9", "bus1")) == pytest.approx(0.6)
+    # Only HOST 1's in-ears: HOST 2's stay closed.
+    assert audio.mixer_value(send_address("9", "bus2")) == pytest.approx(0.0)

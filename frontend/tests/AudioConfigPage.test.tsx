@@ -120,6 +120,27 @@ describe("Audio setup page", () => {
     expect(screen.getByTestId("save-bar")).toHaveTextContent("No unsaved changes");
   });
 
+  it("sets an input's level reference, automatic by default, and saves it", async () => {
+    await showSetup();
+    openSection("Channels");
+    const reference = screen.getByLabelText("Ch 9 level reference");
+    // Not a production microphone in these settings: automatic is its fader.
+    expect(reference).toHaveValue("");
+    expect(
+      within(reference).getByRole("option", { name: "Automatic (Fader)" }),
+    ).toBeInTheDocument();
+
+    fireEvent.change(reference, { target: { value: "bus5" } });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(saves).toHaveLength(1));
+    expect(saves[0]!.values.channels["9"]!.reference_bus).toBe("bus5");
+    // Channel 5 is a production microphone here: automatic is the production bus.
+    expect(screen.getByLabelText("Ch 5 level reference")).toHaveTextContent("Automatic (Bus 5)");
+    // Buses have no sends of their own: no reference to pick.
+    expect(screen.queryByLabelText("Bus 1 level reference")).toBeNull();
+  });
+
   it("picks the camera operator's bus by its label and saves it", async () => {
     await showSetup();
     openSection("Channels");

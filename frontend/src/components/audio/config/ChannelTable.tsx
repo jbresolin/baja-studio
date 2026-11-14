@@ -3,11 +3,17 @@
  * The name typed on the mixer is shown next to it as a hint. Above the
  * table, which bus is the camera operator's (the hosts screen's talkback
  * light), picked by the bus labels below.
+ *
+ * Each input's reference bus: when a macro opens one of its sends that has
+ * no level stored (or -inf), the send takes the input's level on this bus.
+ * Automatic: the production bus for a production microphone, else the fader.
  */
 
 import {
   AUX_BUSES,
   CHANNEL_IDS,
+  POINT_BUSES,
+  SEND_SOURCES,
   channelLabel,
   plainName,
   type AudioState,
@@ -31,6 +37,14 @@ export function ChannelTable({
       ...d,
       channels: { ...d.channels, [channel]: { ...d.channels[channel]!, ...change } },
     }));
+
+  const busName = (bus: string) => {
+    if (bus === "main") return "Fader";
+    const label = channelLabel(draft.channels, bus);
+    return label === plainName(bus) ? label : `${label} (${plainName(bus)})`;
+  };
+  const automatic = (channel: string) =>
+    draft.production_channels.includes(channel) ? busName(draft.production_bus) : "Fader";
 
   return (
     <section className="config-form">
@@ -56,6 +70,9 @@ export function ChannelTable({
             <th>Label</th>
             <th>Colour</th>
             <th>On the audio page</th>
+            <th title="When a macro opens a send with no level stored, it takes the input's level here">
+              Level reference
+            </th>
             <th>Name on the mixer</th>
           </tr>
         </thead>
@@ -88,6 +105,24 @@ export function ChannelTable({
                     checked={config.visible}
                     onChange={(event) => update(channel, { visible: event.target.checked })}
                   />
+                </td>
+                <td>
+                  {SEND_SOURCES.includes(channel) && (
+                    <select
+                      aria-label={`${plainName(channel)} level reference`}
+                      value={config.reference_bus ?? ""}
+                      onChange={(event) =>
+                        update(channel, { reference_bus: event.target.value || null })
+                      }
+                    >
+                      <option value="">Automatic ({automatic(channel)})</option>
+                      {POINT_BUSES.map((bus) => (
+                        <option key={bus} value={bus}>
+                          {busName(bus)}
+                        </option>
+                      ))}
+                    </select>
+                  )}
                 </td>
                 <td className="muted">{live?.channels[channel]?.name || "—"}</td>
               </tr>

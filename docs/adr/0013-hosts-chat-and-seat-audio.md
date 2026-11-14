@@ -206,6 +206,17 @@ page "15 — WP9b brief". Read with ADR 0006 (audio) and ADR 0011 (hosts).
     closes while active, its off steps' while not) is forgotten, and a
     linked send snaps back to its fader. The preview lists them ("Held sends
     released"); `restore_defaults` returns them as `released`.
+26. **Production talks to each host separately** (João, 2026-11-14): "Prod
+    N → Host 1" (2026's "→ Hosts" id, as its D200 image always said) and the
+    new "Prod N → Host 2" each open one host's in-ears.
+27. **A send with nothing stored reopens at the input's reference level**
+    (João, 2026-11-14: "Prod → Host" opened to nothing until the send was
+    set by hand). Each input has a reference bus (Audio setup → Channels →
+    Level reference): when a macro opens a send with no level stored, or
+    -inf stored, it takes the input's level on that bus. Automatic: the
+    production bus for a production microphone (its fader is down off air),
+    the fader for any other input. Unity (0 dB) only when that is off too.
+    A linked send still follows its fader plus offset.
 
 ## Left open
 
@@ -216,6 +227,4 @@ page "15 — WP9b brief". Read with ADR 0006 (audio) and ADR 0011 (hosts).
 - Existing installs keep their link matrix and macros (decision 10) until
   someone presses "Restore defaults…" on each (decision 23); the bench
   sheet does it in setup.
-- Production can display, not route, a production microphone into one
-  host's in-ears (out of scope).
 - The bench (`docs/bench/wp9b.md`) has not been run.
