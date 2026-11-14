@@ -257,7 +257,9 @@ export function AudioConfigPage() {
         </>
       )}
       {section === "scenes" && <SceneTable draft={draft} edit={settings.edit} />}
-      {section === "d200" && <D200Card draft={draft} origin={window.location.origin} />}
+      {section === "d200" && (
+        <D200Card draft={draft} origin={window.location.origin} dirty={dirty} />
+      )}
     </div>
   );
 }

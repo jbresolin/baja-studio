@@ -44,6 +44,8 @@ include = ["baja_studio*"]
 [tool.setuptools.package-data]
 # The rehearsal rig's scenarios are data (ADR 0016).
 "baja_studio.rig" = ["scenarios/*.json"]
+# The D200 profile's button images (Audio setup → D200, `audio/d200_profile.py`).
+"baja_studio.audio" = ["d200_images/*.png"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

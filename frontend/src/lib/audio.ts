@@ -306,6 +306,14 @@ export function differs(a: unknown, b: unknown): boolean {
 }
 
 /** The URLs a D200 button uses for this host, as the reference card lists them. */
+/** Where Ulanzi Studio on the studio PC itself reaches the service. */
+export const D200_DEFAULT_ADDRESS = "http://localhost:8888";
+
+/** The download of a D200 profile whose buttons call `address` (built from the saved settings). */
+export function d200ProfileUrl(address: string): string {
+  return `/api/audio/d200-profile?base=${encodeURIComponent(address.trim())}`;
+}
+
 export function d200Urls(origin: string, macroIds: string[]): { label: string; url: string }[] {
   const base = origin.replace(/\/$/, "");
   return [
