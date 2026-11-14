@@ -157,17 +157,19 @@ export function PlayoutSettingsPage() {
           />
         </div>
         <div className="field">
-          <label htmlFor="obs-live-speed">Speed change on air</label>
-          <select
-            id="obs-live-speed"
-            value={draft.obs.live_speed_change ?? "swap"}
-            onChange={(event) => setObs("live_speed_change", event.target.value)}
-          >
-            <option value="swap">swap: other source, then cut (seamless)</option>
-            <option value="reload">reload: same source, seek back (may hiccup)</option>
-          </select>
+          <label htmlFor="obs-replay-jump-back">Replay jumps back (s)</label>
+          <input
+            id="obs-replay-jump-back"
+            type="number"
+            min={0}
+            max={30}
+            step={0.5}
+            value={draft.obs.replay_jump_back_s ?? 3}
+            onChange={(event) => setObs("replay_jump_back_s", Number(event.target.value))}
+          />
           <div className="field-help">
-            How a speed button on the media controls changes the clip on air.
+            On air, 50 % or 25 % from normal speed is a replay: it jumps back this far and plays
+            slowly from there. Back to 100 % continues from about where it is.
           </div>
         </div>
         <div className="field">

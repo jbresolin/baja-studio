@@ -55,8 +55,8 @@ class MediaProber:
     def probe(self, path: str) -> MediaInfo:
         """Ask ffprobe for the container duration and the first video stream's frame rate.
 
-        The frame rate is what a frame step on air moves by (WP5c §3); a file
-        without video, or with a rate ffprobe cannot tell ("0/0"), has none.
+        The frame rate sets seek tolerances and the scrub bar's step (WP5c §3); a
+        file without video, or with a rate ffprobe cannot tell ("0/0"), has none.
         """
         output = self._call(
             [

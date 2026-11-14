@@ -12,7 +12,7 @@ from manual ones), `queue.playlist_id` and `aired.playlist` (so on-air
 overrides and the aired log know which playlist a clip came from). The
 columns are added to an older file when the module starts.
 
-WP5c added `clips.fps` (the video frame rate from ffprobe, for frame steps).
+WP5c added `clips.fps` (the video frame rate from ffprobe, for seek tolerances and the scrub bar).
 """
 
 from baja_studio.core.database import Database

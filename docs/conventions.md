@@ -222,6 +222,12 @@ reading its tests.
   test fixtures, and live in the package under `baja_studio/fakes/` (e.g.
   `python -m baja_studio.fakes.fake_agent`). Tests reach them in-process,
   without opening ports.
+- **A fake models what the real device was measured doing, not what we
+  expect.** When a bench result disagrees with a fake, measure the device
+  first (a small probe script that sends the same requests and logs every
+  answer and event with timestamps, as for OBS in LIVESTACK-56), then change
+  the fake to match and write the failing test against it, then fix the
+  code. Each modelled behaviour names its source in the fake's docstring.
 - **Every new fake is registered in the rehearsal rig** (`baja_studio/rig/`,
   ADR 0016): started in `rig/fakes.py`, pointed at by the settings bundle
   (`rig/bundle.py`), and reachable by scenarios through its own control

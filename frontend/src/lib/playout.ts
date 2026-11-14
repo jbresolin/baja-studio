@@ -349,8 +349,7 @@ export function groupLibrary(
   }));
 }
 
-export type TransportKeyAction =
-  "transport_toggle" | "transport_back" | "transport_forward" | "frame_back" | "frame_forward";
+export type TransportKeyAction = "transport_toggle" | "transport_back" | "transport_forward";
 
 export type PlayoutKeyAction =
   | "take"
@@ -379,7 +378,6 @@ export const PLAYOUT_KEY_LEGEND: [string, string][] = [
 export const TRANSPORT_KEY_LEGEND: [string, string][] = [
   ["K", "Pause / play the clip on air"],
   ["J / L", "Back / forward 5 s (L is not Replay last while unlocked)"],
-  [", / .", "One frame back / forward (while paused)"],
 ];
 
 /** Seconds a −5 s / +5 s press moves. */
@@ -398,10 +396,6 @@ export function transportArgs(action: TransportKeyAction): Record<string, unknow
       return { action: "nudge", seconds: -NUDGE_SECONDS };
     case "transport_forward":
       return { action: "nudge", seconds: NUDGE_SECONDS };
-    case "frame_back":
-      return { action: "step", frames: -1 };
-    case "frame_forward":
-      return { action: "step", frames: 1 };
   }
 }
 
@@ -416,10 +410,6 @@ function transportKeyAction(key: string): TransportKeyAction | null {
     case "l":
     case "L":
       return "transport_forward";
-    case ",":
-      return "frame_back";
-    case ".":
-      return "frame_forward";
     default:
       return null;
   }
@@ -428,8 +418,9 @@ function transportKeyAction(key: string): TransportKeyAction | null {
 /**
  * Which action a key press means, or null. Nothing fires while the operator
  * types in a field (`targetIsEditable`), or with Ctrl/Alt/Meta held. With
- * the media controls unlocked (`transportEnabled`), K, J, L, "," and "."
- * drive the clip on air, and L is no longer "Replay last".
+ * the media controls unlocked (`transportEnabled`), K, J and L drive the
+ * clip on air, and L is no longer "Replay last". (There is no frame step:
+ * OBS can only jump to keyframes, LIVESTACK-56.)
  */
 export function playoutKeyAction(event: {
   key: string;

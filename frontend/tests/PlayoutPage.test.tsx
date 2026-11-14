@@ -645,10 +645,12 @@ describe("media controls for the clip on air (WP5c)", () => {
     );
   });
 
-  it("steps frames only while the clip on air is paused", () => {
+  it("offers no frame step, and Play once the clip on air is paused", () => {
+    // OBS can only jump to keyframes (LIVESTACK-56): a frame step cannot work.
     showPlayoutPage(onAirState("playing"));
     unlockMediaControls();
-    expect(screen.getByRole("button", { name: "One frame forward" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "One frame forward" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "One frame back" })).toBeNull();
 
     act(() =>
       server.receive({
@@ -659,16 +661,26 @@ describe("media controls for the clip on air (WP5c)", () => {
         value: "paused",
       }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "One frame forward" }));
-    fireEvent.click(screen.getByRole("button", { name: "One frame back" }));
 
-    expect(sent().map((command) => command.args)).toEqual([
-      { action: "step", frames: 1 },
-      { action: "step", frames: -1 },
-    ]);
     // Paused, the strip says so to every operator, and the button offers Play.
     expect(screen.getByTestId("program-strip")).toHaveTextContent("paused");
     expect(screen.getByRole("button", { name: "Play" })).toBeInTheDocument();
+  });
+
+  it("says which speed buttons replay and which continue", () => {
+    showPlayoutPage(onAirState());
+    unlockMediaControls();
+    const speeds = screen.getByRole("radiogroup", { name: "Speed on air" });
+
+    // At 100 %, the slower speeds are replays (they jump back).
+    expect(within(speeds).getByRole("radio", { name: "50 %" })).toHaveAttribute(
+      "title",
+      "Replay: jump back and play at 50 %",
+    );
+    expect(within(speeds).getByRole("radio", { name: "100 %" })).toHaveAttribute(
+      "title",
+      "The speed on air",
+    );
   });
 
   it("the scrub bar previews where it will go while dragged and seeks once, on release", () => {
@@ -688,7 +700,7 @@ describe("media controls for the clip on air (WP5c)", () => {
     expect(sent().map((command) => command.args)).toEqual([{ action: "seek", position_s: 6.4 }]);
   });
 
-  it("K, J, L, comma and period act on air only while unlocked", () => {
+  it("K, J and L act on air only while unlocked; comma and period do nothing", () => {
     showPlayoutPage(onAirState("paused"));
 
     // Locked: L is Replay last, and K does nothing.
@@ -711,8 +723,6 @@ describe("media controls for the clip on air (WP5c)", () => {
       { action: "toggle" },
       { action: "nudge", seconds: -5 },
       { action: "nudge", seconds: 5 },
-      { action: "step", frames: -1 },
-      { action: "step", frames: 1 },
     ]);
   });
 

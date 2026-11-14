@@ -49,7 +49,7 @@ ORCHESTRATOR_TOKEN = "studio-token"
 HOOK_URL = "http://overlay.test/hook"
 # The fake OBS plays every file for this long (the fake prober agrees).
 CLIP_SECONDS = 10.0
-# The fake prober's frame rate (a frame step on air moves 40 ms).
+# The fake prober's frame rate (one frame is 40 ms).
 CLIP_FPS = 25.0
 # All five playout workers sleep only on the fake clock.
 PLAYOUT_WORKERS = module_worker_threads("playout")

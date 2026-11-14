@@ -224,10 +224,10 @@ def _number_arg(args: dict[str, Any], name: str) -> float:
 
 
 def _transport(controller: PlayoutController, args: dict[str, Any], source: str) -> Any:
-    """`{action: play|pause|toggle|restart|seek|step|nudge}`, on the clip on air only.
+    """`{action: play|pause|toggle|restart|seek|nudge}`, on the clip on air only.
 
-    seek takes `position_s`, step `frames` (±1; the clip must be paused),
-    nudge `seconds` (±5 on the page).
+    seek takes `position_s`, nudge `seconds` (±5 on the page). Both land on
+    the keyframe at or before (OBS); there is no frame step (LIVESTACK-56).
     """
     action = args.get("action")
     if action not in TRANSPORT_ACTIONS:
@@ -235,8 +235,6 @@ def _transport(controller: PlayoutController, args: dict[str, Any], source: str)
     checked: dict[str, Any] = {}
     if action == "seek":
         checked["position_s"] = _number_arg(args, "position_s")
-    elif action == "step":
-        checked["frames"] = _int_arg(args, "frames")
     elif action == "nudge":
         checked["seconds"] = _number_arg(args, "seconds")
     with controller.lock:
@@ -256,7 +254,7 @@ def _set_cue_speed(controller: PlayoutController, args: dict[str, Any], source: 
 
 
 def _set_program_speed(controller: PlayoutController, args: dict[str, Any], source: str) -> Any:
-    """`{speed_percent: 100|50|25}` for the clip on air (method: `obs.live_speed_change`).
+    """`{speed_percent: 100|50|25}` for the clip on air: a replay down from 100 %, else continue.
 
     One change at a time: while one runs, this replaces the waiting wish and
     answers `queued` at once (`speed_change.py`).

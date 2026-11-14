@@ -125,7 +125,27 @@ def test_settings_saved_before_wp5b_still_load_without_their_return_scene() -> N
 
     assert settings.obs.host == "pc"
     assert "return_scene" not in settings.obs.model_dump()
-    assert PlayoutSettings.settings_version == 2
+    assert PlayoutSettings.settings_version >= 2
+
+
+def test_settings_saved_with_the_old_speed_change_method_still_load_without_it() -> None:
+    # Before LIVESTACK-56 a live speed change was "swap" or "reload"
+    # (`obs.live_speed_change`). Slow motion is now a replay that jumps
+    # back `obs.replay_jump_back_s`; an old saved document (or export) still
+    # carrying the method must load, and drops it. Version 3 says so.
+    settings = PlayoutSettings.model_validate(
+        {"obs": {"host": "pc", "live_speed_change": "reload"}}
+    )
+
+    assert "live_speed_change" not in settings.obs.model_dump()
+    assert settings.obs.replay_jump_back_s == 3.0
+    assert PlayoutSettings.settings_version == 3
+
+
+@pytest.mark.parametrize("seconds", [-1.0, 30.5])
+def test_the_replay_jump_back_stays_between_0_and_30_seconds(seconds: float) -> None:
+    with pytest.raises(ValidationError):
+        PlayoutSettings.model_validate({"obs": {"replay_jump_back_s": seconds}})
 
 
 def test_on_air_actions_default_to_none_and_name_module_command_and_args() -> None:

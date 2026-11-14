@@ -91,15 +91,17 @@ def test_a_cue_waits_for_obs_to_start_the_source_before_pausing_and_rewinding(ri
     # seeking it before then is refused.
     rig.switcher.cue(clip(1))
 
-    # The order of what was asked (parking.py): read what the source holds,
-    # load the file, ask the status until OBS's start event came, pause and
-    # confirm it, rewind and read the position back.
+    # The order of what was asked (parking.py): is the source stopped (it
+    # would then need PLAY)? what does it hold? load the file, ask the
+    # status until OBS's start event came, pause and confirm it, rewind and
+    # read the position back.
     asked = [
         (kind, data.get("mediaAction", ""))
         for kind, data in rig.requests_since(0)
         if kind != "SetSceneSceneTransitionOverride"
     ]
     assert asked == [
+        ("GetMediaInputStatus", ""),
         ("GetInputSettings", ""),
         ("SetInputSettings", ""),
         ("GetMediaInputStatus", ""),

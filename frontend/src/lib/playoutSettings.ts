@@ -39,8 +39,8 @@ export interface PlayoutSettingsValues {
     fade_ms: number;
     cut_transition: string;
     fade_transition: string;
-    /** How the speed of the clip on air changes: swap sources (default) or reload in place. */
-    live_speed_change?: "swap" | "reload";
+    /** Seconds a slow-motion replay jumps back from the frame on air (default 3). */
+    replay_jump_back_s?: number;
   };
   tools: { ffprobe_path: string; ffmpeg_path: string };
   on_air_actions: OnAirActions;

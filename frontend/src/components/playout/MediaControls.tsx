@@ -4,14 +4,19 @@
  * They act on air, so they are locked until the operator holds "Unlock"
  * for two seconds; unlocked, the bar is marked LIVE in red and a Lock
  * button (or the clip leaving the air) locks it again. Unlocked, it offers
- * play/pause, restart, −5 s / +5 s, one frame back/forward (while paused),
- * a scrub bar that shows where it will go while dragged and seeks on
- * release, and the live replay speed (100 / 50 / 25 %).
+ * play/pause, restart, −5 s / +5 s, a scrub bar that shows where it will go
+ * while dragged and seeks on release, and the speed on air (100 / 50 / 25 %).
+ *
+ * OBS can only jump to keyframes (one every 0.5 s in clips rendered since
+ * LIVESTACK-56), so seeks land up to half a second early and there is no
+ * frame step. For the same reason slowing down is a *replay*: from 100 %,
+ * 50 % or 25 % jumps back a few seconds (Playout setup) and plays from
+ * there; any other change continues from about where the clip is.
  *
  * Every control is a `transport` or `set_program_speed` command; the
  * server acts on the program source only and never on the cued clip.
  *
- * A speed change takes OBS up to 2 s. Meanwhile the speed buttons say
+ * A speed change takes OBS up to 3 s. Meanwhile the speed buttons say
  * "changing…" and are disabled (from the click until the server says the
  * change is over, so a double click sends one command); a change that
  * failed says why beside them (nothing was cut).
@@ -46,8 +51,7 @@ export function MediaControls({
   run,
 }: MediaControlsProps) {
   if (!enabled) return <HoldToUnlock onUnlocked={() => onEnabledChange(true)} />;
-  const transport = program.transport;
-  const paused = transport?.state === "paused";
+  const paused = program.transport?.state === "paused";
   const speed = program.speed_percent ?? 100;
   const send = (args: Record<string, unknown>) => void run("transport", args);
   return (
@@ -73,22 +77,6 @@ export function MediaControls({
         onClick={() => send({ action: "nudge", seconds: -NUDGE_SECONDS })}
       >
         −{NUDGE_SECONDS} s
-      </button>
-      <button
-        aria-label="One frame back"
-        title={paused ? ", (comma)" : "Pause first"}
-        disabled={!paused}
-        onClick={() => send({ action: "step", frames: -1 })}
-      >
-        ◀|
-      </button>
-      <button
-        aria-label="One frame forward"
-        title={paused ? ". (period)" : "Pause first"}
-        disabled={!paused}
-        onClick={() => send({ action: "step", frames: 1 })}
-      >
-        |▶
       </button>
       <button
         aria-label={`Forward ${NUDGE_SECONDS} s`}
@@ -136,6 +124,7 @@ function SpeedButtons({
           role="radio"
           aria-checked={speed === value}
           className={speed === value ? "active" : ""}
+          title={speedTitle(speed, value)}
           disabled={changing}
           onClick={() => {
             if (speed !== value) choose(value);
@@ -156,6 +145,13 @@ function SpeedButtons({
       )}
     </span>
   );
+}
+
+/** What a speed button will do from the speed on air now. */
+function speedTitle(speed: number, value: number): string {
+  if (value === speed) return "The speed on air";
+  if (speed === 100 && value < 100) return `Replay: jump back and play at ${value} %`;
+  return `Continue from here at ${value} %`;
 }
 
 /**

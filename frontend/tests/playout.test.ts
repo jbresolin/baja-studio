@@ -203,17 +203,19 @@ describe("media-control keys (WP5c)", () => {
   const press = (key: string, transportEnabled: boolean) =>
     playoutKeyAction({ key, targetIsEditable: false, transportEnabled });
 
-  it("K, J, L, comma and period drive the clip on air only while unlocked", () => {
-    expect(["k", "J", "l", ",", "."].map((key) => press(key, true))).toEqual([
+  it("K, J and L drive the clip on air only while unlocked", () => {
+    expect(["k", "J", "l"].map((key) => press(key, true))).toEqual([
       "transport_toggle",
       "transport_back",
       "transport_forward",
-      "frame_back",
-      "frame_forward",
     ]);
-    // Locked, K, J, comma and period do nothing, and L is Replay last as always.
-    expect(["k", "j", ",", "."].map((key) => press(key, false))).toEqual([null, null, null, null]);
+    // Locked, K and J do nothing, and L is Replay last as always.
+    expect(["k", "j"].map((key) => press(key, false))).toEqual([null, null]);
     expect(press("L", false)).toBe("replay_last");
+  });
+
+  it("has no frame-step keys: OBS can only jump to keyframes (LIVESTACK-56)", () => {
+    expect([",", "."].map((key) => press(key, true))).toEqual([null, null]);
   });
 
   it("keeps the other shortcuts while unlocked", () => {
@@ -225,8 +227,6 @@ describe("media-control keys (WP5c)", () => {
     expect(transportArgs("transport_toggle")).toEqual({ action: "toggle" });
     expect(transportArgs("transport_back")).toEqual({ action: "nudge", seconds: -5 });
     expect(transportArgs("transport_forward")).toEqual({ action: "nudge", seconds: 5 });
-    expect(transportArgs("frame_back")).toEqual({ action: "step", frames: -1 });
-    expect(transportArgs("frame_forward")).toEqual({ action: "step", frames: 1 });
   });
 });
 

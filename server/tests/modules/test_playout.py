@@ -626,7 +626,7 @@ def test_rescan_forgets_durations_and_thumbnails_and_measures_every_file_again(
 
 
 def test_a_clip_s_frame_rate_comes_from_ffprobe(playout: PlayoutStudio) -> None:
-    # The fake prober says 25 fps (a frame step on air then moves 40 ms).
+    # The fake prober says 25 fps (one frame is 40 ms).
     ready_studio(playout, ("a.mp4",))
 
     assert playout.clip("a.mp4")["fps"] == CLIP_FPS  # type: ignore[index]

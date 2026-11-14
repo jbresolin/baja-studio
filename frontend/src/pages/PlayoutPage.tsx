@@ -116,9 +116,7 @@ export function PlayoutPage() {
     else if (
       action === "transport_toggle" ||
       action === "transport_back" ||
-      action === "transport_forward" ||
-      action === "frame_back" ||
-      action === "frame_forward"
+      action === "transport_forward"
     )
       void run("transport", transportArgs(action));
     else if (action === "focus_search") {

@@ -232,17 +232,17 @@ describe("tools, speed changes and rescanning (WP5c)", () => {
     expect(screen.getByTestId("tool-found-ffmpeg")).toHaveTextContent("In use: not found");
   });
 
-  it("saves how a speed change on air is made", async () => {
+  it("saves how far a slow-motion replay jumps back", async () => {
     await showSettings();
 
-    fireEvent.change(screen.getByLabelText("Speed change on air"), {
-      target: { value: "reload" },
+    fireEvent.change(screen.getByLabelText("Replay jumps back (s)"), {
+      target: { value: "5" },
     });
     await act(async () => {
       fireEvent.click(screen.getByRole("button", { name: "Save" }));
     });
 
-    expect(saves[0]!.values.obs).toMatchObject({ live_speed_change: "reload" });
+    expect(saves[0]!.values.obs).toMatchObject({ replay_jump_back_s: 5 });
   });
 
   it("rescans the library and shows the files measured so far", async () => {
