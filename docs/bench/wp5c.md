@@ -10,9 +10,10 @@ playout page and *Playout setup* in the top bar). The generic Settings page
 now shows playout's JSON only, with a link there.
 
 The media controls are under the program strip while a clip is on air.
-They are locked: hold **Hold to unlock media controls** for two seconds
-(mouse, touch, or Enter held). Unlocked, the bar is red and marked LIVE;
-**Lock**, or the next clip going to air, locks it again.
+They are always available there (the two-second hold-to-unlock was removed,
+2026-11-14), red and marked LIVE because they act on air. `K` pauses/plays
+and `J` / `L` go back / forward 5 s whenever a clip is on air. *Replay last*
+has no key any more: it is the program panel's button only.
 
 Without OBS: `python -m baja_studio.fakes.fake_obs --port 4455 --password P`
 (it reopens a file when its speed changes, which is what step 6 checks on
@@ -26,8 +27,8 @@ real OBS).
 | 2 | Folders: receiver root `E:\clips`; add `E:\clips\patrocinadores` labelled `Patrocinadores`. Save. | The sponsor files are grouped under *Patrocinadores* (not *Unmatched*); other files of the root without a manifest entry stay *Unmatched*. |
 | 3 | Playlist: *Edit* an existing playlist. Search the library box and *Add* a clip; ✕ one; drag one up (and ▲/▼); rename; Save; *Queue*. | Each clip change applies at once (no recreating); the queue follows the new order and name. The command log shows each `playlist_update`. |
 | 4 | Playout setup → **Rescan library**. | "n of N files measured" counts up to "Rescan done"; durations and thumbnails come back (thumbnails briefly missing meanwhile). |
-| 5 | Take a clip. Unlock the media controls. Pause (or `K`), frame-step `.` and `,` a few times, scrub (drag shows "→ m:ss.t", seek on release), `J`/`L` ±5 s, Play. Repeat with auto-play next on and a clip queued. | Watch program: no black or flash on pause, step, seek or resume. The strip says *paused* while paused. A pause never starts the next clip and never runs on-air *end* actions; resuming continues the same airing. `L` is ±5 s only while unlocked (Replay last otherwise). |
-| 6 | Replay at 50 %: pick *50 %* under the preview, Cue, Take. Then on air: 100 → 50 → 100 with the media controls' speed buttons, once with *Speed change on air: swap* (default) and once with *reload* (Playout setup → OBS). | Cued at 50 %: half speed, clip sound muted; 100 % again restores sound. Note for each method whether program shows a hiccup on OBS 32 (reload reopens the file on air; swap cuts to the other source on the same frame). Record which is clean. |
+| 5 | Take a clip. Pause (or `K`), scrub (drag shows "→ m:ss.t", seek on release), `J`/`L` ±5 s, Play. Repeat with auto-play next on and a clip queued. | Watch program: no black or flash on pause, seek or resume. Seeks land on the keyframe before the point asked for (within 0.5 s on clips rendered since LIVESTACK-56). The strip says *paused* while paused. A pause never starts the next clip and never runs on-air *end* actions; resuming continues the same airing. `L` never replays the last clip (that is the *Replay last* button). There is no frame step (LIVESTACK-56). |
+| 6 | Replay at 50 %: pick *50 %* under the preview, Cue, Take. | Cued at 50 %: half speed from the first frame, clip sound muted; the next cue is at 100 % again, with sound. |
 
 ## Also worth noting
 
@@ -39,20 +40,34 @@ real OBS).
 - `playout.program.transport` in the state: state, position, fps (ffprobe's;
   30 when unknown) and speed.
 
-## Live speed change, fixed (LIVESTACK-56, ADR 0015)
+## Slow-motion replay on air (LIVESTACK-56, ADR 0017)
 
-Without OBS, `python -m baja_studio.fakes.fake_obs --port 4455 --password P
---seed 7` makes opens, seeks and events take random (repeatable) time, as
-OBS does. To see each step, start the service with
-`BAJA_STUDIO_DEBUG_LOGGERS=baja_studio.playout` (PowerShell:
-`$env:BAJA_STUDIO_DEBUG_LOGGERS="baja_studio.playout"`): every step logs its
-input, request number, and target and confirmed positions (Logs page, log
-file); INFO has one line per change with its result.
+An OBS probe on the studio PC (OBS 33.0.1) showed that a media source only
+seeks to the keyframe at or before the point asked for, that a file loaded
+into a stopped source does not start without PLAY, and that RESTART does
+nothing. So slowing down on air is now a **replay**: from 100 %, *50 %* or
+*25 %* jumps back *Replay jumps back* seconds (Playout setup → OBS, default
+3 s) and plays slowly and muted from the keyframe there. *100 %*, or 50 ↔
+25 %, continues from about where the clip is (up to half a second repeats).
+
+**Clips must be rendered with a keyframe every 0.5 s** (baja-video-pipeline
+since LIVESTACK-56). Older clips (one every 8.3 s) still replay, but may
+jump back further, to the start at worst. To check a clip:
+`ffprobe -v error -skip_frame nokey -select_streams v:0 -show_entries frame=pts_time -of csv=p=0 clip.mp4`
+lists its keyframes.
+
+Without OBS: `python -m baja_studio.fakes.fake_obs --port 4455 --password P
+--seed 7` (random, repeatable timing; keyframes every 0.5 s, or
+`--keyframe-interval 8.333` for old clips). To see each step, start the
+service with `BAJA_STUDIO_DEBUG_LOGGERS=baja_studio.playout`; INFO has one
+line per change: "replay from 12.00 s, aimed 12.10 s", or "continue …".
 
 | # | Do | Expect / record |
 |---|---|---|
-| 7 | *Swap* (default). Take a clip, unlock the media controls, then 10 speed changes in a row on air (100/50/25), including rapid double clicks. | Each change takes effect (strip and OBS agree on the speed); the clip keeps its position (no jump back, no restart from 0); no black on program. While a change runs the speed buttons say "changing…" and are disabled; a double click makes one change. Note the longest change (INFO log, "in N s"). |
-| 8 | *Reload* (Playout setup → OBS). One change 100 → 50 on air. | Takes effect, position kept (program may show a reload hiccup). |
-| 9 | *Swap*, a clip less than 2 s from its end: change the speed. | Either it changes on the frame, or "too close to the end of the clip" beside the speed buttons; the clip ends normally either way (post-clip / auto-play as usual). |
-| 10 | Optional: make OBS slow (open a huge file in the other source) or stop OBS's media source mid-change. | After at most 2 s: no cut, the clip plays on at its old speed, "Speed not changed: …" shown. |
-| 11 | Cues now use the same steps (load, wait for the start, pause, seek and read back). Re-check: Cue a clip at 100 % and one at 50 %, Take each; turn auto-play next on with two clips queued and let the first end; let the last one end with a return scene set. | Each cue shows its first frame in preview (no black); Take cuts on that frame; auto-play takes the next clip without black; after the last clip program goes to the return scene. Nothing in the log about "did not start". |
+| 7 | A clip rendered after LIVESTACK-56, taken at 100 %. About 6 s in, press *50 %* in the media controls. | Program cuts (no black) to about 3 s earlier, playing at half speed, muted. Record the INFO line ("replay from … aimed …"): the two within 0.5 s. |
+| 8 | Then *100 %*; later *25 %*; then *50 %*; then *100 %*. Include a rapid double click. | 100 %: continues from about where it was (at most half a second repeats), sound back. 25 % from 100 %: a replay again (jumps back). 50 % from 25 %: continues, no jump. Each takes effect; buttons say "changing…" while one runs, and a double click makes one change. Nothing about "did not start" or "did not move". |
+| 9 | Paused on air, press *25 %*. Then Play. | The replay is ready about 3 s earlier, still paused; Play starts it slowly. |
+| 10 | Near the end: replay (*50 %*) half a second before the end; then, at 50 %, *100 %* less than a second before the end. | The replay works (jumps back 3 s). The 100 % is refused: "too close to the end of the clip" beside the buttons; the clip ends normally (post-clip / auto-play as usual). |
+| 11 | An old clip (8.3 s keyframes) at 100 %, 5 s in: *50 %*. | It replays from much earlier (the start): early, but no error and no black. |
+| 12 | Cues: Cue a clip at 100 % and one at 50 %, Take each; with auto-play next on and two queued, let the first end; let the last end with a return scene set. | Each cue shows its first frame (no black); Take cuts on that frame; auto-play takes the next clip without black. Nothing in the log about "did not start" (a cue into a source a take stopped now gets PLAY). |
+| 13 | Playout setup: *Replay jumps back* = 5 s, Save. Replay a clip. | It jumps back about 5 s. |

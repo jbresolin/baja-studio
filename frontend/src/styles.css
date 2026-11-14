@@ -2002,7 +2002,7 @@ button.small {
   border-radius: 6px;
 }
 
-/* Unlocked, the bar acts on air: say so in red. */
+/* The bar acts on air: say so in red. */
 .media-controls.live {
   border-color: var(--offline);
   background: color-mix(in srgb, var(--offline) 10%, var(--surface));
@@ -2015,18 +2015,6 @@ button.small {
   font-size: 0.75rem;
   padding: 0.1rem 0.4rem;
   border-radius: 3px;
-}
-
-/* While held, the unlock button fills from the left over the hold time. */
-.hold-to-unlock {
-  background: linear-gradient(to right, var(--degraded) 50%, var(--surface-raised) 50%) right / 200%
-    100% no-repeat;
-}
-
-.hold-to-unlock.holding {
-  background-position: left;
-  transition: background-position var(--hold-ms, 2000ms) linear;
-  color: #000;
 }
 
 .scrub {

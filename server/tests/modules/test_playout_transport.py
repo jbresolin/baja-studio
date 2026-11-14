@@ -28,22 +28,17 @@ def on_air(playout: PlayoutStudio, *files: str) -> list[int]:
     return clip_ids
 
 
-def use_method(playout: PlayoutStudio, method: str) -> None:
-    """Choose how a live speed change is made (after `on_air`, which sets OBS up afresh)."""
-    playout.configure(obs=playout.obs_settings(live_speed_change=method))
-
-
 # A change waits on the fake clock at most this long at a time (its longest
-# wait is for program to reach the parked frame, 0.25 s); a longer wait is a
-# request waiting for OBS's answer, during which time must not move.
+# wait is a poll while OBS's seek settles); a longer wait is a request
+# waiting for OBS's answer, during which time must not move.
 LONGEST_STEP_WAIT_SECONDS = 0.5
 
 
 def change_speed(playout: PlayoutStudio, speed_percent: int, source: str = "web:alice") -> Any:
     """Send `set_program_speed` and let fake time pass, as OBS needs, until it answers.
 
-    A live change waits on the fake clock (for OBS's start, for program to
-    reach the parked frame), so it runs on its own thread. Time is moved
+    A live change waits on the fake clock (for OBS's start, for its seek to
+    land), so it runs on its own thread. Time is moved
     only while that thread sleeps between two steps, and exactly to when it
     wakes, so positions come out as precise as on a real clock. Returns the
     command's answer, or raises its `CommandError`.
@@ -139,41 +134,27 @@ def test_toggle_pauses_a_playing_clip_and_plays_a_paused_one(playout: PlayoutStu
     assert (first["state"], second["state"]) == ("paused", "playing")
 
 
-def test_a_frame_step_moves_one_frame_of_the_clip_while_paused(playout: PlayoutStudio) -> None:
-    # The fake ffprobe says 25 fps, so one frame is 40 ms.
+def test_there_is_no_frame_step(playout: PlayoutStudio) -> None:
+    # OBS's media source can only jump to keyframes (the probe on the studio
+    # PC, LIVESTACK-56): one frame forward would land back on the keyframe
+    # before. So the frame step was dropped; the command no longer exists.
     on_air(playout)
-    playout.pass_time(1.0)
     playout.command("transport", action="pause")
-    paused_at = program_cursor(playout)
 
-    playout.command("transport", action="step", frames=1)
-    after_forward = program_cursor(playout)
-    playout.command("transport", action="step", frames=-1)
-    playout.command("transport", action="step", frames=-1)
-
-    # The fake keeps milliseconds, as OBS's cursor does.
-    assert after_forward == pytest.approx(paused_at + ONE_FRAME, abs=0.001)
-    assert program_cursor(playout) == pytest.approx(paused_at - ONE_FRAME, abs=0.001)
-    assert playout.state("program.transport.fps") == CLIP_FPS
-
-
-def test_a_frame_step_while_playing_is_refused(playout: PlayoutStudio) -> None:
-    on_air(playout)
-
-    with pytest.raises(CommandError, match="pause first"):
+    with pytest.raises(CommandError, match="'action' must be one of"):
         playout.command("transport", action="step", frames=1)
 
 
-def test_a_clip_without_a_frame_rate_steps_at_30_fps(playout: PlayoutStudio) -> None:
-    # ffprobe could not tell the rate (a variable-rate file, say).
+def test_a_seek_lands_on_the_keyframe_before_the_position_asked_for(
+    playout: PlayoutStudio,
+) -> None:
+    # The fake OBS has a keyframe every 0.5 s, like clips rendered since
+    # LIVESTACK-56. The scrub bar asks for 4.3 s; OBS shows 4.0 s.
     on_air(playout)
-    playout.module.controller.switcher.program.clip["fps"] = None  # type: ignore[union-attr]
-    playout.command("transport", action="pause")
-    paused_at = program_cursor(playout)
 
-    playout.command("transport", action="step", frames=1)
+    playout.command("transport", action="seek", position_s=4.3)
 
-    assert program_cursor(playout) == pytest.approx(paused_at + 1 / 30, abs=0.001)
+    assert program_cursor(playout) == pytest.approx(4.0)
 
 
 def test_seek_and_nudges_move_the_clip_but_never_onto_its_end(playout: PlayoutStudio) -> None:
@@ -189,9 +170,10 @@ def test_seek_and_nudges_move_the_clip_but_never_onto_its_end(playout: PlayoutSt
 
     assert at_seek == pytest.approx(4.0)
     assert after_plus == pytest.approx(9.0)
-    # +5 s from 9 s of a 10 s clip stops one frame before the end: ending a
-    # clip is Skip's job, so a nudge never triggers auto-play or end actions.
-    assert near_end == pytest.approx(10.0 - ONE_FRAME, abs=0.001)
+    # +5 s from 9 s of a 10 s clip asks for one frame before the end (ending
+    # a clip is Skip's job, so a nudge never triggers auto-play or end
+    # actions); OBS lands on the keyframe before that, at 9.5 s.
+    assert near_end == pytest.approx(9.5, abs=0.001)
     assert program_cursor(playout) == 0.0
     assert playout.state("program") is not None
 
@@ -242,7 +224,7 @@ def test_transport_with_nothing_on_air_is_refused(playout: PlayoutStudio) -> Non
     [
         ({"action": "rewind"}, "'action' must be one of"),
         ({"action": "seek"}, "'position_s' must be a number"),
-        ({"action": "step", "frames": 0.5}, "'frames' must be a whole number"),
+        ({"action": "step", "frames": 1}, "'action' must be one of"),
         ({"action": "nudge", "seconds": "5"}, "'seconds' must be a number"),
     ],
 )
@@ -332,56 +314,118 @@ def test_only_the_offered_speeds_are_accepted(playout: PlayoutStudio) -> None:
 
 
 # --- slow motion: the clip on air -----------------------------------------------------------
+#
+# Slowing down from 100 % is a replay: the clip jumps back 3 s (a setting)
+# and plays from there, slowly and muted. Any other change continues from
+# about where the clip is. Either way the clip is loaded at the new speed in
+# the other playback source and program cuts to it. OBS lands on the
+# keyframe at or before the point asked for (here, one every 0.5 s), and the
+# new source plays a moment while its seek settles, so positions are checked
+# to a third of a second, not to a frame.
+
+SETTLE = 0.35
 
 
-@pytest.mark.parametrize("method", ["reload", "swap"])
-def test_a_live_speed_change_keeps_the_position_within_one_frame(
-    playout: PlayoutStudio, method: str
+def program_source(playout: PlayoutStudio) -> str:
+    return "baja_program_a" if playout.state("program.slot") == "a" else "baja_program_b"
+
+
+def test_slowing_down_on_air_replays_the_last_3_seconds_slowly_and_muted(
+    playout: PlayoutStudio,
 ) -> None:
-    # 100 → 50 → 100 on the clip on air, by each method (the default is
-    # swap). Each change takes a moment (the swap waits for program to
-    # reach the frame it parked the other source on), during which the clip
-    # goes on: at the old speed until a swap's cut, at the new one since a
-    # reload. Timing races are tested in test_playout_transport_races.py.
     playout.configure(hooks={"on_air_webhook_url": HOOK_URL})
     on_air(playout)
-    use_method(playout, method)
-    playout.pass_time(2.0)
+    playout.pass_time(5.0)
 
-    def expected_after(target: int, old_speed: float, change: Any) -> float:
-        before, started_at = program_cursor(playout), playout.clock.monotonic()
-        cuts_before = len(playout.obs.timeline.program_cuts)
-        change()
-        cuts = playout.obs.timeline.program_cuts[cuts_before:]
-        switched_at = cuts[-1][0] if cuts else started_at
-        now = playout.clock.monotonic()
-        return before + old_speed * (switched_at - started_at) + target / 100 * (now - switched_at)
+    change_speed(playout, 50)
 
-    expected = expected_after(50, 1.0, lambda: change_speed(playout, 50))
-
-    # On the right frame, now at half speed and muted.
-    assert program_cursor(playout) == pytest.approx(expected, abs=ONE_FRAME)
-    source = "baja_program_a" if playout.state("program.slot") == "a" else "baja_program_b"
+    # From 5 s back to the keyframe at 2 s, now at half speed and muted, in
+    # the other source.
+    assert 2.0 <= program_cursor(playout) <= 2.0 + SETTLE
+    source = program_source(playout)
+    assert source == "baja_program_b"
     assert playout.obs.inputs[source].settings["speed_percent"] == 50
     assert playout.obs.inputs[source].muted is True
-    assert playout.state("program.speed_percent") == 50
     assert playout.obs.media_of(source).state == MediaState.PLAYING
-    halfway = program_cursor(playout)
+    assert playout.state("program.speed_percent") == 50
+    # It goes on at half speed: 2 s of air move it 1 s.
+    position = program_cursor(playout)
     playout.pass_time(2.0)
-    assert program_cursor(playout) == pytest.approx(halfway + 1.0, abs=0.15)
-
-    expected = expected_after(100, 0.5, lambda: change_speed(playout, 100))
-
-    assert program_cursor(playout) == pytest.approx(expected, abs=ONE_FRAME)
-    source = "baja_program_a" if playout.state("program.slot") == "a" else "baja_program_b"
-    assert playout.obs.inputs[source].muted is False
-    # Still one airing: a speed change is not a new take (no webhook, no log entry).
-    playout.pass_time(0.5)
+    assert program_cursor(playout) == pytest.approx(position + 1.0, abs=0.01)
+    # Still one airing: a replay is not a new take (no webhook, no log entry).
     assert len(playout.command("export_aired")["entries"]) == 1
     assert len(playout.hook_posts) == 1
 
 
-def test_a_swap_cuts_to_the_other_source_and_stops_the_one_it_left(
+def test_back_to_100_continues_from_about_where_the_replay_is(playout: PlayoutStudio) -> None:
+    on_air(playout)
+    playout.pass_time(5.0)
+    change_speed(playout, 50)
+    playout.pass_time(2.0)
+    before = program_cursor(playout)
+
+    change_speed(playout, 100)
+
+    # No jump back this time: within half a second (a keyframe) of where it
+    # was, at normal speed, and unmuted (playout muted it, so playout unmutes it).
+    assert abs(program_cursor(playout) - before) <= 0.5 + SETTLE
+    source = program_source(playout)
+    assert playout.obs.inputs[source].settings["speed_percent"] == 100
+    assert playout.obs.inputs[source].muted is False
+    assert playout.state("program.speed_percent") == 100
+
+
+def test_from_50_to_25_continues_without_a_second_jump_back(playout: PlayoutStudio) -> None:
+    on_air(playout)
+    playout.pass_time(5.0)
+    change_speed(playout, 50)
+    playout.pass_time(1.0)
+    before = program_cursor(playout)
+
+    change_speed(playout, 25)
+
+    assert abs(program_cursor(playout) - before) <= 0.5 + SETTLE
+    assert playout.state("program.speed_percent") == 25
+
+
+def test_the_jump_back_is_a_setting(playout: PlayoutStudio) -> None:
+    on_air(playout)
+    playout.configure(obs=playout.obs_settings(replay_jump_back_s=1.0))
+    playout.pass_time(5.0)
+
+    change_speed(playout, 50)
+
+    # 1 s back from 5 s: the keyframe at 4 s.
+    assert 4.0 <= program_cursor(playout) <= 4.0 + SETTLE
+
+
+def test_a_replay_near_the_start_plays_from_the_top(playout: PlayoutStudio) -> None:
+    on_air(playout)
+    playout.pass_time(1.0)
+
+    change_speed(playout, 25)
+
+    assert program_cursor(playout) <= SETTLE
+
+
+def test_a_clip_with_keyframes_far_apart_replays_from_further_back(
+    playout: PlayoutStudio,
+) -> None:
+    # Clips rendered before LIVESTACK-56 have a keyframe every 8.333 s. From
+    # 9.5 s, 3 s back is 6.5 s; OBS can only go to the keyframe at 0. Early,
+    # but on air: better than refusing the replay.
+    on_air(playout)
+    for name in ("baja_program_a", "baja_program_b"):
+        playout.obs.media_of(name).keyframe_interval_s = 8.333
+    playout.pass_time(9.5)
+
+    change_speed(playout, 50)
+
+    assert program_cursor(playout) <= SETTLE
+    assert playout.state("program.speed_percent") == 50
+
+
+def test_a_speed_change_cuts_to_the_other_source_and_stops_the_one_it_left(
     playout: PlayoutStudio,
 ) -> None:
     on_air(playout)
@@ -400,19 +444,25 @@ def test_a_swap_cuts_to_the_other_source_and_stops_the_one_it_left(
     assert playout.state("program") is not None
 
 
-def test_a_reload_changes_the_source_on_air_without_a_cut(playout: PlayoutStudio) -> None:
+def test_two_changes_in_a_row_reuse_the_stopped_source(playout: PlayoutStudio) -> None:
+    # The second change loads into the source the first one stopped. Real
+    # OBS does not start a file there without PLAY (the probe); this failed
+    # on the bench as "did not start ... OBS_MEDIA_STATE_STOPPED".
     on_air(playout)
-    use_method(playout, "reload")
-    cuts_before = len(playout.obs.requests_of("SetCurrentProgramScene"))
+    playout.pass_time(5.0)
 
     change_speed(playout, 50)
+    change_speed(playout, 100)
 
-    assert len(playout.obs.requests_of("SetCurrentProgramScene")) == cuts_before
     assert playout.state("program.slot") == "a"
+    assert playout.state("program.speed_percent") == 100
+    assert playout.obs.media_of("baja_program_a").state == MediaState.PLAYING
 
 
-def test_a_swap_with_a_clip_cued_cues_it_again_afterwards(playout: PlayoutStudio) -> None:
-    # The swap needs the off-air source, where the next clip is cued.
+def test_a_speed_change_with_a_clip_cued_cues_it_again_afterwards(
+    playout: PlayoutStudio,
+) -> None:
+    # The change needs the off-air source, where the next clip is cued.
     _, second = on_air(playout)
     playout.command("cue_next")
 
@@ -429,22 +479,18 @@ def test_a_swap_with_a_clip_cued_cues_it_again_afterwards(playout: PlayoutStudio
     assert cued.settings["speed_percent"] == 100
 
 
-@pytest.mark.parametrize("method", ["reload", "swap"])
-def test_a_paused_clip_stays_paused_through_a_speed_change(
-    playout: PlayoutStudio, method: str
-) -> None:
+def test_a_paused_clip_replays_paused(playout: PlayoutStudio) -> None:
+    # Paused at 5 s: the replay is ready at 2 s, still paused, for the
+    # operator to play when the hosts are ready.
     on_air(playout)
-    use_method(playout, method)
-    playout.pass_time(1.0)
+    playout.pass_time(5.0)
     playout.command("transport", action="pause")
-    before = program_cursor(playout)
 
     change_speed(playout, 25)
     playout.pass_time(1.0)
 
-    assert program_cursor(playout) == pytest.approx(before, abs=ONE_FRAME)
-    source = "baja_program_a" if playout.state("program.slot") == "a" else "baja_program_b"
-    assert playout.obs.media_of(source).state == MediaState.PAUSED
+    assert 2.0 <= program_cursor(playout) <= 2.0 + SETTLE
+    assert playout.obs.media_of(program_source(playout)).state == MediaState.PAUSED
 
 
 def test_the_clip_on_air_and_its_speed_survive_a_restart(playout: PlayoutStudio) -> None:

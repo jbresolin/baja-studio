@@ -1,6 +1,6 @@
 """A simulated studio for timing races: playout's switching against a fake OBS with seeded delays.
 
-Why a simulation? The races of a live speed change (a seek sent before the
+Why a simulation? The races of a speed change on air (a seek sent before the
 file has a frame, a "started" event left over from an earlier open, events
 of the two sources interleaving) depend on how long OBS takes for each step.
 `FakeObs(timing=ObsTiming(seed))` draws those delays from a seed. To run
@@ -129,7 +129,7 @@ class SimulatedStudio:
 
 @contextlib.contextmanager
 def simulated_studio(
-    seed: int, method: str, clip_seconds: float = 30.0
+    seed: int, clip_seconds: float = 30.0, keyframe_interval_s: float | None = 0.5
 ) -> Iterator[SimulatedStudio]:
     """A studio with one clip on air at 100 %, then OBS's seeded delays switched on.
 
@@ -138,7 +138,9 @@ def simulated_studio(
     A context manager: the client is closed on leaving it.
     """
     clock = SimulationClock()
-    fake = FakeObs.with_playout_scenes(clock, duration_for=lambda _file: clip_seconds)
+    fake = FakeObs.with_playout_scenes(
+        clock, duration_for=lambda _file: clip_seconds, keyframe_interval_s=keyframe_interval_s
+    )
     clock.attach(fake)
     network = InProcessObsNetwork()
     network.plug(HOST, PORT, fake)
@@ -151,9 +153,7 @@ def simulated_studio(
 
     client = ObsWebsocketClient(clock, connect)
     client.connect(ObsAddress(HOST, PORT), "")
-    settings = PlayoutSettings.model_validate(
-        {"obs": {"host": HOST, "port": PORT, "live_speed_change": method}}
-    )
+    settings = PlayoutSettings.model_validate({"obs": {"host": HOST, "port": PORT}})
     switcher = ProgramSwitcher(client, lambda: settings.obs, clock)
     switcher.prepare_scenes()
     logger = logging.LoggerAdapter(logging.getLogger("tests.playout.simulation"), {})

@@ -55,7 +55,8 @@ describe("playoutKeyAction", () => {
     expect(press("Backspace")).toBe("drop_next");
     expect(press("r")).toBe("return");
     expect(press("R")).toBe("return");
-    expect(press("l")).toBe("replay_last");
+    // L has no meaning without a clip on air: Replay last is a button only.
+    expect(press("l")).toBeNull();
     expect(press("Delete")).toBe("remove_selected");
     expect(press("/")).toBe("focus_search");
     expect(press("?")).toBe("toggle_legend");
@@ -203,20 +204,21 @@ describe("media-control keys (WP5c)", () => {
   const press = (key: string, transportEnabled: boolean) =>
     playoutKeyAction({ key, targetIsEditable: false, transportEnabled });
 
-  it("K, J, L, comma and period drive the clip on air only while unlocked", () => {
-    expect(["k", "J", "l", ",", "."].map((key) => press(key, true))).toEqual([
+  it("K, J and L drive the clip on air whenever one is on air", () => {
+    expect(["k", "J", "l"].map((key) => press(key, true))).toEqual([
       "transport_toggle",
       "transport_back",
       "transport_forward",
-      "frame_back",
-      "frame_forward",
     ]);
-    // Locked, K, J, comma and period do nothing, and L is Replay last as always.
-    expect(["k", "j", ",", "."].map((key) => press(key, false))).toEqual([null, null, null, null]);
-    expect(press("L", false)).toBe("replay_last");
+    // With nothing on air they do nothing (L is not Replay last any more).
+    expect(["k", "j", "L"].map((key) => press(key, false))).toEqual([null, null, null]);
   });
 
-  it("keeps the other shortcuts while unlocked", () => {
+  it("has no frame-step keys: OBS can only jump to keyframes (LIVESTACK-56)", () => {
+    expect([",", "."].map((key) => press(key, true))).toEqual([null, null]);
+  });
+
+  it("keeps the other shortcuts with a clip on air", () => {
     expect(press(" ", true)).toBe("take");
     expect(press("ArrowRight", true)).toBe("skip");
   });
@@ -225,8 +227,6 @@ describe("media-control keys (WP5c)", () => {
     expect(transportArgs("transport_toggle")).toEqual({ action: "toggle" });
     expect(transportArgs("transport_back")).toEqual({ action: "nudge", seconds: -5 });
     expect(transportArgs("transport_forward")).toEqual({ action: "nudge", seconds: 5 });
-    expect(transportArgs("frame_back")).toEqual({ action: "step", frames: -1 });
-    expect(transportArgs("frame_forward")).toEqual({ action: "step", frames: 1 });
   });
 });
 

@@ -12,7 +12,6 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 from baja_studio.core.settings import ModuleSettings
 
 PostClipBehaviour = Literal["return", "hold", "fade"]
-LiveSpeedChange = Literal["reload", "swap"]
 # Blank (or the bare name) means the installer's copy, else PATH.
 TOOL_PATH_HELP = "Leave blank for the bundled copy."
 # Shown (state, health, readiness) while OBS has no address or no password.
@@ -118,12 +117,14 @@ class ObsSettings(StrictModel):
     # Transition names are localised in OBS (pt-BR: "Corte", "Desvanecer").
     cut_transition: str = Field(default="Cut", min_length=1)
     fade_transition: str = Field(default="Fade", min_length=1)
-    live_speed_change: LiveSpeedChange = Field(
-        default="swap",
+    replay_jump_back_s: float = Field(
+        default=3.0,
+        ge=0.0,
+        le=30.0,
         description=(
-            "Changing the speed of the clip on air. swap: load it at the new speed in the "
-            "other playback source and cut (seamless); reload: change the source on air and "
-            "seek back (OBS reloads the file: may show a hiccup)."
+            "Slow motion on the clip on air is a replay: 50 % or 25 % jumps back this many "
+            "seconds (to the keyframe before) and plays from there; 100 % continues from "
+            "about where it is."
         ),
     )
 
@@ -134,11 +135,14 @@ class ObsSettings(StrictModel):
 
     @model_validator(mode="before")
     @classmethod
-    def _drop_return_scene(cls, values: Any) -> Any:
+    def _drop_retired_keys(cls, values: Any) -> Any:
         # WP5 kept the return scene here; WP5b moved it to a control on the page
-        # (session state), so older saved settings and exports still load.
-        if isinstance(values, dict) and "return_scene" in values:
-            values = {key: value for key, value in values.items() if key != "return_scene"}
+        # (session state). `live_speed_change` (swap/reload) went when slow
+        # motion became a replay (LIVESTACK-56). Older saved settings and
+        # exports still load.
+        retired = ("return_scene", "live_speed_change")
+        if isinstance(values, dict) and any(key in values for key in retired):
+            values = {key: value for key, value in values.items() if key not in retired}
         return values
 
 
@@ -201,7 +205,8 @@ class PlayoutSettings(ModuleSettings):
     """Everything playout is configured with, edited in the browser."""
 
     # 2: obs.return_scene moved to the page; folders gained receiver_root; on_air_actions.
-    settings_version: ClassVar[int] = 2
+    # 3: obs.live_speed_change replaced by obs.replay_jump_back_s (LIVESTACK-56).
+    settings_version: ClassVar[int] = 3
 
     sources: SourcesSettings = Field(default_factory=SourcesSettings)
     obs: ObsSettings = Field(default_factory=ObsSettings)

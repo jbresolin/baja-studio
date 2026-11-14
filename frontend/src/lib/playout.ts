@@ -349,15 +349,13 @@ export function groupLibrary(
   }));
 }
 
-export type TransportKeyAction =
-  "transport_toggle" | "transport_back" | "transport_forward" | "frame_back" | "frame_forward";
+export type TransportKeyAction = "transport_toggle" | "transport_back" | "transport_forward";
 
 export type PlayoutKeyAction =
   | "take"
   | "skip"
   | "drop_next"
   | "return"
-  | "replay_last"
   | "remove_selected"
   | "focus_search"
   | "toggle_legend"
@@ -369,23 +367,19 @@ export const PLAYOUT_KEY_LEGEND: [string, string][] = [
   ["→", "Skip: end the clip on air now, as if it had finished"],
   ["Shift+→ / Backspace", "Drop the next clip (the cued one, else the head of the queue)"],
   ["R", "Return to the return scene"],
-  ["L", "Replay last clip"],
   ["Delete", "Remove selected queue entries"],
   ["/", "Search the library"],
   ["?", "Show or hide this legend"],
 ];
 
-/** Keys that work only while the media controls are unlocked (they act on air). */
+/** Keys that act on the clip on air (whenever one is). */
 export const TRANSPORT_KEY_LEGEND: [string, string][] = [
   ["K", "Pause / play the clip on air"],
-  ["J / L", "Back / forward 5 s (L is not Replay last while unlocked)"],
-  [", / .", "One frame back / forward (while paused)"],
+  ["J / L", "Back / forward 5 s"],
 ];
 
 /** Seconds a −5 s / +5 s press moves. */
 export const NUDGE_SECONDS = 5;
-/** How long the unlock control must be held before the media controls work. */
-export const HOLD_TO_ENABLE_MS = 2000;
 /** The replay speeds offered, in percent of normal. */
 export const REPLAY_SPEEDS = [100, 50, 25] as const;
 
@@ -398,10 +392,6 @@ export function transportArgs(action: TransportKeyAction): Record<string, unknow
       return { action: "nudge", seconds: -NUDGE_SECONDS };
     case "transport_forward":
       return { action: "nudge", seconds: NUDGE_SECONDS };
-    case "frame_back":
-      return { action: "step", frames: -1 };
-    case "frame_forward":
-      return { action: "step", frames: 1 };
   }
 }
 
@@ -416,10 +406,6 @@ function transportKeyAction(key: string): TransportKeyAction | null {
     case "l":
     case "L":
       return "transport_forward";
-    case ",":
-      return "frame_back";
-    case ".":
-      return "frame_forward";
     default:
       return null;
   }
@@ -427,9 +413,11 @@ function transportKeyAction(key: string): TransportKeyAction | null {
 
 /**
  * Which action a key press means, or null. Nothing fires while the operator
- * types in a field (`targetIsEditable`), or with Ctrl/Alt/Meta held. With
- * the media controls unlocked (`transportEnabled`), K, J, L, "," and "."
- * drive the clip on air, and L is no longer "Replay last".
+ * types in a field (`targetIsEditable`), or with Ctrl/Alt/Meta held. With a
+ * clip on air (`transportEnabled`), K pauses/plays it and J / L go back /
+ * forward 5 s. Replay last has no key (João, 2026-11-14): only its button
+ * on the program panel. (There is no frame step: OBS can only jump to
+ * keyframes, LIVESTACK-56.)
  */
 export function playoutKeyAction(event: {
   key: string;
@@ -456,9 +444,6 @@ export function playoutKeyAction(event: {
     case "r":
     case "R":
       return "return";
-    case "l":
-    case "L":
-      return "replay_last";
     case "Delete":
       return "remove_selected";
     case "/":

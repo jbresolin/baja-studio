@@ -14,6 +14,15 @@ new file, new settings or a restart) goes through three phases:
 
 A seek on a source that has its first frame lands after `seek_s` (OBS seeks
 on its media thread); until then status still reports the old position.
+It lands on the **keyframe at or before** the position asked for, never on
+the position itself: OBS 33 on the studio PC, asked for 5 s in a clip with
+keyframes every 8.333 s, went to 0; asked for 10 s, to 8.23 s (the OBS
+probe, LIVESTACK-56). `keyframe_interval_s` sets where they are (None:
+every position is one, the fake before the probe).
+
+Two more things the probe showed and this models: loading a file (or new
+settings) into a *stopped* source does not start it, only PLAY does; and
+OBS's RESTART does nothing to a source that is playing or paused.
 The phase lengths come from the caller (`FakeObs`, from its seeded timing);
 all zero, every phase passes on the next `advance`. A `stuck` source never
 finishes opening, for the cue-timeout tests.
@@ -48,6 +57,8 @@ class SimulatedMedia:
     first_frame_at: float = 0.0
     # A seek OBS accepted but has not carried out yet: (position, when).
     pending_seek: tuple[float, float] | None = None
+    # A keyframe every this many seconds of the file, from 0 (None: every position).
+    keyframe_interval_s: float | None = None
 
     @property
     def is_seekable(self) -> bool:
@@ -78,26 +89,37 @@ class SimulatedMedia:
         opening_s: float = 0.0,
         first_frame_s: float = 0.0,
     ) -> None:
-        """A new `local_file`: OBS opens it and starts it from the top (see the phases)."""
+        """A new `local_file`: OBS opens it and starts it from the top (see the phases).
+
+        A stopped source keeps the file but stays stopped (the probe): it
+        starts only on PLAY.
+        """
         self.file, self.duration_s = file, duration_s
-        if file:
+        if file and self.state == MediaState.STOPPED:
+            self.loading, self.pending_seek = False, None
+            self._set(MediaState.STOPPED, 0.0, now)
+        elif file:
             self._open(now, opening_s, first_frame_s)
         else:
+            # Emptied. A stopped source stays stopped (the probe), so the next
+            # file still needs PLAY; any other is left with nothing.
             self.loading, self.pending_seek = False, None
-            self._set(MediaState.NONE, 0.0, now)
+            emptied = MediaState.STOPPED if self.state == MediaState.STOPPED else MediaState.NONE
+            self._set(emptied, 0.0, now)
 
     def reload(self, now: float, opening_s: float = 0.0, first_frame_s: float = 0.0) -> None:
         """Changed settings (a new speed): OBS opens the file again, from the top.
 
-        What real OBS does here was bench step 6 of WP5c; playout copes
-        either way, because it waits for the start and seeks back.
+        The probe (LIVESTACK-56) confirmed it: a new speed reopens the file
+        and starts it from 0, with a new started event. A stopped source
+        stays stopped.
         """
-        if self.file:
+        if self.file and self.state != MediaState.STOPPED:
             self._open(now, opening_s, first_frame_s)
 
     def restart(self, now: float, opening_s: float = 0.0, first_frame_s: float = 0.0) -> None:
-        """Play from the top (after opening again, like real OBS)."""
-        if self.file:
+        """OBS's RESTART: nothing at all while playing or paused (the probe), else from the top."""
+        if self.file and self.state not in (MediaState.PLAYING, MediaState.PAUSED):
             self._open(now, opening_s, first_frame_s)
 
     def play(self, now: float, opening_s: float = 0.0, first_frame_s: float = 0.0) -> None:
@@ -121,7 +143,7 @@ class SimulatedMedia:
             self._set(MediaState.STOPPED, 0.0, now)
 
     def seek(self, cursor_s: float, now: float, seek_s: float = 0.0) -> None:
-        """Jump to `cursor_s` after `seek_s`, keeping the play/pause state.
+        """Jump to the keyframe at or before `cursor_s` after `seek_s`, keeping play/pause.
 
         Ignored while the first frame is still loading (the decoder starts
         from the top whatever was asked); call only when `is_seekable`.
@@ -129,12 +151,20 @@ class SimulatedMedia:
         if self.loading:
             return
         limit = self.duration_s if self.duration_s is not None else cursor_s
-        target = max(0.0, min(cursor_s, limit))
+        target = self.keyframe_at_or_before(max(0.0, min(cursor_s, limit)))
         if seek_s <= 0:
             self.pending_seek = None
             self._set(self.state, target, now)
         else:
             self.pending_seek = (target, now + seek_s)
+
+    def keyframe_at_or_before(self, position_s: float) -> float:
+        """Where a seek to `position_s` lands: the last keyframe not after it."""
+        if self.keyframe_interval_s is None:
+            return position_s
+        # The small tolerance keeps 8.0 / 0.5 from rounding down to 15.999...
+        count = int(position_s / self.keyframe_interval_s + 1e-9)
+        return round(count * self.keyframe_interval_s, 3)
 
     def next_change_at(self) -> float | None:
         """When `advance` next has something to do (a phase ends, a seek lands, the end)."""

@@ -1,5 +1,10 @@
 # ADR 0015 — WP5c fix: reliable live speed change
 
+> **Superseded by ADR 0017** for the live speed change: an OBS probe on the
+> studio PC showed seeks land on keyframes only, so a seamless change could
+> not work; slow motion on air is now a replay. The seeded fake and test
+> harness described here stay, extended.
+
 Date: 2026-11-10. Work item: LIVESTACK-56. Bench finding: on OBS 32 in swap
 mode a live speed change sometimes worked, sometimes changed nothing, went
 black or restarted the clip from 0, and every one was logged as a success.

@@ -206,6 +206,12 @@ class PlayoutModule(Module):
             return self._rescan_library()
         return run_command(self.controller, self.context.settings, self.name, command, args, source)
 
+    @property
+    def obs_client(self) -> ObsWebsocketClient:
+        """The module's OBS client (once started)."""
+        assert self._obs_client is not None
+        return self._obs_client
+
     def resolved_tools(self) -> ResolvedTools:
         """ffprobe and ffmpeg as the one resolver finds them for the current settings."""
         return self._resolve_tools(self.settings().tools)

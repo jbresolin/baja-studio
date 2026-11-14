@@ -43,18 +43,21 @@ def test_on_air_next_three_and_the_known_remaining_time_of_the_queue() -> None:
 def test_the_module_publishes_it_and_counts_down_once_a_second(playout: PlayoutStudio) -> None:
     first, second, _ = ready_studio(playout)
     playout.command("queue_add", clip_ids=[first, second])
-    playout.command("take", cue_if_needed=True)
     # Count what the publisher sends under "hosts_view" (it wraps update_state).
+    # Counting starts before the take: started after it, the worker's first
+    # position poll could already have published "9", and the count came out
+    # one short now and then (a race in this test, not in playout).
     publisher = playout.module.controller.publisher
     send = publisher._update
     updates: list[Any] = []
 
     def counting(path: str, value: Any) -> None:
-        if path == "hosts_view":
+        if path == "hosts_view" and (value or {}).get("on_air") is not None:
             updates.append(value)
         send(path, value)
 
     publisher._update = counting
+    playout.command("take", cue_if_needed=True)
 
     # Let the clip play until about two seconds have gone (polled at 5 Hz).
     playout.soon(lambda: (playout.state("program") or {}).get("remaining_s", 99) <= 8.0)

@@ -45,10 +45,14 @@ from baja_studio.fakes.fake_obs_requests import (
     FakeSceneItem,
 )
 from baja_studio.fakes.obs_timing import ObsTiming
+from baja_studio.fakes.simulated_media import SimulatedMedia
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_MEDIA_DURATION_SECONDS = 10.0
+# Where seeks land (`SimulatedMedia`): the pipeline renders a keyframe every
+# 0.5 s since LIVESTACK-56; clips from before have one every 8.333 s.
+DEFAULT_KEYFRAME_INTERVAL_SECONDS = 0.5
 TICK_SECONDS = 0.1
 FIXED_SALT = "fake-obs-salt"
 FIXED_CHALLENGE = "fake-obs-challenge"
@@ -85,10 +89,13 @@ class FakeObs(FakeObsRequests):
         password: str = "",
         duration_for: Callable[[str], float | None] | None = None,
         timing: ObsTiming | None = None,
+        keyframe_interval_s: float | None = DEFAULT_KEYFRAME_INTERVAL_SECONDS,
     ) -> None:
         """An empty OBS; add scenes and inputs, or use `with_playout_scenes`.
 
         `timing` makes media take seeded random time (None: no delays).
+        `keyframe_interval_s` is where every media source's seeks land
+        (None: anywhere, exactly).
         """
         self.clock = clock
         self.password = password
@@ -107,6 +114,7 @@ class FakeObs(FakeObsRequests):
         self.timeline = MediaTimeline(timing)
         self._sessions: list[FakeObsSession] = []
         self._next_item_id = 1
+        self.keyframe_interval_s = keyframe_interval_s
 
     @classmethod
     def with_playout_scenes(
@@ -144,7 +152,8 @@ class FakeObs(FakeObsRequests):
     def add_media_input(self, name: str) -> None:
         """Create a media source (`ffmpeg_source`) with no file."""
         with self.lock:
-            self.inputs[name] = FakeInput("ffmpeg_source")
+            media = SimulatedMedia(keyframe_interval_s=self.keyframe_interval_s)
+            self.inputs[name] = FakeInput("ffmpeg_source", media=media)
 
     def now(self) -> float:
         """Media time: the clock's monotonic seconds."""
@@ -359,6 +368,12 @@ def main(argv: list[str] | None = None) -> None:
         default=None,
         help="opens, seeks and events take random time drawn from this seed (as on real OBS)",
     )
+    parser.add_argument(
+        "--keyframe-interval",
+        type=float,
+        default=DEFAULT_KEYFRAME_INTERVAL_SECONDS,
+        help="seeks land on the keyframe before; one every this many seconds (8.333: old clips)",
+    )
     options = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     fixed_duration: float = options.duration
@@ -378,6 +393,7 @@ def main(argv: list[str] | None = None) -> None:
         password=options.password,
         duration_for=duration_for,
         timing=ObsTiming(options.seed) if options.seed is not None else None,
+        keyframe_interval_s=options.keyframe_interval,
     )
     with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(serve_fake_obs(fake, options.host, options.port))

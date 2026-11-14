@@ -11,7 +11,7 @@ import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { HOLD_TO_ENABLE_MS, type PlayoutState, type QueueEntry } from "../src/lib/playout";
+import { type PlayoutState, type QueueEntry } from "../src/lib/playout";
 import { StateSocketContext } from "../src/lib/stateHooks";
 import { StateSocket } from "../src/lib/stateSocket";
 import { PlayoutPage } from "../src/pages/PlayoutPage";
@@ -530,15 +530,6 @@ function onAirState(transportState: "playing" | "paused" = "playing", startedAt 
   });
 }
 
-/** Hold the unlock button for the full two seconds (fake timers must be on). */
-function unlockMediaControls() {
-  const button = screen.getByRole("button", { name: /Hold to unlock/ });
-  fireEvent.pointerDown(button);
-  act(() => {
-    vi.advanceTimersByTime(HOLD_TO_ENABLE_MS);
-  });
-}
-
 describe("media controls for the clip on air (WP5c)", () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -547,30 +538,19 @@ describe("media controls for the clip on air (WP5c)", () => {
     vi.useRealTimers();
   });
 
-  it("are locked until the unlock button is held for two seconds", () => {
+  it("are there as soon as a clip is on air, marked LIVE, with no lock to open", () => {
+    // João, 2026-11-14: the two-second hold-to-unlock went; the controls
+    // are always available while a clip is on air.
     showPlayoutPage(onAirState());
 
-    // Letting go after one second does nothing: they stay locked.
-    const button = screen.getByRole("button", { name: /Hold to unlock/ });
-    fireEvent.pointerDown(button);
-    act(() => {
-      vi.advanceTimersByTime(1000);
-    });
-    fireEvent.pointerUp(button);
-    act(() => {
-      vi.advanceTimersByTime(3000);
-    });
-    expect(screen.queryByRole("group", { name: /Media controls/ })).toBeNull();
-
-    // Held for the full two seconds, the controls appear, marked LIVE.
-    unlockMediaControls();
     const controls = screen.getByRole("group", { name: "Media controls (live)" });
     expect(controls).toHaveTextContent("LIVE");
+    expect(screen.queryByRole("button", { name: /Hold to unlock/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Lock" })).toBeNull();
   });
 
   it("pause, restart, nudges and speed each send one command for the clip on air", () => {
     showPlayoutPage(onAirState());
-    unlockMediaControls();
     const controls = screen.getByRole("group", { name: "Media controls (live)" });
 
     fireEvent.click(within(controls).getByRole("button", { name: "Pause" }));
@@ -590,7 +570,6 @@ describe("media controls for the clip on air (WP5c)", () => {
 
   it("a double click on a speed sends one change, and the buttons wait for its answer", async () => {
     showPlayoutPage(onAirState());
-    unlockMediaControls();
     const speeds = screen.getByRole("radiogroup", { name: "Speed on air" });
 
     fireEvent.click(within(speeds).getByRole("radio", { name: "50 %" }));
@@ -608,7 +587,6 @@ describe("media controls for the clip on air (WP5c)", () => {
 
   it("shows 'changing…' while the server runs a change, from any operator", () => {
     showPlayoutPage(onAirState());
-    unlockMediaControls();
 
     act(() =>
       server.receive({
@@ -627,7 +605,6 @@ describe("media controls for the clip on air (WP5c)", () => {
 
   it("says why the last speed change failed", () => {
     showPlayoutPage(onAirState());
-    unlockMediaControls();
 
     act(() =>
       server.receive({
@@ -645,10 +622,11 @@ describe("media controls for the clip on air (WP5c)", () => {
     );
   });
 
-  it("steps frames only while the clip on air is paused", () => {
+  it("offers no frame step, and Play once the clip on air is paused", () => {
+    // OBS can only jump to keyframes (LIVESTACK-56): a frame step cannot work.
     showPlayoutPage(onAirState("playing"));
-    unlockMediaControls();
-    expect(screen.getByRole("button", { name: "One frame forward" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "One frame forward" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "One frame back" })).toBeNull();
 
     act(() =>
       server.receive({
@@ -659,21 +637,29 @@ describe("media controls for the clip on air (WP5c)", () => {
         value: "paused",
       }),
     );
-    fireEvent.click(screen.getByRole("button", { name: "One frame forward" }));
-    fireEvent.click(screen.getByRole("button", { name: "One frame back" }));
 
-    expect(sent().map((command) => command.args)).toEqual([
-      { action: "step", frames: 1 },
-      { action: "step", frames: -1 },
-    ]);
     // Paused, the strip says so to every operator, and the button offers Play.
     expect(screen.getByTestId("program-strip")).toHaveTextContent("paused");
     expect(screen.getByRole("button", { name: "Play" })).toBeInTheDocument();
   });
 
+  it("says which speed buttons replay and which continue", () => {
+    showPlayoutPage(onAirState());
+    const speeds = screen.getByRole("radiogroup", { name: "Speed on air" });
+
+    // At 100 %, the slower speeds are replays (they jump back).
+    expect(within(speeds).getByRole("radio", { name: "50 %" })).toHaveAttribute(
+      "title",
+      "Replay: jump back and play at 50 %",
+    );
+    expect(within(speeds).getByRole("radio", { name: "100 %" })).toHaveAttribute(
+      "title",
+      "The speed on air",
+    );
+  });
+
   it("the scrub bar previews where it will go while dragged and seeks once, on release", () => {
     showPlayoutPage(onAirState());
-    unlockMediaControls();
     const scrub = screen.getByRole("slider", { name: "Scrub" });
 
     fireEvent.change(scrub, { target: { value: "4.2" } });
@@ -688,38 +674,35 @@ describe("media controls for the clip on air (WP5c)", () => {
     expect(sent().map((command) => command.args)).toEqual([{ action: "seek", position_s: 6.4 }]);
   });
 
-  it("K, J, L, comma and period act on air only while unlocked", () => {
+  it("K, J and L act on air; comma and period do nothing", () => {
+    // João, 2026-11-14: L is +5 s; Replay last is its on-screen button only.
     showPlayoutPage(onAirState("paused"));
 
-    // Locked: L is Replay last, and K does nothing.
-    act(() => {
-      fireEvent.keyDown(window, { key: "k" });
-      fireEvent.keyDown(window, { key: "l" });
-    });
-    expect(sent().map((command) => command.command)).toEqual(["replay_last"]);
-
-    unlockMediaControls();
     act(() => {
       for (const key of ["k", "j", "l", ",", "."]) fireEvent.keyDown(window, { key });
     });
 
-    expect(
-      sent()
-        .slice(1)
-        .map((command) => command.args),
-    ).toEqual([
-      { action: "toggle" },
-      { action: "nudge", seconds: -5 },
-      { action: "nudge", seconds: 5 },
-      { action: "step", frames: -1 },
-      { action: "step", frames: 1 },
+    expect(sent().map(({ command, args }) => ({ command, args }))).toEqual([
+      { command: "transport", args: { action: "toggle" } },
+      { command: "transport", args: { action: "nudge", seconds: -5 } },
+      { command: "transport", args: { action: "nudge", seconds: 5 } },
     ]);
   });
 
-  it("lock again when the next clip goes to air", () => {
+  it("Replay last is the program panel's button, not a key", () => {
+    showPlayoutPage();
+
+    act(() => {
+      fireEvent.keyDown(window, { key: "l" });
+    });
+    expect(sent()).toEqual([]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Replay last" }));
+    expect(sent().map((command) => command.command)).toEqual(["replay_last"]);
+  });
+
+  it("stay available when the next clip goes to air", () => {
     showPlayoutPage(onAirState("playing", "t1"));
-    unlockMediaControls();
-    expect(screen.getByRole("group", { name: "Media controls (live)" })).toBeInTheDocument();
 
     act(() =>
       server.receive({
@@ -731,13 +714,17 @@ describe("media controls for the clip on air (WP5c)", () => {
       }),
     );
 
-    expect(screen.queryByRole("group", { name: "Media controls (live)" })).toBeNull();
-    expect(screen.getByRole("button", { name: /Hold to unlock/ })).toBeInTheDocument();
+    expect(screen.getByRole("group", { name: "Media controls (live)" })).toBeInTheDocument();
   });
 
-  it("are not shown with nothing on air", () => {
+  it("are not shown with nothing on air, and K does nothing then", () => {
     showPlayoutPage();
-    expect(screen.queryByRole("button", { name: /Hold to unlock/ })).toBeNull();
+    expect(screen.queryByRole("group", { name: /Media controls/ })).toBeNull();
+
+    act(() => {
+      fireEvent.keyDown(window, { key: "k" });
+    });
+    expect(sent()).toEqual([]);
   });
 });
 

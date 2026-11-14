@@ -86,13 +86,30 @@ def test_playing_an_ended_file_starts_it_again() -> None:
     assert media.cursor(21.0) == pytest.approx(1.0)
 
 
-def test_restart_goes_back_to_the_top() -> None:
+def test_restart_does_nothing_to_a_playing_or_paused_source() -> None:
+    # OBS 33 on the studio PC ignored RESTART on a playing source: it kept
+    # playing on from where it was, and sent no started event (the probe,
+    # LIVESTACK-56). Playout never uses it; the fake must not pretend it works.
     media = playing()
 
     media.restart(4.0)
+    assert media.state == MediaState.PLAYING
+    assert media.cursor(4.0) == pytest.approx(4.0)
+
+    media.pause(5.0)
+    media.restart(6.0)
+    assert media.state == MediaState.PAUSED
+    assert media.cursor(6.0) == pytest.approx(5.0)
+
+
+def test_restart_starts_a_stopped_source_from_the_top() -> None:
+    media = playing()
+    media.stop(4.0)
+
+    media.restart(5.0)
 
     assert media.state == MediaState.OPENING
-    assert media.cursor(4.0) == 0.0
+    assert media.cursor(5.0) == 0.0
 
 
 def test_stop_rewinds_and_stops() -> None:
@@ -217,3 +234,89 @@ def test_a_source_with_no_frame_is_black() -> None:
     media.stop(1.0)
 
     assert not media.has_frame
+
+
+# --- what the OBS probe on the studio PC showed (LIVESTACK-56) ---------------------------------
+
+
+def with_keyframes_every(seconds: float) -> SimulatedMedia:
+    """A playing 60 s file whose keyframes are every `seconds`, started at time 0."""
+    media = SimulatedMedia(keyframe_interval_s=seconds)
+    media.load("clip.mp4", 60.0, 0.0)
+    media.advance(0.0)
+    return media
+
+
+def test_a_seek_lands_on_the_keyframe_at_or_before_the_position_asked_for() -> None:
+    # The studio PC's clips had a keyframe every 8.333 s (250 frames at
+    # 30 fps). Asked for 10 s, OBS went to the keyframe at 8.333 s; asked
+    # for 5 s, back to the one at 0. Playing or paused makes no difference.
+    media = with_keyframes_every(8.333)
+
+    media.seek(10.0, 1.0)
+    assert media.cursor(1.0) == pytest.approx(8.333)
+
+    media.pause(2.0)
+    media.seek(5.0, 2.0)
+    assert media.cursor(2.0) == 0.0
+
+
+def test_a_seek_exactly_onto_a_keyframe_lands_there() -> None:
+    # With a keyframe every 0.5 s (the pipeline since LIVESTACK-56), 8.0 s
+    # is one: the seek lands on it, not on 7.5 s.
+    media = with_keyframes_every(0.5)
+
+    media.seek(8.0, 1.0)
+    assert media.cursor(1.0) == pytest.approx(8.0)
+    media.seek(8.4, 1.0)
+    assert media.cursor(1.0) == pytest.approx(8.0)
+
+
+def test_without_keyframes_set_a_seek_lands_exactly() -> None:
+    # The fake before the probe: every position is a keyframe.
+    media = playing(duration=60.0)
+
+    media.seek(10.123, 1.0)
+
+    assert media.cursor(1.0) == pytest.approx(10.123)
+
+
+def test_a_file_loaded_into_a_stopped_source_waits_for_play() -> None:
+    # The probe: after STOP, new settings left the source stopped, with no
+    # started event, until PLAY. (This is how a speed change once failed
+    # with "did not start ... OBS_MEDIA_STATE_STOPPED".)
+    media = playing()
+    media.stop(3.0)
+
+    media.load("other.mp4", 10.0, 4.0)
+    assert media.advance(5.0) is None
+    assert media.state == MediaState.STOPPED
+
+    media.play(6.0)
+    assert media.advance(6.0) == "started"
+    assert media.state == MediaState.PLAYING
+    assert media.file == "other.mp4"
+
+
+def test_new_settings_on_a_stopped_source_leave_it_stopped() -> None:
+    media = playing()
+    media.stop(3.0)
+
+    media.reload(4.0)
+
+    assert media.advance(5.0) is None
+    assert media.state == MediaState.STOPPED
+
+
+def test_emptying_a_stopped_source_and_loading_again_still_waits_for_play() -> None:
+    # Playout empties a source that already holds the same file before
+    # loading it again. On a stopped source (the probe, step 12) that
+    # changes nothing: it is still stopped, and the file needs PLAY.
+    media = playing()
+    media.stop(3.0)
+
+    media.load("", None, 4.0)
+    media.load("clip.mp4", 10.0, 4.0)
+
+    assert media.advance(5.0) is None
+    assert media.state == MediaState.STOPPED

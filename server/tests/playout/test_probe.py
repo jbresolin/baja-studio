@@ -106,7 +106,7 @@ def test_a_frame_rate_ffprobe_cannot_tell_is_none(
 ) -> None:
     # "0/0" is what ffprobe prints for a still image or a rate it cannot
     # average; no stream at all is a file without video (audio only).
-    # Without a rate, a frame step on air falls back to 30 fps.
+    # Without a rate, playout assumes 30 fps.
     prober = MediaProber("ffprobe", "ffmpeg", FakeRun(stdout=ffprobe_json("4.0", frame_rate)))
 
     assert prober.probe("clip.mp4") == MediaInfo(4.0, expected)

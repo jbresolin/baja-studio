@@ -4,19 +4,17 @@ Transport (`transport {action}`) acts on the *program* source only; the
 cued clip is never touched. A manual pause is not an end: auto-play and
 on-air end actions fire on a take and on a natural end only, and a restart
 is a seek to 0 plus play, not a new airing. Pausing on air is logged with
-the client that did it.
+the client that did it. Seeks (the scrub bar, ±5 s) land on the keyframe at
+or before the position asked for: that is all OBS can do (LIVESTACK-56),
+and why there is no frame step.
 
 Slow motion is OBS's `speed_percent`, with the clip's audio muted below
 100 % (`parking.py`). For a cue, it is set when the clip is loaded. For the
-clip on air (`set_program_speed`) there are two ways, chosen by the setting
-`obs.live_speed_change`, both in `playout/live_speed.py`:
-
-- `reload`: reload the source on air at the new speed and put it back
-  where it should be. OBS reopens the file, so program shows a hiccup.
-- `swap` (default): park the same clip at the new speed in the other
-  playback source just ahead of the frame on air, cut when program gets
-  there. The double buffer makes this seamless; a clip cued there is cued
-  again afterwards.
+clip on air (`set_program_speed`), slowing down from 100 % is a replay that
+jumps back `obs.replay_jump_back_s`; any other change continues from about
+where the clip is (`playout/live_speed.py`). Either way the clip is loaded
+at the new speed in the other playback source and program cuts to it; a
+clip cued there is cued again afterwards.
 
 The result of each change is logged at INFO, every step at DEBUG. One change
 at a time, the last wish winning, is `modules/playout/speed_change.py`.
@@ -32,7 +30,7 @@ from baja_studio.adapters.obs_requests import MediaStatus
 from baja_studio.adapters.obs_transport import ObsError
 from baja_studio.core.clock import Clock
 from baja_studio.playout.config import PlayoutSettings
-from baja_studio.playout.live_speed import LiveSpeedChange
+from baja_studio.playout.live_speed import LiveSpeedChange, SpeedChangeResult
 from baja_studio.playout.parking import (
     NORMAL_SPEED_PERCENT,
     SPEEDS_PERCENT,
@@ -41,7 +39,7 @@ from baja_studio.playout.parking import (
 )
 from baja_studio.playout.switcher import Cued, CueError, ProgramSwitcher, SwitchError
 
-TRANSPORT_ACTIONS = ("play", "pause", "toggle", "restart", "seek", "step", "nudge")
+TRANSPORT_ACTIONS = ("play", "pause", "toggle", "restart", "seek", "nudge")
 
 
 def check_speed(speed_percent: object) -> int:
@@ -111,16 +109,6 @@ class ProgramTransport:
             self._seek(
                 program_source, program.clip, (status.cursor_s or 0.0) + args["seconds"], status
             )
-        elif action == "step":
-            if status.state != MediaState.PAUSED:
-                raise SwitchError("pause first: frame steps work on a paused clip")
-            frame = 1 / frames_per_second(program.clip)
-            self._seek(
-                program_source,
-                program.clip,
-                (status.cursor_s or 0.0) + args["frames"] * frame,
-                status,
-            )
         else:
             raise SwitchError(f"unknown transport action {action!r}")
         return self._obs.get_media_input_status(program_source)
@@ -167,32 +155,28 @@ class ProgramTransport:
         return speed
 
     def set_program_speed(self, speed_percent: int, source: str) -> None:
-        """Change the speed of the clip on air, by the configured method.
+        """Replay (slowing down from 100 %) or continue the clip on air at `speed_percent`.
 
-        Raises `SwitchError` when it could not be done; with swap, the clip
-        on air then plays on at its old speed (nothing was cut).
+        Raises `SwitchError` when it could not be done; the clip on air then
+        plays on at its old speed (nothing was cut).
         """
         program = self._switcher.program
         if program is None:
             raise SwitchError("nothing from playout is on air")
         if program.speed_percent == speed_percent:
             return
-        method = self._settings().obs.live_speed_change
+        jump_back_s = self._settings().obs.replay_jump_back_s
         self._speed_changes += 1
         number, old_speed = self._speed_changes, program.speed_percent
         began_at = self._clock.monotonic()
         try:
-            if method == "reload":
-                self._live_speed.reload(speed_percent, number)
-            else:
-                self._swap_at_speed(speed_percent, number)
+            result = self._change_in_other_source(speed_percent, jump_back_s, number)
         except (ParkError, ObsError, SwitchError) as error:
             self._logger.info(
-                "%r speed %d %% → %d %% on air (%s, change %d) by %s FAILED in %.2f s: %s",
+                "%r speed %d %% → %d %% on air (change %d) by %s FAILED in %.2f s: %s",
                 program.clip["title"],
                 old_speed,
                 speed_percent,
-                method,
                 number,
                 source,
                 self._clock.monotonic() - began_at,
@@ -204,23 +188,28 @@ class ProgramTransport:
         program.speed_percent = speed_percent
         self._save_session()
         self._logger.info(
-            "%r speed %d %% → %d %% on air (%s, change %d) by %s in %.2f s",
+            "%r speed %d %% → %d %% on air (%s from %.2f s, aimed %.2f s; change %d) by %s "
+            "in %.2f s",
             program.clip["title"],
             old_speed,
             speed_percent,
-            method,
+            result.kind,
+            result.landed_s,
+            result.aimed_s,
             number,
             source,
             self._clock.monotonic() - began_at,
         )
 
-    def _swap_at_speed(self, speed_percent: int, number: int) -> None:
-        """Swap to the other source at the new speed; a clip cued there is cued again after."""
+    def _change_in_other_source(
+        self, speed_percent: int, jump_back_s: float, number: int
+    ) -> SpeedChangeResult:
+        """Make the change in the other source; a clip cued there is cued again after."""
         switcher = self._switcher
-        # A clip cued there is overwritten; it is cued again once the swap is done.
+        # A clip cued there is overwritten; it is cued again once the change is done.
         displaced, switcher.cued = switcher.cued, None
         try:
-            self._live_speed.swap(speed_percent, number)
+            return self._live_speed.change(speed_percent, jump_back_s, number)
         finally:
             if displaced is not None:
                 self._recue(displaced)

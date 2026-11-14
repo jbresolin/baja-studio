@@ -35,8 +35,6 @@ from tests.conftest import (
     FakeClock,
     eventually,
     module_worker_threads,
-    step_fake_time,
-    step_fake_time_until,
 )
 from tests.core.fake_system_probes import FakeSystemProbes
 
@@ -49,10 +47,12 @@ ORCHESTRATOR_TOKEN = "studio-token"
 HOOK_URL = "http://overlay.test/hook"
 # The fake OBS plays every file for this long (the fake prober agrees).
 CLIP_SECONDS = 10.0
-# The fake prober's frame rate (a frame step on air moves 40 ms).
+# The fake prober's frame rate (one frame is 40 ms).
 CLIP_FPS = 25.0
 # All five playout workers sleep only on the fake clock.
 PLAYOUT_WORKERS = module_worker_threads("playout")
+# Fake time moves in steps this long (`soon`, `pass_time`).
+TIME_STEP_SECONDS = 0.1
 
 
 @dataclass
@@ -150,11 +150,37 @@ class PlayoutStudio:
         The workers sleep on the fake clock (the scanner 5 s, the OBS poll
         0.2 s), so many things only happen as fake time passes.
         """
-        step_fake_time_until(self.clock, condition, within_seconds, PLAYOUT_WORKERS)
+        for _ in range(round(within_seconds / TIME_STEP_SECONDS)):
+            self._settle()
+            if condition():
+                return
+            self.clock.advance(TIME_STEP_SECONDS)
+        self._settle()
+        eventually(condition)
 
     def pass_time(self, seconds: float) -> None:
         """Let `seconds` of fake time pass in 0.1 s steps, letting the workers run each step."""
-        step_fake_time(self.clock, seconds, PLAYOUT_WORKERS)
+        for _ in range(round(seconds / TIME_STEP_SECONDS)):
+            self._settle()
+            self.clock.advance(TIME_STEP_SECONDS)
+        self._settle()
+
+    def _settle(self) -> None:
+        """Wait until every worker sleeps on the fake clock *and* OBS has answered them all.
+
+        A worker waiting for OBS's answer to a request also sleeps on the fake
+        clock (with the request timeout). Moving time then would time the
+        request out whenever the fake OBS is slow to answer (a busy CI
+        machine): "OBS did not answer TriggerMediaInputAction in time". So
+        time moves only once no request is in flight.
+        """
+        client = self.module.obs_client
+        eventually(
+            lambda: (
+                self.clock.all_asleep_or_gone(PLAYOUT_WORKERS()) and client.requests_in_flight == 0
+            ),
+            "a worker never went back to sleep, or OBS never answered it",
+        )
 
     def log(self) -> list[tuple[str, str, str]]:
         """(source, command, result) of the playout log, newest first."""

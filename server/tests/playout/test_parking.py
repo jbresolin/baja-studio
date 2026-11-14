@@ -62,6 +62,8 @@ def test_a_slow_clip_gets_its_speed_and_is_muted_before_it_is_loaded(rig: Rig) -
     rig.parker.park(SOURCE, CLIP, speed_percent=50)
 
     assert rig.asked() == [
+        # Is it stopped? (Then it would need PLAY: see the stopped-source test.)
+        ("GetMediaInputStatus", None),
         ("GetInputSettings", None),
         ("SetInputMute", True),
         ("SetInputSettings", 50),
@@ -76,13 +78,50 @@ def test_a_slow_clip_gets_its_speed_and_is_muted_before_it_is_loaded(rig: Rig) -
     assert media.speed == 0.5
 
 
-def test_a_clip_can_be_parked_on_any_frame(rig: Rig) -> None:
-    rig.parker.park(SOURCE, CLIP, speed_percent=100, at_s=4.2)
+def test_a_clip_can_be_parked_on_a_keyframe(rig: Rig) -> None:
+    # The fake OBS, like the pipeline's clips since LIVESTACK-56, has a
+    # keyframe every 0.5 s; 4.0 s is one, so the seek lands exactly there.
+    rig.parker.park(SOURCE, CLIP, speed_percent=100, at_s=4.0)
 
     media = rig.fake.media_of(SOURCE)
-    assert media.cursor(rig.clock.monotonic()) == pytest.approx(4.2)
+    assert media.cursor(rig.clock.monotonic()) == pytest.approx(4.0)
     # At normal speed nothing about the sound is touched.
     assert rig.fake.requests_of("SetInputMute") == []
+
+
+def test_a_clip_loaded_into_a_stopped_source_is_sent_play(rig: Rig) -> None:
+    # After a take, playout stops the source it left. Real OBS does not
+    # start a file loaded into a stopped source (the probe on the studio
+    # PC, LIVESTACK-56): without PLAY the cue would wait 3 s and fail with
+    # "did not start ... OBS_MEDIA_STATE_STOPPED".
+    rig.parker.park(SOURCE, CLIP, speed_percent=100)
+    rig.client.trigger_media_input_action(SOURCE, MediaAction.STOP)
+    eventually(lambda: rig.fake.media_of(SOURCE).state == MediaState.STOPPED)
+    before = len(rig.fake.requests)
+
+    rig.parker.park(SOURCE, {**CLIP, "file_path": "/clips/2.mp4"}, speed_percent=100)
+
+    # PLAY right after the new file, then the usual pause on the first frame.
+    actions = [
+        record.data["mediaAction"]
+        for record in rig.fake.requests[before:]
+        if record.request_type == "TriggerMediaInputAction"
+    ]
+    assert actions == [MediaAction.PLAY, MediaAction.PAUSE]
+    media = rig.fake.media_of(SOURCE)
+    assert media.state == MediaState.PAUSED
+    assert media.file == "/clips/2.mp4"
+
+
+def test_a_playing_source_is_not_sent_play_after_loading(rig: Rig) -> None:
+    # A source that is playing (or empty) starts by itself on a new file;
+    # PLAY is only for one that was stopped.
+    rig.parker.park(SOURCE, CLIP, speed_percent=100)
+
+    actions = [
+        record.data["mediaAction"] for record in rig.fake.requests_of("TriggerMediaInputAction")
+    ]
+    assert MediaAction.PLAY not in actions
 
 
 def test_a_source_playout_muted_is_unmuted_at_normal_speed_again(rig: Rig) -> None:
@@ -160,3 +199,71 @@ def test_a_seek_obs_has_not_carried_out_is_sent_again(rig: Rig) -> None:
 
     assert ignored["count"] == 2
     assert result == [pytest.approx(3.0)]
+
+
+# --- seeking a playing source (slow-motion replays, LIVESTACK-56) ------------------------------
+
+
+def seek_while_playing(rig: Rig, at_s: float) -> float:
+    """Load CLIP, let it play, then `seek_playing` to `at_s`; returns where it landed.
+
+    The seek polls OBS on the fake clock, so it runs on its own thread while
+    the test moves time forward one poll at a time.
+    """
+    rig.parker.load(SOURCE, CLIP, 100, rig.clock.monotonic() + 3.0)
+    rig.clock.advance(1.0)
+    result: list[float] = []
+    finished = threading.Event()
+
+    def seek_in_background() -> None:
+        result.append(rig.parker.seek_playing(SOURCE, CLIP, at_s, 1.0, rig.clock.monotonic() + 3.0))
+        finished.set()
+
+    def between_polls() -> bool:
+        # Asleep in the short wait between two status reads, not inside a
+        # request (which waits up to 2 s for OBS's answer and must not see
+        # time move).
+        wake_ups = rig.clock.wake_up_times()
+        return bool(wake_ups) and wake_ups[0] <= rig.clock.monotonic() + POLL_SECONDS + 1e-6
+
+    worker = threading.Thread(target=seek_in_background)
+    worker.start()
+    while not finished.is_set():
+        eventually(lambda: between_polls() or finished.is_set())
+        if not finished.is_set():
+            rig.clock.advance(POLL_SECONDS)
+    worker.join(timeout=5)
+    (landed,) = result
+    return landed
+
+
+def test_a_seek_while_playing_lands_on_the_keyframe_before_and_says_where(rig: Rig) -> None:
+    # Asked for 6.3 s, OBS goes to the keyframe at 6.0 s (one every 0.5 s).
+    # That is a landing, not a failure: the replay starts there.
+    landed = seek_while_playing(rig, 6.3)
+
+    assert landed == pytest.approx(6.0, abs=0.001)
+    assert rig.fake.media_of(SOURCE).state == MediaState.PLAYING
+
+
+def test_a_seek_to_an_old_clip_with_far_keyframes_lands_seconds_early(
+    fake_clock: FakeClock,
+) -> None:
+    # Clips rendered before LIVESTACK-56 have a keyframe every 8.333 s. A
+    # replay aimed at 10 s starts at 8.333 s: early, but on air, not an error.
+    rig = Rig(fake_clock)
+    rig.fake.media_of(SOURCE).keyframe_interval_s = 8.333
+    try:
+        landed = seek_while_playing(rig, 10.0)
+    finally:
+        rig.client.close()
+
+    assert landed == pytest.approx(8.333, abs=0.001)
+
+
+def test_a_seek_to_a_keyframe_close_to_where_it_plays_counts_once_settled(rig: Rig) -> None:
+    # The source plays at about 1 s; the keyframe before 1.2 s is 1.0 s, so
+    # no jump shows. It counts as landed after SEEK_SETTLE_SECONDS.
+    landed = seek_while_playing(rig, 1.2)
+
+    assert landed == pytest.approx(1.0, abs=0.35)

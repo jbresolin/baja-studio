@@ -1,6 +1,6 @@
 import { PLAYOUT_KEY_LEGEND, TRANSPORT_KEY_LEGEND } from "../../lib/playout";
 
-/** The playout keyboard shortcuts, opened with `?`; the media-control keys say when they work. */
+/** The playout keyboard shortcuts, opened with `?`; the media-control keys need a clip on air. */
 export function KeyboardLegend({
   transportEnabled,
   onClose,
@@ -24,7 +24,7 @@ export function KeyboardLegend({
             <th colSpan={2}>
               Media controls{" "}
               <span className="muted">
-                {transportEnabled ? "(unlocked: these keys act on air)" : "(only while unlocked)"}
+                {transportEnabled ? "(these keys act on air)" : "(with a clip on air)"}
               </span>
             </th>
           </tr>

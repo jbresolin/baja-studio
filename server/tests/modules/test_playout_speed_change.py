@@ -20,7 +20,6 @@ from tests.modules.test_playout_transport import (
     LONGEST_STEP_WAIT_SECONDS,
     change_speed,
     on_air,
-    use_method,
 )
 
 
@@ -71,8 +70,8 @@ def program_source(playout: PlayoutStudio) -> str:
 def test_a_click_during_a_change_replaces_the_waiting_one_and_the_last_wish_wins(
     playout: PlayoutStudio,
 ) -> None:
-    # A change to 50 % is under way (waiting for program to reach the parked
-    # frame). Meanwhile someone clicks 100 %, then 25 %: each answers at once
+    # A change to 50 % is under way (waiting for OBS's seek in the other
+    # source to land). Meanwhile someone clicks 100 %, then 25 %: each answers at once
     # "queued", and only the last (25 %) is carried out after the first one.
     on_air(playout)
     playout.pass_time(1.0)
@@ -102,11 +101,11 @@ def test_a_click_during_a_change_replaces_the_waiting_one_and_the_last_wish_wins
     assert playout.state("speed_change") == {"changing": False, "target": None, "error": None}
 
 
-def test_a_change_obs_cannot_finish_in_2_s_cuts_nothing_and_says_so(
+def test_a_change_obs_cannot_finish_in_3_s_cuts_nothing_and_says_so(
     playout: PlayoutStudio,
 ) -> None:
     # The other source never starts the file (OBS hangs opening it): after
-    # 2 s the change gives up. Program never left the clip on air, which
+    # 3 s the change gives up. Program never left the clip on air, which
     # plays on at 100 %; the error is the command's and stays on the page.
     on_air(playout)
     playout.pass_time(1.0)
@@ -117,7 +116,7 @@ def test_a_change_obs_cannot_finish_in_2_s_cuts_nothing_and_says_so(
     with pytest.raises(CommandError, match="speed change failed, still at 100 %"):
         change_speed(playout, 50)
 
-    assert playout.clock.monotonic() - started_at == pytest.approx(2.0, abs=0.05)
+    assert playout.clock.monotonic() - started_at == pytest.approx(3.0, abs=0.05)
     assert len(playout.obs.timeline.program_cuts) == cuts_before
     assert playout.state("program.slot") == "a"
     assert playout.state("program.speed_percent") == 100
@@ -143,36 +142,42 @@ def test_the_next_change_clears_the_last_error(playout: PlayoutStudio) -> None:
     assert playout.state("program.speed_percent") == 50
 
 
-@pytest.mark.parametrize("method", ["swap", "reload"])
-def test_a_clip_about_to_end_is_not_changed_and_ends_normally(
-    playout: PlayoutStudio, method: str
+def test_going_back_to_100_too_close_to_the_end_is_refused_and_the_clip_ends_normally(
+    playout: PlayoutStudio,
 ) -> None:
-    # Less than the change needs is left of the clip: refused, nothing cut
-    # or reloaded, and the clip on air plays on to its end.
+    # Back to 100 % continues from about where the clip is; with less than a
+    # second of clip left that is refused: nothing cut or reloaded, and the
+    # slow clip on air plays on to its end.
     on_air(playout)
-    use_method(playout, method)
-    playout.command("transport", action="seek", position_s=9.9)
+    playout.pass_time(5.0)
+    change_speed(playout, 50)
+    slot = playout.state("program.slot")
+    source = "baja_program_a" if slot == "a" else "baja_program_b"
+    playout.command("transport", action="seek", position_s=9.5)
 
     with pytest.raises(CommandError, match="too close to the end"):
-        change_speed(playout, 50)
+        change_speed(playout, 100)
 
-    assert playout.state("program.speed_percent") == 100
-    assert playout.state("program.slot") == "a"
-    assert playout.obs.inputs["baja_program_a"].settings.get("speed_percent", 100) == 100
-    playout.pass_time(1.0)
-    assert playout.obs.media_of("baja_program_a").state == MediaState.ENDED
-    (aired,) = playout.command("export_aired")["entries"]
-    assert aired["ended_at"] is not None
+    assert playout.state("program.speed_percent") == 50
+    assert playout.state("program.slot") == slot
+    # Half a second of clip at half speed: it ends within a second of air.
+    playout.pass_time(1.5)
+    playout.soon(lambda: playout.obs.media_of(source).state == MediaState.ENDED)
+    # Playout hears of the end from OBS's event a moment later, and logs it.
+    playout.pass_time(0.5)
+    playout.soon(lambda: playout.command("export_aired")["entries"][0]["ended_at"] is not None)
 
 
-def test_a_clip_2_s_from_its_end_still_changes_by_swap(playout: PlayoutStudio) -> None:
-    # Bench: "a clip less than 2 s from its end". A swap needs only a
-    # quarter of a second ahead of program, so it is done, on the frame.
+def test_a_replay_near_the_end_still_jumps_back_and_plays(playout: PlayoutStudio) -> None:
+    # Bench: "a clip less than 2 s from its end". A replay goes 3 s back,
+    # so half a second before the end is no problem: from 6.5 s, slowly.
     on_air(playout)
-    playout.command("transport", action="seek", position_s=8.5)
+    playout.command("transport", action="seek", position_s=9.5)
 
     change_speed(playout, 50)
 
     assert playout.state("program.speed_percent") == 50
     assert playout.state("program.slot") == "b"
+    cursor = playout.obs.media_of("baja_program_b").cursor(playout.clock.monotonic())
+    assert 6.5 <= cursor <= 6.5 + 0.35
     assert playout.obs.timeline.black_on_program == []
