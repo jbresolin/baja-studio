@@ -1,11 +1,11 @@
 /**
  * Media controls for the clip on air (WP5c §3–4), under the program strip.
  *
- * They act on air, so they are locked until the operator holds "Unlock"
- * for two seconds; unlocked, the bar is marked LIVE in red and a Lock
- * button (or the clip leaving the air) locks it again. Unlocked, it offers
- * play/pause, restart, −5 s / +5 s, a scrub bar that shows where it will go
- * while dragged and seeks on release, and the speed on air (100 / 50 / 25 %).
+ * Always available while a clip is on air (João, 2026-11-14: the two-second
+ * hold-to-unlock went), marked LIVE in red because they act on air. They
+ * offer play/pause, restart, −5 s / +5 s, a scrub bar that shows where it
+ * will go while dragged and seeks on release, and the speed on air
+ * (100 / 50 / 25 %).
  *
  * OBS can only jump to keyframes (one every 0.5 s in clips rendered since
  * LIVESTACK-56), so seeks land up to half a second early and there is no
@@ -22,11 +22,10 @@
  * failed says why beside them (nothing was cut).
  */
 
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 
 import {
   formatPosition,
-  HOLD_TO_ENABLE_MS,
   NUDGE_SECONDS,
   REPLAY_SPEEDS,
   type ProgramView,
@@ -38,19 +37,10 @@ type Run = (command: string, args?: Record<string, unknown>) => Promise<unknown>
 interface MediaControlsProps {
   program: ProgramView;
   speedChange?: SpeedChangeView;
-  enabled: boolean;
-  onEnabledChange: (enabled: boolean) => void;
   run: Run;
 }
 
-export function MediaControls({
-  program,
-  speedChange,
-  enabled,
-  onEnabledChange,
-  run,
-}: MediaControlsProps) {
-  if (!enabled) return <HoldToUnlock onUnlocked={() => onEnabledChange(true)} />;
+export function MediaControls({ program, speedChange, run }: MediaControlsProps) {
   const paused = program.transport?.state === "paused";
   const speed = program.speed_percent ?? 100;
   const send = (args: Record<string, unknown>) => void run("transport", args);
@@ -80,16 +70,13 @@ export function MediaControls({
       </button>
       <button
         aria-label={`Forward ${NUDGE_SECONDS} s`}
-        title="L"
+        title={`Forward ${NUDGE_SECONDS} s`}
         onClick={() => send({ action: "nudge", seconds: NUDGE_SECONDS })}
       >
         +{NUDGE_SECONDS} s
       </button>
       <ScrubBar program={program} onSeek={(position_s) => send({ action: "seek", position_s })} />
       <SpeedButtons speed={speed} speedChange={speedChange} run={run} />
-      <button className="small" onClick={() => onEnabledChange(false)}>
-        Lock
-      </button>
     </div>
   );
 }
@@ -196,53 +183,5 @@ function ScrubBar({
         {formatPosition(position)}
       </span>
     </span>
-  );
-}
-
-/** "Hold to unlock": press and hold two seconds (mouse, touch or Enter); letting go earlier does nothing. */
-function HoldToUnlock({ onUnlocked }: { onUnlocked: () => void }) {
-  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const [holding, setHolding] = useState(false);
-  const cancel = () => {
-    if (timer.current !== null) clearTimeout(timer.current);
-    timer.current = null;
-    setHolding(false);
-  };
-  const start = () => {
-    cancel();
-    setHolding(true);
-    timer.current = setTimeout(() => {
-      timer.current = null;
-      setHolding(false);
-      onUnlocked();
-    }, HOLD_TO_ENABLE_MS);
-  };
-  useEffect(
-    () => () => {
-      if (timer.current !== null) clearTimeout(timer.current);
-    },
-    [],
-  );
-  return (
-    <div className="media-controls locked">
-      <button
-        className={holding ? "hold-to-unlock holding" : "hold-to-unlock"}
-        style={{ "--hold-ms": `${HOLD_TO_ENABLE_MS}ms` } as React.CSSProperties}
-        onPointerDown={start}
-        onPointerUp={cancel}
-        onPointerLeave={cancel}
-        onKeyDown={(event) => {
-          // Enter only: Space anywhere on the page is Take.
-          if (event.key === "Enter" && !event.repeat) {
-            event.preventDefault();
-            start();
-          }
-        }}
-        onKeyUp={cancel}
-      >
-        {holding ? "Keep holding…" : "Hold to unlock media controls"}
-      </button>
-      <span className="muted">They act on the clip on air.</span>
-    </div>
   );
 }

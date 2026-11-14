@@ -8,8 +8,8 @@
  * on-air action that failed, auto-play falling back) arrive as `notice` and
  * show as a toast on every page.
  *
- * Under the strip, the media controls for the clip on air (WP5c), locked
- * until held for two seconds, then a one-line "message hosts" box (WP9)
+ * Under the strip, the media controls for the clip on air (WP5c), always
+ * available while a clip is on air, then a one-line "message hosts" box (WP9)
  * that sends to the hosts screen without leaving the page. The gear opens
  * Playout → Settings.
  *
@@ -55,16 +55,14 @@ export function PlayoutPage() {
   const [tab, setTab] = useState<Tab>("library");
   const [error, setError] = useState<string | null>(null);
   const [confirmAsked, setConfirmAsked] = useState(false);
-  // Media controls unlocked for this airing (the started_at of the clip on air).
-  const [unlockedFor, setUnlockedFor] = useState<string | null>(null);
   // The id of the server's notice already seen (undefined until the first
   // state arrives), so each notice toasts once.
   const seenNotice = useRef<number | null | undefined>(undefined);
   const loaded = state !== undefined;
   const notice = state?.notice ?? null;
   const program = state?.program ?? null;
-  // A clip leaving the air (or the next one taking over) locks the controls again.
-  const transportEnabled = program !== null && unlockedFor === program.started_at;
+  // The media-control keys (K, J) act whenever a clip is on air.
+  const transportEnabled = program !== null;
 
   useEffect(() => {
     if (!loaded) return;
@@ -113,11 +111,7 @@ export function PlayoutPage() {
     else if (action === "return") void run("return_to_scene");
     else if (action === "replay_last") void run("replay_last");
     else if (action === "toggle_legend") setLegendOpen((open) => !open);
-    else if (
-      action === "transport_toggle" ||
-      action === "transport_back" ||
-      action === "transport_forward"
-    )
+    else if (action === "transport_toggle" || action === "transport_back")
       void run("transport", transportArgs(action));
     else if (action === "focus_search") {
       setTab("library");
@@ -155,15 +149,7 @@ export function PlayoutPage() {
     <div className="playout-page">
       <ProgramStrip state={state} />
       {state.program && (
-        <MediaControls
-          program={state.program}
-          speedChange={state.speed_change}
-          enabled={transportEnabled}
-          onEnabledChange={(enabled) =>
-            setUnlockedFor(enabled ? (state.program?.started_at ?? null) : null)
-          }
-          run={run}
-        />
+        <MediaControls program={state.program} speedChange={state.speed_change} run={run} />
       )}
       <HostsSendBox onError={setError} />
       <div className="playout-status-row">

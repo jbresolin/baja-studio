@@ -10,9 +10,10 @@ playout page and *Playout setup* in the top bar). The generic Settings page
 now shows playout's JSON only, with a link there.
 
 The media controls are under the program strip while a clip is on air.
-They are locked: hold **Hold to unlock media controls** for two seconds
-(mouse, touch, or Enter held). Unlocked, the bar is red and marked LIVE;
-**Lock**, or the next clip going to air, locks it again.
+They are always available there (the two-second hold-to-unlock was removed,
+2026-11-14), red and marked LIVE because they act on air. `K` pauses/plays
+and `J` goes back 5 s whenever a clip is on air; `L` stays *Replay last*,
+so +5 s is the button only.
 
 Without OBS: `python -m baja_studio.fakes.fake_obs --port 4455 --password P`
 (it reopens a file when its speed changes, which is what step 6 checks on
@@ -26,7 +27,7 @@ real OBS).
 | 2 | Folders: receiver root `E:\clips`; add `E:\clips\patrocinadores` labelled `Patrocinadores`. Save. | The sponsor files are grouped under *Patrocinadores* (not *Unmatched*); other files of the root without a manifest entry stay *Unmatched*. |
 | 3 | Playlist: *Edit* an existing playlist. Search the library box and *Add* a clip; ✕ one; drag one up (and ▲/▼); rename; Save; *Queue*. | Each clip change applies at once (no recreating); the queue follows the new order and name. The command log shows each `playlist_update`. |
 | 4 | Playout setup → **Rescan library**. | "n of N files measured" counts up to "Rescan done"; durations and thumbnails come back (thumbnails briefly missing meanwhile). |
-| 5 | Take a clip. Unlock the media controls. Pause (or `K`), scrub (drag shows "→ m:ss.t", seek on release), `J`/`L` ±5 s, Play. Repeat with auto-play next on and a clip queued. | Watch program: no black or flash on pause, seek or resume. Seeks land on the keyframe before the point asked for (within 0.5 s on clips rendered since LIVESTACK-56). The strip says *paused* while paused. A pause never starts the next clip and never runs on-air *end* actions; resuming continues the same airing. `L` is ±5 s only while unlocked (Replay last otherwise). There is no frame step (LIVESTACK-56). |
+| 5 | Take a clip. Pause (or `K`), scrub (drag shows "→ m:ss.t", seek on release), `J` / the +5 s button, Play. Repeat with auto-play next on and a clip queued. | Watch program: no black or flash on pause, seek or resume. Seeks land on the keyframe before the point asked for (within 0.5 s on clips rendered since LIVESTACK-56). The strip says *paused* while paused. A pause never starts the next clip and never runs on-air *end* actions; resuming continues the same airing. `L` is always Replay last. There is no frame step (LIVESTACK-56). |
 | 6 | Replay at 50 %: pick *50 %* under the preview, Cue, Take. | Cued at 50 %: half speed from the first frame, clip sound muted; the next cue is at 100 % again, with sound. |
 
 ## Also worth noting
@@ -63,7 +64,7 @@ line per change: "replay from 12.00 s, aimed 12.10 s", or "continue …".
 
 | # | Do | Expect / record |
 |---|---|---|
-| 7 | A clip rendered after LIVESTACK-56, taken at 100 %. About 6 s in, unlock the media controls and press *50 %*. | Program cuts (no black) to about 3 s earlier, playing at half speed, muted. Record the INFO line ("replay from … aimed …"): the two within 0.5 s. |
+| 7 | A clip rendered after LIVESTACK-56, taken at 100 %. About 6 s in, press *50 %* in the media controls. | Program cuts (no black) to about 3 s earlier, playing at half speed, muted. Record the INFO line ("replay from … aimed …"): the two within 0.5 s. |
 | 8 | Then *100 %*; later *25 %*; then *50 %*; then *100 %*. Include a rapid double click. | 100 %: continues from about where it was (at most half a second repeats), sound back. 25 % from 100 %: a replay again (jumps back). 50 % from 25 %: continues, no jump. Each takes effect; buttons say "changing…" while one runs, and a double click makes one change. Nothing about "did not start" or "did not move". |
 | 9 | Paused on air, press *25 %*. Then Play. | The replay is ready about 3 s earlier, still paused; Play starts it slowly. |
 | 10 | Near the end: replay (*50 %*) half a second before the end; then, at 50 %, *100 %* less than a second before the end. | The replay works (jumps back 3 s). The 100 % is refused: "too close to the end of the clip" beside the buttons; the clip ends normally (post-clip / auto-play as usual). |

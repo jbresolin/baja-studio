@@ -349,7 +349,7 @@ export function groupLibrary(
   }));
 }
 
-export type TransportKeyAction = "transport_toggle" | "transport_back" | "transport_forward";
+export type TransportKeyAction = "transport_toggle" | "transport_back";
 
 export type PlayoutKeyAction =
   | "take"
@@ -374,16 +374,14 @@ export const PLAYOUT_KEY_LEGEND: [string, string][] = [
   ["?", "Show or hide this legend"],
 ];
 
-/** Keys that work only while the media controls are unlocked (they act on air). */
+/** Keys that act on the clip on air (whenever one is). L stays Replay last; +5 s is a button. */
 export const TRANSPORT_KEY_LEGEND: [string, string][] = [
   ["K", "Pause / play the clip on air"],
-  ["J / L", "Back / forward 5 s (L is not Replay last while unlocked)"],
+  ["J", "Back 5 s"],
 ];
 
 /** Seconds a −5 s / +5 s press moves. */
 export const NUDGE_SECONDS = 5;
-/** How long the unlock control must be held before the media controls work. */
-export const HOLD_TO_ENABLE_MS = 2000;
 /** The replay speeds offered, in percent of normal. */
 export const REPLAY_SPEEDS = [100, 50, 25] as const;
 
@@ -394,8 +392,6 @@ export function transportArgs(action: TransportKeyAction): Record<string, unknow
       return { action: "toggle" };
     case "transport_back":
       return { action: "nudge", seconds: -NUDGE_SECONDS };
-    case "transport_forward":
-      return { action: "nudge", seconds: NUDGE_SECONDS };
   }
 }
 
@@ -407,9 +403,6 @@ function transportKeyAction(key: string): TransportKeyAction | null {
     case "j":
     case "J":
       return "transport_back";
-    case "l":
-    case "L":
-      return "transport_forward";
     default:
       return null;
   }
@@ -417,10 +410,11 @@ function transportKeyAction(key: string): TransportKeyAction | null {
 
 /**
  * Which action a key press means, or null. Nothing fires while the operator
- * types in a field (`targetIsEditable`), or with Ctrl/Alt/Meta held. With
- * the media controls unlocked (`transportEnabled`), K, J and L drive the
- * clip on air, and L is no longer "Replay last". (There is no frame step:
- * OBS can only jump to keyframes, LIVESTACK-56.)
+ * types in a field (`targetIsEditable`), or with Ctrl/Alt/Meta held. With a
+ * clip on air (`transportEnabled`), K pauses/plays it and J goes back 5 s.
+ * L is always "Replay last" (as in the 2026 tool), so +5 s has no key, only
+ * its button. (There is no frame step: OBS can only jump to keyframes,
+ * LIVESTACK-56.)
  */
 export function playoutKeyAction(event: {
   key: string;
