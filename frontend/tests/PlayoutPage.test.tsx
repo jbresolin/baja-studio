@@ -674,9 +674,8 @@ describe("media controls for the clip on air (WP5c)", () => {
     expect(sent().map((command) => command.args)).toEqual([{ action: "seek", position_s: 6.4 }]);
   });
 
-  it("K and J act on air; L stays Replay last; comma and period do nothing", () => {
-    // With the lock gone, L could not be both "+5 s" and "Replay last" (the
-    // 2026 key): it stays Replay last, and +5 s is the button only.
+  it("K, J and L act on air; comma and period do nothing", () => {
+    // João, 2026-11-14: L is +5 s; Replay last is its on-screen button only.
     showPlayoutPage(onAirState("paused"));
 
     act(() => {
@@ -686,8 +685,20 @@ describe("media controls for the clip on air (WP5c)", () => {
     expect(sent().map(({ command, args }) => ({ command, args }))).toEqual([
       { command: "transport", args: { action: "toggle" } },
       { command: "transport", args: { action: "nudge", seconds: -5 } },
-      { command: "replay_last", args: {} },
+      { command: "transport", args: { action: "nudge", seconds: 5 } },
     ]);
+  });
+
+  it("Replay last is the program panel's button, not a key", () => {
+    showPlayoutPage();
+
+    act(() => {
+      fireEvent.keyDown(window, { key: "l" });
+    });
+    expect(sent()).toEqual([]);
+
+    fireEvent.click(screen.getByRole("button", { name: "Replay last" }));
+    expect(sent().map((command) => command.command)).toEqual(["replay_last"]);
   });
 
   it("stay available when the next clip goes to air", () => {

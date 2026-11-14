@@ -70,7 +70,7 @@ export function MediaControls({ program, speedChange, run }: MediaControlsProps)
       </button>
       <button
         aria-label={`Forward ${NUDGE_SECONDS} s`}
-        title={`Forward ${NUDGE_SECONDS} s`}
+        title="L"
         onClick={() => send({ action: "nudge", seconds: NUDGE_SECONDS })}
       >
         +{NUDGE_SECONDS} s

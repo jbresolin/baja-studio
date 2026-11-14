@@ -349,14 +349,13 @@ export function groupLibrary(
   }));
 }
 
-export type TransportKeyAction = "transport_toggle" | "transport_back";
+export type TransportKeyAction = "transport_toggle" | "transport_back" | "transport_forward";
 
 export type PlayoutKeyAction =
   | "take"
   | "skip"
   | "drop_next"
   | "return"
-  | "replay_last"
   | "remove_selected"
   | "focus_search"
   | "toggle_legend"
@@ -368,16 +367,15 @@ export const PLAYOUT_KEY_LEGEND: [string, string][] = [
   ["→", "Skip: end the clip on air now, as if it had finished"],
   ["Shift+→ / Backspace", "Drop the next clip (the cued one, else the head of the queue)"],
   ["R", "Return to the return scene"],
-  ["L", "Replay last clip"],
   ["Delete", "Remove selected queue entries"],
   ["/", "Search the library"],
   ["?", "Show or hide this legend"],
 ];
 
-/** Keys that act on the clip on air (whenever one is). L stays Replay last; +5 s is a button. */
+/** Keys that act on the clip on air (whenever one is). */
 export const TRANSPORT_KEY_LEGEND: [string, string][] = [
   ["K", "Pause / play the clip on air"],
-  ["J", "Back 5 s"],
+  ["J / L", "Back / forward 5 s"],
 ];
 
 /** Seconds a −5 s / +5 s press moves. */
@@ -392,6 +390,8 @@ export function transportArgs(action: TransportKeyAction): Record<string, unknow
       return { action: "toggle" };
     case "transport_back":
       return { action: "nudge", seconds: -NUDGE_SECONDS };
+    case "transport_forward":
+      return { action: "nudge", seconds: NUDGE_SECONDS };
   }
 }
 
@@ -403,6 +403,9 @@ function transportKeyAction(key: string): TransportKeyAction | null {
     case "j":
     case "J":
       return "transport_back";
+    case "l":
+    case "L":
+      return "transport_forward";
     default:
       return null;
   }
@@ -411,10 +414,10 @@ function transportKeyAction(key: string): TransportKeyAction | null {
 /**
  * Which action a key press means, or null. Nothing fires while the operator
  * types in a field (`targetIsEditable`), or with Ctrl/Alt/Meta held. With a
- * clip on air (`transportEnabled`), K pauses/plays it and J goes back 5 s.
- * L is always "Replay last" (as in the 2026 tool), so +5 s has no key, only
- * its button. (There is no frame step: OBS can only jump to keyframes,
- * LIVESTACK-56.)
+ * clip on air (`transportEnabled`), K pauses/plays it and J / L go back /
+ * forward 5 s. Replay last has no key (João, 2026-11-14): only its button
+ * on the program panel. (There is no frame step: OBS can only jump to
+ * keyframes, LIVESTACK-56.)
  */
 export function playoutKeyAction(event: {
   key: string;
@@ -441,9 +444,6 @@ export function playoutKeyAction(event: {
     case "r":
     case "R":
       return "return";
-    case "l":
-    case "L":
-      return "replay_last";
     case "Delete":
       return "remove_selected";
     case "/":

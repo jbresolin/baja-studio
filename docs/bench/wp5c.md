@@ -12,8 +12,8 @@ now shows playout's JSON only, with a link there.
 The media controls are under the program strip while a clip is on air.
 They are always available there (the two-second hold-to-unlock was removed,
 2026-11-14), red and marked LIVE because they act on air. `K` pauses/plays
-and `J` goes back 5 s whenever a clip is on air; `L` stays *Replay last*,
-so +5 s is the button only.
+and `J` / `L` go back / forward 5 s whenever a clip is on air. *Replay last*
+has no key any more: it is the program panel's button only.
 
 Without OBS: `python -m baja_studio.fakes.fake_obs --port 4455 --password P`
 (it reopens a file when its speed changes, which is what step 6 checks on
@@ -27,7 +27,7 @@ real OBS).
 | 2 | Folders: receiver root `E:\clips`; add `E:\clips\patrocinadores` labelled `Patrocinadores`. Save. | The sponsor files are grouped under *Patrocinadores* (not *Unmatched*); other files of the root without a manifest entry stay *Unmatched*. |
 | 3 | Playlist: *Edit* an existing playlist. Search the library box and *Add* a clip; ✕ one; drag one up (and ▲/▼); rename; Save; *Queue*. | Each clip change applies at once (no recreating); the queue follows the new order and name. The command log shows each `playlist_update`. |
 | 4 | Playout setup → **Rescan library**. | "n of N files measured" counts up to "Rescan done"; durations and thumbnails come back (thumbnails briefly missing meanwhile). |
-| 5 | Take a clip. Pause (or `K`), scrub (drag shows "→ m:ss.t", seek on release), `J` / the +5 s button, Play. Repeat with auto-play next on and a clip queued. | Watch program: no black or flash on pause, seek or resume. Seeks land on the keyframe before the point asked for (within 0.5 s on clips rendered since LIVESTACK-56). The strip says *paused* while paused. A pause never starts the next clip and never runs on-air *end* actions; resuming continues the same airing. `L` is always Replay last. There is no frame step (LIVESTACK-56). |
+| 5 | Take a clip. Pause (or `K`), scrub (drag shows "→ m:ss.t", seek on release), `J`/`L` ±5 s, Play. Repeat with auto-play next on and a clip queued. | Watch program: no black or flash on pause, seek or resume. Seeks land on the keyframe before the point asked for (within 0.5 s on clips rendered since LIVESTACK-56). The strip says *paused* while paused. A pause never starts the next clip and never runs on-air *end* actions; resuming continues the same airing. `L` never replays the last clip (that is the *Replay last* button). There is no frame step (LIVESTACK-56). |
 | 6 | Replay at 50 %: pick *50 %* under the preview, Cue, Take. | Cued at 50 %: half speed from the first frame, clip sound muted; the next cue is at 100 % again, with sound. |
 
 ## Also worth noting

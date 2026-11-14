@@ -109,9 +109,12 @@ export function PlayoutPage() {
     else if (action === "skip") void run("skip");
     else if (action === "drop_next") void run("drop_next");
     else if (action === "return") void run("return_to_scene");
-    else if (action === "replay_last") void run("replay_last");
     else if (action === "toggle_legend") setLegendOpen((open) => !open);
-    else if (action === "transport_toggle" || action === "transport_back")
+    else if (
+      action === "transport_toggle" ||
+      action === "transport_back" ||
+      action === "transport_forward"
+    )
       void run("transport", transportArgs(action));
     else if (action === "focus_search") {
       setTab("library");

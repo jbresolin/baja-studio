@@ -60,10 +60,10 @@ playout asks, with timestamps:
    The scrub bar and ±5 s stay, landing on keyframes.
 7. **The media controls have no lock** (João, 2026-11-14): the two-second
    hold-to-unlock and the Lock button are gone; the controls are there,
-   marked LIVE, whenever a clip is on air. `K` (pause/play) and `J` (−5 s)
-   act whenever a clip is on air. `L` could no longer be both +5 s and
-   *Replay last* (its key since the 2026 tool), so it stays Replay last
-   and +5 s is the button only.
+   marked LIVE, whenever a clip is on air. `K` (pause/play) and `J` / `L`
+   (−5 s / +5 s) act whenever a clip is on air. `L` could no longer be
+   both +5 s and *Replay last* (its key since the 2026 tool); João chose
+   +5 s, so Replay last is the program panel's button only, with no key.
 8. **Too close to the end**: a change whose aimed point is less than 1 s
    from the end is refused (a replay goes back, so it is refused only on very
    short clips; a continue near the end is the usual case).
