@@ -741,6 +741,19 @@ kbd {
   color: var(--accent);
 }
 
+/* Section tabs of a setup page (Audio setup): shown at every width. */
+.config-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem;
+  margin: 0.75rem 0;
+}
+
+.config-tabs button.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .playout-columns {
   display: grid;
   grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr) minmax(0, 1fr);
