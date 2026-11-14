@@ -146,6 +146,20 @@ class ObsWebsocketClient(ObsRequestsMixin):
         session = self._session
         return session is not None and session.identified and session.failure is None
 
+    @property
+    def requests_in_flight(self) -> int:
+        """How many requests are sent and still waiting for OBS's answer.
+
+        Tests on a fake clock move time only when this is 0: a request waits
+        on the same clock, and time moved while OBS is still answering
+        would time it out.
+        """
+        session = self._session
+        if session is None:
+            return 0
+        with session.lock:
+            return len(session.pending)
+
     def add_event_listener(self, listener: EventListener) -> None:
         """Call `listener(event_type, event_data)` for every event, on the reader thread.
 

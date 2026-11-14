@@ -236,6 +236,24 @@ def test_a_request_obs_never_answers_times_out_on_the_fake_clock(fake_clock: Fak
     client.close()
 
 
+def test_requests_in_flight_counts_requests_still_waiting_for_obs(fake_clock: FakeClock) -> None:
+    # Tests on a fake clock move time only when nothing waits for OBS (a
+    # request waits on that same clock and would time out). So the client
+    # says how many requests are sent and not yet answered.
+    client = ObsWebsocketClient(fake_clock, lambda address, timeout: SilentTransport())
+    client.connect(ADDRESS, "")
+    assert client.requests_in_flight == 0
+
+    thread, _ = run_in_thread(client.get_version)
+    eventually(lambda: client.requests_in_flight == 1, "the request never went out")
+
+    # Timed out (OBS never answers), it is no longer in flight.
+    fake_clock.advance(2.0)
+    thread.join(5.0)
+    assert client.requests_in_flight == 0
+    client.close()
+
+
 def test_events_reach_every_listener(client: ObsWebsocketClient, fake_obs: FakeObs) -> None:
     # Two listeners are registered; the fake changes the program scene, which
     # OBS announces with a CurrentProgramSceneChanged event.
