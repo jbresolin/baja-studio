@@ -15,8 +15,15 @@ it reads like the file it came from. What changed on the way:
 - The link matrix is not a setting any more; it seeds the `audio_links`
   table instead (`LINKS` below, see `audio/stores.py`), changed from 2026's
   for the hosts' personal mixes (WP9b).
+- The macros and the link matrix follow a `Patch`: which channel is which
+  seat's microphone, which are production microphones, which other inputs
+  are part of the main mix (2026-11-14 bench: the studio's desk has the
+  hosts on channels 5-8, so macros written for the 2026 patch held the
+  hosts' sends closed). A fresh install uses `PATCH_2026`; Audio setup's
+  "Restore defaults…" uses the patch of the saved settings (`audio/patch.py`).
 """
 
+from dataclasses import dataclass, field
 from typing import Any
 
 COLOURS = {
@@ -74,6 +81,44 @@ def knobs() -> dict[str, Any]:
     return {str(strip): {"target": "aux_send"} for strip in range(1, 9)}
 
 
+@dataclass(frozen=True)
+class Patch:
+    """Which input is what, as far as the default macros and links need to know.
+
+    - `seats`: (seat id 1-4, microphone channel, in-ear bus) of each seat with
+      a microphone; seats 1-2 are the hosts, 3-4 the guests.
+    - `production`: the production microphones, PROD 1 first.
+    - `others`: the other inputs of the main mix (a shotgun, a camera's
+      sound, PC AUDIO): the in-ears copy them too.
+    """
+
+    seats: tuple[tuple[int, str, str], ...]
+    production: tuple[str, ...]
+    others: tuple[str, ...]
+    production_bus: str = "bus5"
+    talkback_bus: str = "bus6"
+    hosts: tuple[int, ...] = field(default=(1, 2))
+
+    def in_ear_buses(self) -> tuple[str, ...]:
+        """Every seat's in-ear bus, seat order."""
+        return tuple(bus for _seat, _channel, bus in self.seats)
+
+    def host_buses(self) -> tuple[str, ...]:
+        """The in-ear buses of the hosts (seats 1-2): "Prod N → Hosts" opens these."""
+        return tuple(bus for seat, _channel, bus in self.seats if seat in self.hosts)
+
+
+# The 2026 event's patch: HOST 1-2 and GUEST 1-2 on 1-4, PROD 1-4 on 5-8,
+# the shotgun on 9, PC AUDIO on the stereo return.
+PATCH_2026 = Patch(
+    seats=((1, "1", "bus1"), (2, "2", "bus2"), (3, "3", "bus3"), (4, "4", "bus4")),
+    production=("5", "6", "7", "8"),
+    others=("9", "aux"),
+)
+# The seats' microphones and the in-ear bus each one feeds, in the 2026 patch.
+SEAT_CHANNELS = {channel: bus for _seat, channel, bus in PATCH_2026.seats}
+
+
 def _points(channel: str, *buses: str) -> list[dict[str, str]]:
     return [{"channel": channel, "bus": bus} for bus in buses]
 
@@ -88,22 +133,20 @@ def _route(
     return {"id": macro_id, "label": label, "color": colour, "on_steps": [on], "off_steps": [off]}
 
 
-# The seats' microphones and the in-ear bus each one feeds (HOST 1-2, GUEST 1-2).
-SEAT_CHANNELS = {"1": "bus1", "2": "bus2", "3": "bus3", "4": "bus4"}
-
-
-def _talk_to_production(macro_id: str, label: str, colour: str, channel: str) -> dict[str, Any]:
+def _talk_to_production(
+    macro_id: str, label: str, colour: str, channel: str, others: list[str]
+) -> dict[str, Any]:
     """A seat talks to production off air (WP9b, ADR 0013 decision 8).
 
     On: the channel leaves the main mix (LR assign off, the fader untouched),
-    and the other seats stop hearing it: their in-ear sends are paused, then
-    closed with stored levels (paused first, so nothing re-mirrors them).
-    The seat's own in-ears and buses 5-6 stay linked, so the host hears
-    themselves and production and the camera operator hear them.
+    and the other seats stop hearing it: their in-ear sends (`others`) are
+    paused, then closed with stored levels (paused first, so nothing
+    re-mirrors them). The seat's own in-ears and the production and talkback
+    buses stay linked, so the host hears themselves and production and the
+    camera operator hear them.
     Off: back on LR; the other seats' sends restored, then linked again
     (back to the fader plus their offsets).
     """
-    others = [bus for seat, bus in SEAT_CHANNELS.items() if seat != channel]
     points = _points(channel, *others)
     pause = [
         {"op": "set_link", "channel": channel, "bus": bus, "state": "paused"} for bus in others
@@ -128,77 +171,90 @@ def _talk_to_production(macro_id: str, label: str, colour: str, channel: str) ->
     }
 
 
-def macros() -> list[dict[str, Any]]:
-    """The 2026 macros (ids kept for the D200 profile), plus PROD 3's and the guests'."""
-    return [
-        # A seat talks to production only: off the main mix while on.
-        _talk_to_production("host1-talk-prod", "Host 1 → Prod", "#e74c3c", "1"),
-        _talk_to_production("host2-talk-prod", "Host 2 → Prod", "#e67e22", "2"),
-        _talk_to_production("guest1-talk-prod", "Guest 1 → Prod", "#f1c40f", "3"),
-        _talk_to_production("guest2-talk-prod", "Guest 2 → Prod", "#2ecc71", "4"),
-        # A producer talks into both hosts' in-ears.
+# Seat id → the id, label and colour of its "talk to production" macro.
+TALK_TO_PRODUCTION = {
+    1: ("host1-talk-prod", "Host 1 → Prod", "#e74c3c"),
+    2: ("host2-talk-prod", "Host 2 → Prod", "#e67e22"),
+    3: ("guest1-talk-prod", "Guest 1 → Prod", "#f1c40f"),
+    4: ("guest2-talk-prod", "Guest 2 → Prod", "#2ecc71"),
+}
+# PROD N (1-3) → the ids of its "→ Hosts", "Go Live" and "→ Cam" macros, and its
+# colour. The odd ids are 2026's: the D200 profile calls them.
+PRODUCTION_MACROS = (
+    ("prod1-talk-hosts", "macro-1774582227201", "macro-1774582749617", "#3498db"),
+    ("macro-1774581643177", "macro-1774582340101", "macro-1774582877605", "#9b59b6"),
+    ("prod3-talk-hosts", "prod3-go-live", "prod3-talk-cam", "#1abc9c"),
+)
+
+
+def macros(patch: Patch = PATCH_2026) -> list[dict[str, Any]]:
+    """The default macros for `patch` (ids kept for the D200 profile).
+
+    Every seat with a microphone gets "talk to production"; PROD 1-3 get
+    "→ Hosts" (into the hosts' in-ears), "Go Live" (onto the main mix) and
+    "→ Cam" (into the camera operator's bus).
+    """
+    talk = []
+    for seat, channel, own_bus in patch.seats:
+        macro_id, label, colour = TALK_TO_PRODUCTION[seat]
+        others = [bus for bus in patch.in_ear_buses() if bus != own_bus]
+        talk.append(_talk_to_production(macro_id, label, colour, channel, others))
+    producers = list(zip(PRODUCTION_MACROS, patch.production, strict=False))
+    to_hosts = [
         _route(
-            "prod1-talk-hosts",
-            "Prod 1 → Hosts",
-            "#3498db",
-            "5",
-            "bus1",
-            "bus2",
-            closed_when_on=False,
-        ),
-        _route(
-            "macro-1774581643177",
-            "Prod 2 → Hosts",
-            "#9b59b6",
-            "6",
-            "bus1",
-            "bus2",
-            closed_when_on=False,
-        ),
-        _route(
-            "prod3-talk-hosts",
-            "Prod 3 → Hosts",
-            "#1abc9c",
-            "7",
-            "bus1",
-            "bus2",
-            closed_when_on=False,
-        ),
-        # A producer goes on air.
-        _route(
-            "macro-1774582227201", "Prod 1 Go Live", "#3498db", "5", "main", closed_when_on=False
-        ),
-        _route(
-            "macro-1774582340101", "Prod 2 Go Live", "#9b59b6", "6", "main", closed_when_on=False
-        ),
-        _route("prod3-go-live", "Prod 3 Go Live", "#1abc9c", "7", "main", closed_when_on=False),
-        # A producer talks to the camera operator.
-        _route("macro-1774582749617", "Prod 1 → Cam", "#3498db", "5", "bus6", closed_when_on=False),
-        _route("macro-1774582877605", "Prod 2 → Cam", "#9b59b6", "6", "bus6", closed_when_on=False),
-        _route("prod3-talk-cam", "Prod 3 → Cam", "#1abc9c", "7", "bus6", closed_when_on=False),
+            ids[0], f"Prod {n} → Hosts", ids[3], channel, *patch.host_buses(), closed_when_on=False
+        )
+        for n, (ids, channel) in enumerate(producers, start=1)
+        if patch.host_buses()
     ]
+    go_live = [
+        _route(ids[1], f"Prod {n} Go Live", ids[3], channel, "main", closed_when_on=False)
+        for n, (ids, channel) in enumerate(producers, start=1)
+    ]
+    to_cam = [
+        _route(ids[2], f"Prod {n} → Cam", ids[3], channel, patch.talkback_bus, closed_when_on=False)
+        for n, (ids, channel) in enumerate(producers, start=1)
+    ]
+    return [*talk, *to_hosts, *go_live, *to_cam]
 
 
 # The link matrix a fresh install starts with (an existing install keeps its
 # own until Audio setup → Link matrix → "Restore defaults…"). A missing pair is
 # "unlinked"; in 2026 a missing entry silently meant "linked" (ADR 0006).
 #
-# - The in-ear buses 1-4 are a copy of the main mix plus each seat's offsets
+# - The in-ear buses are a copy of the main mix plus each seat's offsets
 #   (LIVESTACK-34 topology), so every source of the main mix (the seats'
-#   microphones, the shotgun and PC AUDIO) is linked to them; 2026 left out
-#   PC AUDIO and the shotgun on buses 2-3.
-# - The production microphones (PROD 1-4) are not main sources and are never
-#   linked into the in-ears: they reach one only when production speaks to a
-#   host ("Prod N → Hosts", which then reopens them at their stored level).
-#   2026 linked them to buses 1-4.
-# - Buses 5-6 are 2026's: the production loop is main plus the production
-#   microphones.
-IEM_BUSES = ("bus1", "bus2", "bus3", "bus4")
-_FOLLOW_IEMS = dict.fromkeys(IEM_BUSES, "linked")
-LINKS: dict[str, dict[str, str]] = {
-    **{channel: {**_FOLLOW_IEMS, "bus5": "linked", "bus6": "linked"} for channel in SEAT_CHANNELS},
-    **{channel: {"bus5": "paused", "bus6": "paused"} for channel in ("5", "6")},
-    **{channel: {"bus5": "linked", "bus6": "linked"} for channel in ("7", "8")},
-    "9": {**_FOLLOW_IEMS, "bus5": "linked"},
-    "aux": dict(_FOLLOW_IEMS),
-}
+#   microphones and the other inputs of the main mix) is linked to them.
+# - The production microphones are not main sources and are never linked
+#   into the in-ears: they reach one only when production speaks to a host
+#   ("Prod N → Hosts", which reopens them at their stored level). They are
+#   *paused* on the production and talkback buses: kept at their own level
+#   there, not following a main fader that is down while they are off air.
+#   (2026 had PROD 3-4 linked there, so production heard them only on air.)
+# - The production bus is main plus the production microphones: the seats and
+#   the other main inputs, except PC AUDIO (clip sound), as in 2026.
+# - The talkback bus (camera op) hears the seats, as in 2026.
+CLIP_SOUND = "aux"
+
+
+def links(patch: Patch = PATCH_2026) -> dict[str, dict[str, str]]:
+    """The default link matrix for `patch`: channel → {bus: "linked" | "paused"}."""
+    follow_in_ears = dict.fromkeys(patch.in_ear_buses(), "linked")
+    matrix: dict[str, dict[str, str]] = {}
+    for _seat, channel, _bus in patch.seats:
+        matrix[channel] = {
+            **follow_in_ears,
+            patch.production_bus: "linked",
+            patch.talkback_bus: "linked",
+        }
+    for channel in patch.production:
+        matrix[channel] = {patch.production_bus: "paused", patch.talkback_bus: "paused"}
+    for channel in patch.others:
+        matrix[channel] = dict(follow_in_ears)
+        if channel != CLIP_SOUND:
+            matrix[channel][patch.production_bus] = "linked"
+    return matrix
+
+
+LINKS = links()
+IEM_BUSES = PATCH_2026.in_ear_buses()

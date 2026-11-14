@@ -32,6 +32,7 @@ import { D200Card, SceneTable } from "../components/audio/config/ScenesAndD200";
 import {
   LinkRestoreList,
   MacroRestoreList,
+  ReleasedList,
   RestoreDefaultsButton,
 } from "../components/audio/config/RestoreDefaults";
 import { SeatsSection } from "../components/audio/config/SeatsSection";
@@ -66,6 +67,8 @@ export function AudioConfigPage() {
   const [commandError, setCommandError] = useState<string | null>(null);
   const [macroRestore, setMacroRestore] = useState<MacroRestoreChange[] | null>(null);
   const [linkRestore, setLinkRestore] = useState<LinkRestore | null>(null);
+  // Held levels the restore lets go (sends an old macro left closed).
+  const [released, setReleased] = useState<string[]>([]);
   const now = useNow();
   const { draft, notice } = settings;
   const dirty = settings.dirty || macroRestore !== null || linkRestore !== null;
@@ -83,15 +86,25 @@ export function AudioConfigPage() {
 
   const restoreMacros = async () => {
     if (!draft) return;
-    const preview = (await ask("preview_defaults", { part: "macros", macros: draft.macros })) as
-      { macros: MacroConfig[]; changes: MacroRestoreChange[] } | undefined;
+    // The draft goes along: the defaults follow its Seats and production
+    // microphones, saved or not.
+    const preview = (await ask("preview_defaults", {
+      part: "macros",
+      macros: draft.macros,
+      settings: draft,
+    })) as { macros: MacroConfig[]; changes: MacroRestoreChange[]; released: string[] } | undefined;
     if (!preview) return;
     settings.edit((d) => ({ ...d, macros: preview.macros }));
     setMacroRestore(preview.changes);
+    setReleased(preview.released ?? []);
   };
   const restoreLinks = async () => {
-    const preview = (await ask("preview_defaults", { part: "links" })) as LinkRestore | undefined;
-    if (preview) setLinkRestore(preview);
+    const preview = (await ask("preview_defaults", { part: "links", settings: draft })) as
+      LinkRestore | undefined;
+    if (preview) {
+      setLinkRestore(preview);
+      setReleased(preview.released ?? []);
+    }
   };
   const save = async () => {
     if (settings.dirty) {
@@ -105,6 +118,7 @@ export function AudioConfigPage() {
       }
     }
     setMacroRestore(null);
+    setReleased([]);
     if (linkRestore && linkRestore.changes.length > 0) {
       const restored = await ask("restore_defaults", {
         part: "links",
@@ -117,6 +131,7 @@ export function AudioConfigPage() {
   const dropRestores = () => {
     setMacroRestore(null);
     setLinkRestore(null);
+    setReleased([]);
   };
 
   if (!draft) {
@@ -226,6 +241,7 @@ export function AudioConfigPage() {
           {linkRestore && (
             <LinkRestoreList changes={linkRestore.changes} channels={draft.channels} />
           )}
+          {linkRestore && <ReleasedList points={released} channels={draft.channels} />}
           <LinkMatrix draft={draft} live={live} run={run} />
         </>
       )}
@@ -236,6 +252,7 @@ export function AudioConfigPage() {
         <>
           <RestoreDefaultsButton onClick={() => void restoreMacros()} />
           {macroRestore && <MacroRestoreList changes={macroRestore} />}
+          {macroRestore && <ReleasedList points={released} channels={draft.channels} />}
           <MacroEditor draft={draft} live={live} edit={settings.edit} ask={ask} />
         </>
       )}
