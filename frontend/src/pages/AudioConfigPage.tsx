@@ -191,7 +191,10 @@ export function AudioConfigPage() {
         </div>
       )}
 
-      <nav className="playout-tabs" role="tablist" aria-label="Audio setup sections">
+      {/* Its own class: "playout-tabs" is the playout page's phone-only bar,
+          which hid these tabs on a desktop (every section but the first
+          unreachable). */}
+      <nav className="config-tabs" role="tablist" aria-label="Audio setup sections">
         {SECTIONS.map(([key, title]) => (
           <button
             type="button"

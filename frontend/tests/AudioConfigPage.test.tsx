@@ -8,6 +8,9 @@
  * must survive the state broadcasts that keep arriving while one types.
  */
 
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
+
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -505,5 +508,34 @@ describe("Restore defaults (WP9b)", () => {
 
     expect(screen.queryByTestId("link-restore")).toBeNull();
     expect(server.sent).toHaveLength(sentBefore);
+  });
+});
+
+describe("the section tabs", () => {
+  // The bench (2026-11-14): on a desktop only "Mixer & devices" showed. The
+  // tabs used the playout page's phone-only bar ("playout-tabs"), which the
+  // stylesheet hides above 900 px wide, so no other section could be opened.
+  // The test browser does not apply styles.css, so two checks: the tab bar
+  // uses its own class, and that class is shown outside any phone-only rule.
+  it("use their own tab bar, which the stylesheet shows at every width", async () => {
+    await showSetup();
+
+    const tabs = screen.getByRole("tablist", { name: "Audio setup sections" });
+    expect(tabs).toHaveClass("config-tabs");
+    expect(tabs).not.toHaveClass("playout-tabs");
+
+    // Its rule shows it (display: flex), and no rule anywhere hides it.
+    const css = readFileSync(resolve(__dirname, "../src/styles.css"), "utf8");
+    expect(css).toMatch(/\n\.config-tabs\s*\{[^}]*display:\s*flex/);
+    expect(css).not.toMatch(/\.config-tabs\s*\{[^}]*display:\s*none/);
+  });
+
+  it("open every section", async () => {
+    await showSetup();
+
+    for (const name of ["Channels", "M-VAVE", "Link matrix", "Seats", "Macros", "Scenes"]) {
+      fireEvent.click(screen.getByRole("tab", { name }));
+      expect(screen.getByRole("tab", { name })).toHaveAttribute("aria-selected", "true");
+    }
   });
 });
