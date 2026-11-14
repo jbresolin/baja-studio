@@ -44,8 +44,10 @@ from baja_studio.modules.audio.surface import MvaveSurface
 
 MIDI_CHILD_MODULE = "baja_studio.childprocs.midi_child"
 D200_SEEN_PUBLISH_SECONDS = 5.0
-# Ulanzi Studio on the studio PC itself calls the service there.
-DEFAULT_D200_BASE = "http://localhost:8888"
+# Ulanzi Studio on the studio PC itself calls the service there. 127.0.0.1, not
+# "localhost": the API Request plugin runs on Node.js, which tries localhost as
+# IPv6 (::1) first, and the service listens on IPv4 only (2026-11-14 bench).
+DEFAULT_D200_BASE = "http://127.0.0.1:8888"
 
 MidiChildFactory = Callable[[ModuleContext, EventCallback], MidiChildHost]
 
@@ -235,7 +237,7 @@ class AudioModule(Module):
         return d200_routes()
 
     def routes(self) -> APIRouter:
-        """`GET /d200-profile?base=http://localhost:8888`: a Ulanzi Studio profile for the
+        """`GET /d200-profile?base=http://127.0.0.1:8888`: a Ulanzi Studio profile for the
         saved settings, whose buttons call `base` (see `audio/d200_profile.py`)."""
         router = APIRouter()
 

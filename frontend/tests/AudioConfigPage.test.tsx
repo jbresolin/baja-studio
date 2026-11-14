@@ -319,7 +319,7 @@ describe("Audio setup page", () => {
     expect(screen.getByTestId("d200-card")).not.toHaveTextContent("save first");
 
     expect(download()).toBe(
-      `/api/audio/d200-profile?base=${encodeURIComponent("http://localhost:8888")}`,
+      `/api/audio/d200-profile?base=${encodeURIComponent("http://127.0.0.1:8888")}`,
     );
     fireEvent.click(screen.getByRole("button", { name: `Use ${window.location.origin}` }));
     expect(screen.getByTestId("d200-address")).toHaveValue(window.location.origin);

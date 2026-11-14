@@ -35,7 +35,8 @@ def test_the_profile_downloads_as_a_file_built_from_the_saved_settings(audio: Au
 def test_without_an_address_the_buttons_call_the_studio_pc_itself(audio: AudioStudio) -> None:
     response = audio.http.get("/api/audio/d200-profile")
 
-    hosts = Profile(response.content).buttons("http://localhost:8888")[1]
+    # 127.0.0.1: Ulanzi's plugin tries "localhost" as IPv6, where nothing listens.
+    hosts = Profile(response.content).buttons("http://127.0.0.1:8888")[1]
     assert hosts["0_0"]["request"] == "/action/mute/1"
 
 

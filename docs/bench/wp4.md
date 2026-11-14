@@ -52,7 +52,7 @@ and press "buttons" with the `simulate_midi` command.
    - **MIDI learn**: setup → M-VAVE → *Learn*, press S on strip 3 → its slot
      is highlighted.
 3. **D200.** Audio setup → D200 → *Download the D200 profile* (address
-   `http://localhost:8888` when Ulanzi Studio runs on the studio PC; save
+   `http://127.0.0.1:8888` when Ulanzi Studio runs on the studio PC; save
    the settings first, and run Macros → *Restore defaults…* if a macro is
    missing). Import it in Ulanzi Studio and pick it for the D200. Every
    button's image appears; mute toggles, in-ear nudges, macros and state

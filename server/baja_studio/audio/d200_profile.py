@@ -81,7 +81,7 @@ def d200_base_url(text: str) -> str:
     """The address the D200 calls, as `http(s)://host[:port]`; ValueError if it is not one."""
     parts = urlsplit(text.strip())
     if parts.scheme not in ("http", "https") or not parts.netloc:
-        raise ValueError("the D200's address must look like http://localhost:8888")
+        raise ValueError("the D200's address must look like http://127.0.0.1:8888")
     if parts.path not in ("", "/") or parts.query or parts.fragment:
         raise ValueError("the D200's address is only http(s)://host:port, with no path")
     return f"{parts.scheme}://{parts.netloc}"

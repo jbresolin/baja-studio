@@ -10,8 +10,10 @@ profile** gives a `Baja Studio.ulanziDeckProfile` to import in Ulanzi Studio
   in-ear bus), Production microphones (PROD 1, PROD 2), the macros, and
   whether PC AUDIO is on the audio page. Download it again after changing
   any of them.
-- **Address the D200 calls**: `http://localhost:8888` when Ulanzi Studio runs
-  on the studio PC (the default), otherwise the studio's address.
+- **Address the D200 calls**: `http://127.0.0.1:8888` when Ulanzi Studio runs
+  on the studio PC (the default), otherwise the studio's address. Not
+  `localhost`: Ulanzi's API Request plugin runs on Node.js, which tries
+  `localhost` as IPv6 (`::1`) first, and the service listens on IPv4 only.
 - Every macro button is there, even while its macro is missing from the
   saved settings; the D200 tab lists those (they answer an error until
   Macros → *Restore defaults…* adds them). A seat without a microphone gets
