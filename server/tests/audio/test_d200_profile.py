@@ -14,7 +14,7 @@ import pytest
 
 from baja_studio.audio import defaults
 from baja_studio.audio.config import AudioSettings
-from baja_studio.audio.d200_profile import build_profile, d200_base_url
+from baja_studio.audio.d200_profile import build_profile, d200_base_url, missing_macros
 from baja_studio.audio.patch import patch_of
 from tests.audio.ulanzi_profile import BASE, Profile
 
@@ -72,26 +72,37 @@ def test_every_image_a_button_names_is_in_its_page_folder_and_nothing_else_is() 
             assert profile.zip.read(folder + path).startswith(b"\x89PNG")
 
 
-def test_for_the_2026_patch_every_2026_button_is_where_it_was_with_three_fixes() -> None:
-    # The fixes: HOST 2's talk button showed GUEST 1's images; the guests got
-    # talk buttons (their macros are from WP9b); VIDEO is called "aux"
-    # (the 2026 server's "17", which the service also understands).
+def macro_button(macro_id: str, on: str, off: str) -> dict[str, str]:
+    """A macro toggle as `Profile.buttons()` shows it: press, poll, and its two images."""
+    return {
+        "request": f"/action/macro/{macro_id}",
+        "poll": f"/action/macro-state/{macro_id}",
+        "field": "active",
+        "on": on,
+        "off": off,
+    }
+
+
+def test_for_the_2026_patch_every_2026_button_is_where_it_was_with_the_listed_changes() -> None:
+    # The changes from the 2026 profile:
+    # - HOST 2's talk button showed GUEST 1's images;
+    # - the guests got talk buttons (their macros are from WP9b);
+    # - VIDEO is called "aux" (the 2026 server's "17", which the service also understands);
+    # - production: "talk to HOST 2" in the 4th column, "talk to camera" moved
+    #   to the last one (João, 2026-11-14).
     buttons = Profile(build_profile(AudioSettings(), BASE)).buttons()
 
     expected = json.loads(json.dumps(LAYOUT_2026))
     expected[1]["1_1"]["on"], expected[1]["1_1"]["off"] = "HOST 2 - PRODDED", "HOST 2 - PROD"
-    for key, guest in (("2_1", "guest1"), ("3_1", "guest2")):
-        name = "GUEST 1" if guest == "guest1" else "GUEST 2"
-        expected[1][key] = {
-            "request": f"/action/macro/{guest}-talk-prod",
-            "poll": f"/action/macro-state/{guest}-talk-prod",
-            "field": "active",
-            "on": f"{name} - PRODDED",
-            "off": f"{name} - PROD",
-        }
+    expected[1]["2_1"] = macro_button("guest1-talk-prod", "GUEST 1 - PRODDED", "GUEST 1 - PROD")
+    expected[1]["3_1"] = macro_button("guest2-talk-prod", "GUEST 2 - PRODDED", "GUEST 2 - PROD")
     for page in expected[2:6]:
         for key in ("4_0", "4_1"):
             page[key]["request"] = page[key]["request"].replace("/17/", "/aux/")
+    production = expected[6]
+    production["4_0"], production["4_1"] = production.pop("3_0"), production.pop("3_1")
+    production["3_0"] = macro_button("prod1-talk-host2", "PROD 1 - TALKING 2", "PROD 1 - TALK 2")
+    production["3_1"] = macro_button("prod2-talk-host2", "PROD 2 - TALKING 2", "PROD 2 - TALK 2")
     assert buttons == expected
 
 
@@ -137,24 +148,41 @@ def test_every_button_calls_the_given_address() -> None:
     assert all(url.startswith(base + "/action/") for url in urls)
 
 
-def test_a_macro_missing_from_the_settings_leaves_its_button_out() -> None:
-    settings = studio_pc_settings()
-    kept = [
-        macro
-        for macro in settings.macros
-        if macro.id not in ("guest1-talk-prod", "prod3-go-live", "macro-1774582340101")
+def test_the_production_page_talks_to_each_host_and_then_the_camera() -> None:
+    production = Profile(build_profile(studio_pc_settings(), BASE)).buttons()[-1]
+
+    # One row per production microphone: mute, live, → HOST 1, → HOST 2, → camera.
+    assert [production[f"{column}_0"]["request"] for column in range(5)] == [
+        "/action/mute/9",
+        "/action/macro/macro-1774582227201",
+        "/action/macro/prod1-talk-hosts",
+        "/action/macro/prod1-talk-host2",
+        "/action/macro/macro-1774582749617",
     ]
+    assert [production[f"{column}_1"]["request"] for column in range(5)] == [
+        "/action/mute/10",
+        "/action/macro/macro-1774582340101",
+        "/action/macro/macro-1774581643177",
+        "/action/macro/prod2-talk-host2",
+        "/action/macro/macro-1774582877605",
+    ]
+    assert production["3_1"]["on"] == "PROD 2 - TALKING 2"
 
-    hosts, production = (
-        Profile(build_profile(settings.model_copy(update={"macros": kept}), BASE)).buttons()[i]
-        for i in (1, -1)
-    )
 
-    assert "2_1" not in hosts
-    assert "3_1" in hosts
-    # PROD 2's go live.
-    assert "1_1" not in production
-    assert production["1_0"]["request"] == "/action/macro/macro-1774582227201"
+def test_every_macro_button_is_there_even_while_its_macro_is_missing() -> None:
+    # 2026-11-14: buttons that disappeared because their macros were not
+    # restored yet looked like a broken profile. Now they stay, and
+    # `missing_macros` tells Audio setup → D200 which macros to restore.
+    settings = studio_pc_settings()
+    kept = [m for m in settings.macros if m.id not in ("guest1-talk-prod", "macro-1774582340101")]
+    without = settings.model_copy(update={"macros": kept})
+
+    hosts, production = (Profile(build_profile(without, BASE)).buttons()[i] for i in (1, -1))
+
+    assert hosts["2_1"]["request"] == "/action/macro/guest1-talk-prod"
+    assert production["1_1"]["request"] == "/action/macro/macro-1774582340101"
+    assert missing_macros(without) == ["guest1-talk-prod", "macro-1774582340101"]
+    assert missing_macros(settings) == []
 
 
 def test_a_seat_without_a_microphone_gets_no_buttons_and_no_page() -> None:
@@ -167,6 +195,7 @@ def test_a_seat_without_a_microphone_gets_no_buttons_and_no_page() -> None:
     assert len(in_ears) == 3
     assert menu["1_0"] == {"goto": 5}
     assert not {"3_0", "3_1", "4_1"} & set(hosts)
+    assert missing_macros(studio_pc_settings(seats=seats)) == []
     assert hosts["2_2"] == {"goto": 4}
     assert all("3_0" not in page for page in in_ears)
     assert production["0_0"]["request"] == "/action/mute/9"

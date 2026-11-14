@@ -20,7 +20,12 @@ from pydantic import BaseModel
 from baja_studio.adapters.xr18_transport import TransportFactory, open_udp_transport
 from baja_studio.audio import defaults
 from baja_studio.audio.config import AudioSettings
-from baja_studio.audio.d200_profile import FILE_NAME, build_profile, d200_base_url
+from baja_studio.audio.d200_profile import (
+    FILE_NAME,
+    build_profile,
+    d200_base_url,
+    missing_macros,
+)
 from baja_studio.audio.stores import LinkStore, OffsetStore, StoredLevels, create_audio_tables
 from baja_studio.core.childproc import EventCallback
 from baja_studio.core.hosts_cards import HostsCard
@@ -245,6 +250,11 @@ class AudioModule(Module):
                 media_type="application/octet-stream",
                 headers={"Content-Disposition": f'attachment; filename="{FILE_NAME}"'},
             )
+
+        @router.get("/d200-profile/missing-macros")
+        def d200_missing_macros() -> dict[str, list[str]]:
+            """The macros the profile's buttons call that the saved settings lack."""
+            return {"missing": missing_macros(self.settings())}
 
         return router
 

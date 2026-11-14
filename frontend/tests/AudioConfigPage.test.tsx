@@ -26,14 +26,19 @@ let server: FakeSocket;
 let saves: { version: number; values: AudioSettingsValues }[];
 let stored: { section: string; version: number; updated_at: string; values: AudioSettingsValues };
 let nextSaveAnswer: Response | null;
+let missingMacros: string[];
 
 beforeEach(() => {
   saves = [];
   nextSaveAnswer = null;
+  missingMacros = [];
   stored = { section: "audio", version: 4, updated_at: "", values: audioSettings() };
   vi.stubGlobal(
     "fetch",
-    vi.fn(async (_path: string, init?: RequestInit) => {
+    vi.fn(async (path: string, init?: RequestInit) => {
+      if (path.endsWith("/d200-profile/missing-macros")) {
+        return Response.json({ missing: missingMacros });
+      }
       if (init?.method === "PUT") {
         const body = JSON.parse(String(init.body));
         saves.push(body);
@@ -320,6 +325,16 @@ describe("Audio setup page", () => {
     expect(screen.getByTestId("d200-address")).toHaveValue(window.location.origin);
     expect(download()).toBe(
       `/api/audio/d200-profile?base=${encodeURIComponent(window.location.origin)}`,
+    );
+  });
+
+  it("lists the macros the D200 profile's buttons call that the saved settings lack", async () => {
+    missingMacros = ["guest1-talk-prod", "prod1-talk-host2"];
+    await showSetup();
+    openSection("D200");
+
+    expect(await screen.findByTestId("d200-missing-macros")).toHaveTextContent(
+      "guest1-talk-prod, prod1-talk-host2",
     );
   });
 

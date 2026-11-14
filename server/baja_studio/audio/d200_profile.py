@@ -13,14 +13,16 @@ The layout is the 2026 profile's (the operators' spec, `docs/d200/README.md`):
 - **One in-ear page per seat**: every seat's level in that seat's in-ears,
   and VIDEO (the clip sound, PC AUDIO), up and down 3 dB.
 - **Production**: a row per production microphone: mute, go live, talk to
-  the hosts, talk to the camera operator.
+  HOST 1, talk to HOST 2, talk to the camera operator.
 
 What changed from 2026: the channels, in-ear buses and production
 microphones come from the saved settings (`patch_of`); GUEST 1 and GUEST 2
-got their "talk to production" buttons; HOST 2's showed GUEST 1's image. A
-macro button is left out while its macro is not in the settings (Macros →
-"Restore defaults…" adds them), and a seat without a microphone gets no
-buttons and no page.
+got their "talk to production" buttons; HOST 2's showed GUEST 1's image;
+production got "talk to HOST 2", with "talk to the camera operator" moved to
+the last column (João, 2026-11-14). A seat without a microphone gets no
+buttons and no page. Every macro button is there even while its macro is
+missing from the settings (it answers an error until Macros → "Restore
+defaults…" adds it): `missing_macros` lists them for Audio setup → D200.
 
 The file format, as Ulanzi Studio exports it: the line `#Version: 2`, then a
 zip holding one `<uuid>.ulanziProfile/` folder: its `manifest.json` lists the
@@ -111,7 +113,8 @@ class _Builder:
 
     def __init__(self, settings: AudioSettings, base_url: str, new_id: IdFactory) -> None:
         self.patch = patch_of(settings)
-        self.macro_ids = {macro.id for macro in settings.macros}
+        # Every macro id a button calls, for `missing_macros`.
+        self.macros_called: list[str] = []
         self.base = base_url
         self.new_id = new_id
 
@@ -162,10 +165,9 @@ class _Builder:
             (f"/action/state/{channel}", "muted"),
         )
 
-    def macro(self, page: _Page, macro_id: str, on: str, off: str) -> dict[str, Any] | None:
-        """A macro's toggle, or None while the settings have no such macro."""
-        if macro_id not in self.macro_ids:
-            return None
+    def macro(self, page: _Page, macro_id: str, on: str, off: str) -> dict[str, Any]:
+        """A macro's toggle; the image follows the macro being on."""
+        self.macros_called.append(macro_id)
         return self._request(
             page,
             f"/action/macro/{macro_id}",
@@ -227,9 +229,9 @@ class _Builder:
             column, name = seat - 1, SEAT_NAMES[seat]
             hosts.actions[f"{column}_0"] = self.mute(hosts, channel, name)
             talk_id = defaults.TALK_TO_PRODUCTION[seat][0]
-            talk = self.macro(hosts, talk_id, f"{name} - PRODDED", f"{name} - PROD")
-            if talk is not None:
-                hosts.actions[f"{column}_1"] = talk
+            hosts.actions[f"{column}_1"] = self.macro(
+                hosts, talk_id, f"{name} - PRODDED", f"{name} - PROD"
+            )
             hosts.actions[SEAT_PAGE_KEYS[seat]] = self.goto(
                 hosts, in_ear_index[seat], f"{name} - CONFIG"
             )
@@ -252,24 +254,37 @@ class _Builder:
             page.actions[SCREEN_KEY] = self.screen(1)
 
         production.actions["0_2"] = self.goto(production, 0, "MAIN MENU")
+        seats_with_microphone = {seat for seat, _channel, _bus in seats}
         producers = zip(
             defaults.PRODUCTION_MACROS, PRODUCER_NAMES, self.patch.production, strict=False
         )
-        for row, ((to_hosts, go_live, to_cam, _colour), name, channel) in enumerate(producers):
+        for row, (ids, name, channel) in enumerate(producers):
             production.actions[f"0_{row}"] = self.mute(production, channel, name)
-            buttons = {
-                f"1_{row}": self.macro(production, go_live, f"{name} - LIVED", f"{name} - LIVE"),
-                f"2_{row}": self.macro(
-                    production, to_hosts, f"{name} - TALKING 1", f"{name} - TALK 1"
-                ),
-                f"3_{row}": self.macro(
-                    production, to_cam, f"{name} - TALKING CAM", f"{name} - TALK CAM"
-                ),
-            }
-            production.actions.update({key: action for key, action in buttons.items() if action})
+            production.actions[f"1_{row}"] = self.macro(
+                production, ids.go_live, f"{name} - LIVED", f"{name} - LIVE"
+            )
+            # Talk to one host's in-ears: only while that host's seat has a microphone.
+            for column, host, macro_id in ((2, 1, ids.to_host1), (3, 2, ids.to_host2)):
+                if host in seats_with_microphone:
+                    production.actions[f"{column}_{row}"] = self.macro(
+                        production, macro_id, f"{name} - TALKING {host}", f"{name} - TALK {host}"
+                    )
+            production.actions[f"4_{row}"] = self.macro(
+                production, ids.to_cam, f"{name} - TALKING CAM", f"{name} - TALK CAM"
+            )
         production.actions[SCREEN_KEY] = self.screen(1)
 
         return [menu, hosts, *in_ears, production]
+
+
+def missing_macros(settings: AudioSettings) -> list[str]:
+    """The macro ids the profile's buttons call that `settings` has no macro for."""
+    builder = _Builder(settings, "http://localhost", lambda: "")
+    builder.pages()
+    present = {macro.id for macro in settings.macros}
+    return [
+        macro_id for macro_id in dict.fromkeys(builder.macros_called) if macro_id not in present
+    ]
 
 
 def _page_manifest(page: _Page) -> dict[str, Any]:
