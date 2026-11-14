@@ -65,11 +65,12 @@ def test_every_image_a_button_names_is_in_its_page_folder_and_nothing_else_is() 
         held = {
             name.removeprefix(folder)
             for name in profile.zip.namelist()
-            if name.startswith(folder) and name.endswith(".png")
+            if name.startswith(folder) and not name.endswith("/") and "manifest" not in name
         }
         assert named == held
         for path in held:
-            assert profile.zip.read(folder + path).startswith(b"\x89PNG")
+            data = profile.zip.read(folder + path)
+            assert data.startswith(b"<svg" if path.endswith(".svg") else b"\x89PNG")
 
 
 def macro_button(macro_id: str, on: str, off: str) -> dict[str, str]:
@@ -104,6 +105,22 @@ def test_for_the_2026_patch_every_2026_button_is_where_it_was_with_the_listed_ch
     production["3_0"] = macro_button("prod1-talk-host2", "PROD 1 - TALKING 2", "PROD 1 - TALK 2")
     production["3_1"] = macro_button("prod2-talk-host2", "PROD 2 - TALKING 2", "PROD 2 - TALK 2")
     assert buttons == expected
+
+
+def test_a_button_with_a_state_has_no_image_of_ours_set_only_its_two_state_images() -> None:
+    # 2026-11-14 bench: with our image set as the button's icon, Ulanzi Studio
+    # kept showing it and never switched to the MUTED / MUTE image the state
+    # asked for. A button whose image follows a state now carries the API
+    # Request plugin's own icon (as the 2026 export had on the mutes that
+    # worked); a nudge, which has no state, keeps its image.
+    profile = Profile(build_profile(studio_pc_settings(), BASE))
+    hosts, host1_in_ears = profile.actions[1], profile.actions[2]
+
+    for key in ("0_0", "0_1"):  # HOST 1's mute and its talk to production
+        assert hosts[key]["ViewParam"] == [{"Icon": "Images/match.svg", "IconRel": ""}]
+        assert hosts[key]["ActionParam"]["poll_status"] == "on"
+    nudge_icon = host1_in_ears["0_0"]["ViewParam"][0]["Icon"]
+    assert nudge_icon.startswith("Images/user_")
 
 
 def test_on_the_studio_pcs_patch_the_buttons_call_its_channels() -> None:

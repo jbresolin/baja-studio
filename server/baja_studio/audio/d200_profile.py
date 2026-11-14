@@ -55,7 +55,9 @@ FILE_NAME = "Baja Studio.ulanziDeckProfile"
 DEVICE_UUID = "799a23e9e0395623"
 # Where the button images are, by name ("HOST 1 - MUTE"), as drawn in docs/d200/Template.pptx.
 IMAGES = files("baja_studio.audio").joinpath("d200_images")
-PROFILE_ICON = "PROFILE ICON"
+PROFILE_ICON = "PROFILE ICON.png"
+# The API Request plugin's own icon (from Ulanzi's plugin, as the 2026 export held it).
+PLUGIN_ICON = "match.svg"
 
 SEAT_NAMES = {1: "HOST 1", 2: "HOST 2", 3: "GUEST 1", 4: "GUEST 2"}
 # The key of each seat's "edit my in-ears" button on the hosts page (3_2 is the screen).
@@ -98,14 +100,20 @@ class _Page:
     def file(self, image: str) -> str:
         """A button image ("Files/HOST 1 - MUTE.png"), added to the page's folder."""
         path = f"Files/{image}.png"
-        self.images[path] = image
+        self.images[path] = f"{image}.png"
         return path
 
     def icon(self, image: str, new_id: IdFactory) -> dict[str, str]:
         """The image a button shows before its first poll (Ulanzi Studio's "Images/user_…")."""
         path = f"Images/user_{new_id()}.png"
-        self.images[path] = image
+        self.images[path] = f"{image}.png"
         return {"Icon": path, "IconRel": path}
+
+    def plugin_icon(self) -> dict[str, str]:
+        """No image of ours: the API Request plugin's own icon, as Ulanzi Studio writes it."""
+        path = f"Images/{PLUGIN_ICON}"
+        self.images[path] = PLUGIN_ICON
+        return {"Icon": path, "IconRel": ""}
 
 
 class _Builder:
@@ -153,7 +161,11 @@ class _Builder:
             "Name": "Match Result",
             "Plugin": API_REQUEST_PLUGIN,
             "State": 0,
-            "ViewParam": [page.icon(off, self.new_id)],
+            # A button whose image follows a state shows the plugin's own icon
+            # until its first answer: with an image of ours set on the button,
+            # Ulanzi Studio kept showing that one and never the state's (João,
+            # 2026-11-14 bench). A nudge has no state, so it shows its image.
+            "ViewParam": [page.plugin_icon() if poll else page.icon(off, self.new_id)],
         }
 
     def mute(self, page: _Page, channel: str, name: str) -> dict[str, Any]:
@@ -298,8 +310,8 @@ def _page_manifest(page: _Page) -> dict[str, Any]:
     }
 
 
-def _image(name: str) -> bytes:
-    return IMAGES.joinpath(f"{name}.png").read_bytes()
+def _image(file_name: str) -> bytes:
+    return IMAGES.joinpath(file_name).read_bytes()
 
 
 def build_profile(

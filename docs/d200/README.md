@@ -20,6 +20,10 @@ profile** gives a `Baja Studio.ulanziDeckProfile` to import in Ulanzi Studio
   no buttons and no in-ear page, and production gets no "talk to" button for
   a host without one.
 - Each download imports as a new profile; delete the old one in Ulanzi Studio.
+- A button whose image follows a state (mutes, macros) has no image of ours
+  set on it, only the plugin's own icon until the first answer: with an image
+  set, Ulanzi Studio kept showing it and never the state's (2026-11-14 bench).
+  Don't set one by hand either. The in-ear nudges, with no state, keep theirs.
 
 `Template.pptx` is what the button images were drawn from; the images are in
 `server/baja_studio/audio/d200_images/` (the service ships them).
