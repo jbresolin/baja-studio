@@ -306,6 +306,31 @@ describe("Audio setup page", () => {
       `${window.location.origin}/action/macro/host1-talk-prod`,
     );
   });
+
+  it("downloads a D200 profile calling the studio PC itself, or this page's address", async () => {
+    await showSetup();
+    openSection("D200");
+    const download = () => screen.getByTestId("d200-download").getAttribute("href");
+    expect(screen.getByTestId("d200-card")).not.toHaveTextContent("save first");
+
+    expect(download()).toBe(
+      `/api/audio/d200-profile?base=${encodeURIComponent("http://localhost:8888")}`,
+    );
+    fireEvent.click(screen.getByRole("button", { name: `Use ${window.location.origin}` }));
+    expect(screen.getByTestId("d200-address")).toHaveValue(window.location.origin);
+    expect(download()).toBe(
+      `/api/audio/d200-profile?base=${encodeURIComponent(window.location.origin)}`,
+    );
+  });
+
+  it("asks to save first while there are unsaved changes, as the profile is built from saved ones", async () => {
+    await showSetup();
+    openSection("Channels");
+    fireEvent.change(screen.getAllByRole("textbox")[0]!, { target: { value: "MC 1" } });
+    openSection("D200");
+
+    expect(screen.getByTestId("d200-card")).toHaveTextContent("save first");
+  });
 });
 
 describe("Audio setup → Seats (WP9b)", () => {

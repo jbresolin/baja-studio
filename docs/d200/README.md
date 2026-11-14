@@ -1,31 +1,55 @@
 # Ulanzi D200 profile for the studio's audio actions
 
 The deck buttons are the operators' spec for which audio controls matter.
+The studio builds the profile: **Audio setup → D200 → Download the D200
+profile** gives a `Baja Studio.ulanziDeckProfile` to import in Ulanzi Studio
+(Profiles → Import), every button already set for the desk as it is patched
+(`server/baja_studio/audio/d200_profile.py`).
 
-- `Baja.ulanziDeckProfile`: the 2026 profile (from
-  `xr18-control/Baja.ulanziDeckProfile`) with every URL changed from
-  `http://localhost:3000` to `http://localhost:8888`, the studio service.
-  Nothing else was changed: only the `manifest.json` entries were rewritten,
-  and every other file in the archive (button images, layout) was copied
-  byte for byte. Import it in Ulanzi Studio; if Ulanzi Studio runs on a
-  different PC from the service, change `localhost` to the service's
-  address. **It has not been imported yet**: bench step 3
-  (`docs/bench/wp4.md`) checks it and should export it again from Ulanzi
-  Studio to replace this file.
-- `images/`: the button images and `Template.pptx` they were drawn from.
+- It is built from the **saved** settings: Seats (each seat's microphone and
+  in-ear bus), Production microphones (PROD 1, PROD 2), the macros, and
+  whether PC AUDIO is on the audio page. Download it again after changing
+  any of them.
+- **Address the D200 calls**: `http://localhost:8888` when Ulanzi Studio runs
+  on the studio PC (the default), otherwise the studio's address.
+- A macro button is left out while its macro is missing from the settings:
+  Macros → *Restore defaults…* adds them. A seat without a microphone gets no
+  buttons and no in-ear page.
+- Each download imports as a new profile; delete the old one in Ulanzi Studio.
+
+`Template.pptx` is what the button images were drawn from; the images are in
+`server/baja_studio/audio/d200_images/` (the service ships them).
+`GUEST 2 - PROD.png` was missing in 2026 and was made from `GUEST 2 -
+PRODDED.png` with the blue background of the other PROD images.
+
+## Layout (2026's, kept)
+
+The D200 has 5 columns by 3 rows; key 3_2 is its small screen.
+
+| Page | Buttons |
+|---|---|
+| Main menu | HOSTS/GUESTS, PROD. CREW |
+| Hosts & guests | a column per seat (HOST 1, HOST 2, GUEST 1, GUEST 2): mute, talk to production, that seat's in-ear page (GUEST 2's is top right, under MAIN MENU) |
+| In-ears of one seat (one page per seat) | each seat's level in those in-ears, and VIDEO (PC AUDIO), up and down 3 dB; HOSTS/GUESTS back; EDITING shows whose in-ears |
+| Production | a row per production microphone (PROD 1, PROD 2): mute, go live, talk to the hosts, talk to the camera operator; MAIN MENU |
+
+Changed from the 2026 profile: the channels and buses come from the
+settings (2026 called 1-4 for the seats and 5-6 for production); GUEST 1 and
+GUEST 2 got their "talk to production" buttons; HOST 2's showed GUEST 1's
+images. `server/tests/audio/d200_2026_layout.json` keeps every 2026 button
+for the test that checks nothing else moved.
 
 ## What the buttons call
 
 All requests are `GET`; the matching state URL is polled every second, and
 the button image follows a field of its JSON being `true`.
 
-| Page | Buttons | Request | State poll (field) |
-|---|---|---|---|
-| Hosts & guests | HOST 1-2, GUEST 1-2 mute | `/action/mute/1` … `/4` | `/action/state/N` (`muted`) |
-| Hosts & guests | HOST 1-2 talk to production | `/action/macro/host1-talk-prod`, `host2-talk-prod` | `/action/macro-state/<id>` (`active`) |
-| Production | PROD 1-2 mute | `/action/mute/5`, `/6` | `/action/state/N` (`muted`) |
-| Production | PROD 1-2 talk to hosts, go live, talk to camera | `/action/macro/<id>` (ids below) | `/action/macro-state/<id>` (`active`) |
-| IEM pages (one per IEM bus 1-4) | HOST 1-2, GUEST 1-2, VIDEO volume up/down | `/action/nudge-aux/<ch>/bus<N>/±3` (VIDEO is channel 17, the aux return) | — |
+| Buttons | Request | State poll (field) |
+|---|---|---|
+| Mute | `/action/mute/<channel>` | `/action/state/<channel>` (`muted`) |
+| Seat → production | `/action/macro/host1-talk-prod` … `guest2-talk-prod` | `/action/macro-state/<id>` (`active`) |
+| In-ear levels | `/action/nudge-aux/<channel>/<bus>/±3` (VIDEO is `aux`) | — |
+| PROD N live, → hosts, → camera | `/action/macro/<id>` (ids below) | `/action/macro-state/<id>` (`active`) |
 
 Production macro ids (kept from 2026 so these URLs keep working):
 
@@ -38,7 +62,7 @@ Production macro ids (kept from 2026 so these URLs keep working):
 | PROD 1 TALK CAM | `macro-1774582749617` |
 | PROD 2 TALK CAM | `macro-1774582877605` |
 
-The PROD 3 images exist but the 2026 profile has no PROD 3 buttons; the
-studio seeds `prod3-talk-hosts`, `prod3-go-live` and `prod3-talk-cam` for
-them. The audio setup page's **D200** tab lists every URL for the host it
-is opened on.
+The PROD 3 images exist but the deck has no room for a third production
+row; the studio seeds `prod3-talk-hosts`, `prod3-go-live` and
+`prod3-talk-cam` for the audio page and the M-VAVE. The D200 tab also lists
+every URL for a button set by hand.

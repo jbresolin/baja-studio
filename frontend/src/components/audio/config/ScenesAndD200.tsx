@@ -1,9 +1,18 @@
 /**
  * Setup: scenes (event phases: a mixer snapshot and/or a macro), and the
- * D200 reference card: the URLs to paste into Ulanzi Studio for this host.
+ * D200 card: a Ulanzi Studio profile built from the saved settings, and the
+ * URLs behind its buttons for this host.
  */
 
-import { d200Urls, type AudioSettingsValues, type SceneConfig } from "../../../lib/audio";
+import { useState } from "react";
+
+import {
+  D200_DEFAULT_ADDRESS,
+  d200ProfileUrl,
+  d200Urls,
+  type AudioSettingsValues,
+  type SceneConfig,
+} from "../../../lib/audio";
 import type { EditSettings } from "./DevicesSection";
 
 export function SceneTable({ draft, edit }: { draft: AudioSettingsValues; edit: EditSettings }) {
@@ -111,14 +120,59 @@ export function SceneTable({ draft, edit }: { draft: AudioSettingsValues; edit: 
   );
 }
 
-export function D200Card({ draft, origin }: { draft: AudioSettingsValues; origin: string }) {
+export function D200Card({
+  draft,
+  origin,
+  dirty,
+}: {
+  draft: AudioSettingsValues;
+  origin: string;
+  dirty: boolean;
+}) {
+  const [address, setAddress] = useState(D200_DEFAULT_ADDRESS);
   return (
     <section className="config-form" data-testid="d200-card">
+      <h3>Profile for Ulanzi Studio</h3>
       <p className="muted">
-        In Ulanzi Studio use the API Request plugin's "Match Result": request URL below, method GET;
-        status poll every 1 s on the matching state URL; response field <code>muted</code> (mute
-        buttons) or <code>active</code> (macros), expected <code>true</code>. The 2026 profile only
-        needs <code>http://localhost:3000</code> replaced with <code>{origin}</code>.
+        A profile with every button already set: the seats' microphones and in-ears, the production
+        microphones and the macros, as saved here. In Ulanzi Studio, import it (Profiles → Import)
+        and pick it for the D200. Download it again after changing seats, production microphones or
+        macros (Macros → Restore defaults… adds any button's missing macro).
+      </p>
+      <label>
+        Address the D200 calls
+        <input
+          value={address}
+          onChange={(event) => setAddress(event.target.value)}
+          data-testid="d200-address"
+        />
+      </label>
+      <p className="muted">
+        <code>{D200_DEFAULT_ADDRESS}</code> when Ulanzi Studio runs on this studio PC; from another
+        PC, this page&apos;s address{" "}
+        <button type="button" onClick={() => setAddress(origin)}>
+          Use {origin}
+        </button>
+      </p>
+      {dirty && (
+        <p className="status-message">
+          Unsaved changes: save first, the profile is built from the saved settings.
+        </p>
+      )}
+      <a
+        className="button"
+        href={d200ProfileUrl(address)}
+        download="Baja Studio.ulanziDeckProfile"
+        data-testid="d200-download"
+      >
+        Download the D200 profile
+      </a>
+      <h3>The URLs behind the buttons</h3>
+      <p className="muted">
+        For a button set by hand: the API Request plugin&apos;s &quot;Match Result&quot;, request
+        URL below, method GET; status poll every 1 s on the matching state URL; response field{" "}
+        <code>muted</code> (mute buttons) or <code>active</code> (macros), expected{" "}
+        <code>true</code>.
       </p>
       <table className="config-list">
         <tbody>

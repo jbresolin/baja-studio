@@ -51,10 +51,12 @@ and press "buttons" with the `simulate_midi` command.
      right, without restarting anything.
    - **MIDI learn**: setup → M-VAVE → *Learn*, press S on strip 3 → its slot
      is highlighted.
-3. **D200.** Import `docs/d200/Baja.ulanziDeckProfile` in Ulanzi Studio
-   (its URLs already point at `http://localhost:8888`; change the host if
-   the D200 software runs on another PC). Mute toggles, nudges, macros and
-   state images work; a mute made on the page changes the button image
+3. **D200.** Audio setup → D200 → *Download the D200 profile* (address
+   `http://localhost:8888` when Ulanzi Studio runs on the studio PC; save
+   the settings first, and run Macros → *Restore defaults…* if a macro is
+   missing). Import it in Ulanzi Studio and pick it for the D200. Every
+   button's image appears; mute toggles, in-ear nudges, macros and state
+   images work on the channels set in Seats and Production microphones; a mute made on the page changes the button image
    within the poll interval (1 s). The status line shows `D200 polling`.
 4. **Link matrix.** HOST 1 → IEM HOST 1 linked (seeded): move HOST 1's
    fader, the send follows. Nudge it from the D200 (or a knob): the cell

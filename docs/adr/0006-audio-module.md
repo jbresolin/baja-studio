@@ -150,8 +150,12 @@ instruction the 2026 code and UI were a source of facts, not a template.
     polls are not commands. `d200.enabled` off answers 503.
     `audio.d200.last_seen` (published at most every 5 s) lets the page show
     "D200 polling".
-30. `docs/d200/Baja.ulanziDeckProfile` is the 2026 profile with only its
-    URLs rewritten to `http://localhost:8888`, by script; not yet imported.
+30. ~~`docs/d200/Baja.ulanziDeckProfile` is the 2026 profile with only its
+    URLs rewritten to `http://localhost:8888`, by script; not yet imported.~~
+    Replaced (2026-11-14): Audio setup → D200 builds the profile from the
+    saved settings (`audio/d200_profile.py`), in the 2026 layout, because the
+    studio PC's desk is patched differently (hosts on 5-8, production on
+    9-10). See `docs/d200/README.md`.
 
 ### Pages and commands
 

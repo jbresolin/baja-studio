@@ -1,0 +1,466 @@
+{
+ "_comment": "Every button of the 2026 Ulanzi profile (xr18-control/Baja.ulanziDeckProfile, URLs moved to port 8888), page by page: the layout the generated profile keeps (tests/audio/test_d200_profile.py).",
+ "pages": [
+  {
+   "0_0": {
+    "goto": 1
+   },
+   "1_0": {
+    "goto": 6
+   },
+   "3_2": {
+    "screen": 1
+   }
+  },
+  {
+   "0_0": {
+    "request": "/action/mute/1",
+    "poll": "/action/state/1",
+    "field": "muted",
+    "on": "HOST 1 - MUTED",
+    "off": "HOST 1 - MUTE"
+   },
+   "0_1": {
+    "request": "/action/macro/host1-talk-prod",
+    "poll": "/action/macro-state/host1-talk-prod",
+    "field": "active",
+    "on": "HOST 1 - PRODDED",
+    "off": "HOST 1 - PROD"
+   },
+   "0_2": {
+    "goto": 2
+   },
+   "1_0": {
+    "request": "/action/mute/2",
+    "poll": "/action/state/2",
+    "field": "muted",
+    "on": "HOST 2 - MUTED",
+    "off": "HOST 2 - MUTE"
+   },
+   "1_1": {
+    "request": "/action/macro/host2-talk-prod",
+    "poll": "/action/macro-state/host2-talk-prod",
+    "field": "active",
+    "on": "GUEST 1 - PRODDED",
+    "off": "GUEST 1 - PROD"
+   },
+   "1_2": {
+    "goto": 3
+   },
+   "2_0": {
+    "request": "/action/mute/3",
+    "poll": "/action/state/3",
+    "field": "muted",
+    "on": "GUEST 1 - MUTED",
+    "off": "GUEST 1 - MUTE"
+   },
+   "2_2": {
+    "goto": 4
+   },
+   "3_0": {
+    "request": "/action/mute/4",
+    "poll": "/action/state/4",
+    "field": "muted",
+    "on": "GUEST 2 - MUTED",
+    "off": "GUEST 2 - MUTE"
+   },
+   "3_2": {
+    "screen": 2
+   },
+   "4_0": {
+    "goto": 0
+   },
+   "4_1": {
+    "goto": 5
+   }
+  },
+  {
+   "0_0": {
+    "request": "/action/nudge-aux/1/bus1/3",
+    "poll": "",
+    "field": "",
+    "on": "HOST 1 - VOL UP",
+    "off": "HOST 1 - VOL UP"
+   },
+   "0_1": {
+    "request": "/action/nudge-aux/1/bus1/-3",
+    "poll": "",
+    "field": "",
+    "on": "HOST 1 - VOL DOWN",
+    "off": "HOST 1 - VOL DOWN"
+   },
+   "0_2": {
+    "goto": 1
+   },
+   "1_0": {
+    "request": "/action/nudge-aux/2/bus1/3",
+    "poll": "",
+    "field": "",
+    "on": "HOST 2 - VOL UP",
+    "off": "HOST 2 - VOL UP"
+   },
+   "1_1": {
+    "request": "/action/nudge-aux/2/bus1/-3",
+    "poll": "",
+    "field": "",
+    "on": "HOST 2 - VOL DOWN",
+    "off": "HOST 2 - VOL DOWN"
+   },
+   "2_0": {
+    "request": "/action/nudge-aux/3/bus1/3",
+    "poll": "",
+    "field": "",
+    "on": "GUEST 1 - VOL UP",
+    "off": "GUEST 1 - VOL UP"
+   },
+   "2_1": {
+    "request": "/action/nudge-aux/3/bus1/-3",
+    "poll": "",
+    "field": "",
+    "on": "GUEST 1 - VOL DOWN",
+    "off": "GUEST 1 - VOL DOWN"
+   },
+   "2_2": {
+    "goto": 2
+   },
+   "3_0": {
+    "request": "/action/nudge-aux/4/bus1/3",
+    "poll": "",
+    "field": "",
+    "on": "GUEST 2 - VOL UP",
+    "off": "GUEST 2 - VOL UP"
+   },
+   "3_1": {
+    "request": "/action/nudge-aux/4/bus1/-3",
+    "poll": "",
+    "field": "",
+    "on": "GUEST 2 - VOL DOWN",
+    "off": "GUEST 2 - VOL DOWN"
+   },
+   "3_2": {
+    "screen": 1
+   },
+   "4_0": {
+    "request": "/action/nudge-aux/17/bus1/3",
+    "poll": "",
+    "field": "",
+    "on": "VIDEO - VOL UP",
+    "off": "VIDEO - VOL UP"
+   },
+   "4_1": {
+    "request": "/action/nudge-aux/17/bus1/-3",
+    "poll": "",
+    "field": "",
+    "on": "VIDEO - VOL DOWN",
+    "off": "VIDEO - VOL DOWN"
+   }
+  },
+  {
+   "0_0": {
+    "request": "/action/nudge-aux/1/bus2/3",
+    "poll": "",
+    "field": "",
+    "on": "HOST 1 - VOL UP",
+    "off": "HOST 1 - VOL UP"
+   },
+   "0_1": {
+    "request": "/action/nudge-aux/1/bus2/-3",
+    "poll": "",
+    "field": "",
+    "on": "HOST 1 - VOL DOWN",
+    "off": "HOST 1 - VOL DOWN"
+   },
+   "0_2": {
+    "goto": 1
+   },
+   "1_0": {
+    "request": "/action/nudge-aux/2/bus2/3",
+    "poll": "",
+    "field": "",
+    "on": "HOST 2 - VOL UP",
+    "off": "HOST 2 - VOL UP"
+   },
+   "1_1": {
+    "request": "/action/nudge-aux/2/bus2/-3",
+    "poll": "",
+    "field": "",
+    "on": "HOST 2 - VOL DOWN",
+    "off": "HOST 2 - VOL DOWN"
+   },
+   "2_0": {
+    "request": "/action/nudge-aux/3/bus2/3",
+    "poll": "",
+    "field": "",
+    "on": "GUEST 1 - VOL UP",
+    "off": "GUEST 1 - VOL UP"
+   },
+   "2_1": {
+    "request": "/action/nudge-aux/3/bus2/-3",
+    "poll": "",
+    "field": "",
+    "on": "GUEST 1 - VOL DOWN",
+    "off": "GUEST 1 - VOL DOWN"
+   },
+   "2_2": {
+    "goto": 3
+   },
+   "3_0": {
+    "request": "/action/nudge-aux/4/bus2/3",
+    "poll": "",
+    "field": "",
+    "on": "GUEST 2 - VOL UP",
+    "off": "GUEST 2 - VOL UP"
+   },
+   "3_1": {
+    "request": "/action/nudge-aux/4/bus2/-3",
+    "poll": "",
+    "field": "",
+    "on": "GUEST 2 - VOL DOWN",
+    "off": "GUEST 2 - VOL DOWN"
+   },
+   "3_2": {
+    "screen": 1
+   },
+   "4_0": {
+    "request": "/action/nudge-aux/17/bus2/3",
+    "poll": "",
+    "field": "",
+    "on": "VIDEO - VOL UP",
+    "off": "VIDEO - VOL UP"
+   },
+   "4_1": {
+    "request": "/action/nudge-aux/17/bus2/-3",
+    "poll": "",
+    "field": "",
+    "on": "VIDEO - VOL DOWN",
+    "off": "VIDEO - VOL DOWN"
+   }
+  },
+  {
+   "0_0": {
+    "request": "/action/nudge-aux/1/bus3/3",
+    "poll": "",
+    "field": "",
+    "on": "HOST 1 - VOL UP",
+    "off": "HOST 1 - VOL UP"
+   },
+   "0_1": {
+    "request": "/action/nudge-aux/1/bus3/-3",
+    "poll": "",
+    "field": "",
+    "on": "HOST 1 - VOL DOWN",
+    "off": "HOST 1 - VOL DOWN"
+   },
+   "0_2": {
+    "goto": 1
+   },
+   "1_0": {
+    "request": "/action/nudge-aux/2/bus3/3",
+    "poll": "",
+    "field": "",
+    "on": "HOST 2 - VOL UP",
+    "off": "HOST 2 - VOL UP"
+   },
+   "1_1": {
+    "request": "/action/nudge-aux/2/bus3/-3",
+    "poll": "",
+    "field": "",
+    "on": "HOST 2 - VOL DOWN",
+    "off": "HOST 2 - VOL DOWN"
+   },
+   "2_0": {
+    "request": "/action/nudge-aux/3/bus3/3",
+    "poll": "",
+    "field": "",
+    "on": "GUEST 1 - VOL UP",
+    "off": "GUEST 1 - VOL UP"
+   },
+   "2_1": {
+    "request": "/action/nudge-aux/3/bus3/-3",
+    "poll": "",
+    "field": "",
+    "on": "GUEST 1 - VOL DOWN",
+    "off": "GUEST 1 - VOL DOWN"
+   },
+   "2_2": {
+    "goto": 4
+   },
+   "3_0": {
+    "request": "/action/nudge-aux/4/bus3/3",
+    "poll": "",
+    "field": "",
+    "on": "GUEST 2 - VOL UP",
+    "off": "GUEST 2 - VOL UP"
+   },
+   "3_1": {
+    "request": "/action/nudge-aux/4/bus3/-3",
+    "poll": "",
+    "field": "",
+    "on": "GUEST 2 - VOL DOWN",
+    "off": "GUEST 2 - VOL DOWN"
+   },
+   "3_2": {
+    "screen": 1
+   },
+   "4_0": {
+    "request": "/action/nudge-aux/17/bus3/3",
+    "poll": "",
+    "field": "",
+    "on": "VIDEO - VOL UP",
+    "off": "VIDEO - VOL UP"
+   },
+   "4_1": {
+    "request": "/action/nudge-aux/17/bus3/-3",
+    "poll": "",
+    "field": "",
+    "on": "VIDEO - VOL DOWN",
+    "off": "VIDEO - VOL DOWN"
+   }
+  },
+  {
+   "0_0": {
+    "request": "/action/nudge-aux/1/bus4/3",
+    "poll": "",
+    "field": "",
+    "on": "HOST 1 - VOL UP",
+    "off": "HOST 1 - VOL UP"
+   },
+   "0_1": {
+    "request": "/action/nudge-aux/1/bus4/-3",
+    "poll": "",
+    "field": "",
+    "on": "HOST 1 - VOL DOWN",
+    "off": "HOST 1 - VOL DOWN"
+   },
+   "0_2": {
+    "goto": 1
+   },
+   "1_0": {
+    "request": "/action/nudge-aux/2/bus4/3",
+    "poll": "",
+    "field": "",
+    "on": "HOST 2 - VOL UP",
+    "off": "HOST 2 - VOL UP"
+   },
+   "1_1": {
+    "request": "/action/nudge-aux/2/bus4/-3",
+    "poll": "",
+    "field": "",
+    "on": "HOST 2 - VOL DOWN",
+    "off": "HOST 2 - VOL DOWN"
+   },
+   "2_0": {
+    "request": "/action/nudge-aux/3/bus4/3",
+    "poll": "",
+    "field": "",
+    "on": "GUEST 1 - VOL UP",
+    "off": "GUEST 1 - VOL UP"
+   },
+   "2_1": {
+    "request": "/action/nudge-aux/3/bus4/-3",
+    "poll": "",
+    "field": "",
+    "on": "GUEST 1 - VOL DOWN",
+    "off": "GUEST 1 - VOL DOWN"
+   },
+   "2_2": {
+    "goto": 5
+   },
+   "3_0": {
+    "request": "/action/nudge-aux/4/bus4/3",
+    "poll": "",
+    "field": "",
+    "on": "GUEST 2 - VOL UP",
+    "off": "GUEST 2 - VOL UP"
+   },
+   "3_1": {
+    "request": "/action/nudge-aux/4/bus4/-3",
+    "poll": "",
+    "field": "",
+    "on": "GUEST 2 - VOL DOWN",
+    "off": "GUEST 2 - VOL DOWN"
+   },
+   "3_2": {
+    "screen": 1
+   },
+   "4_0": {
+    "request": "/action/nudge-aux/17/bus4/3",
+    "poll": "",
+    "field": "",
+    "on": "VIDEO - VOL UP",
+    "off": "VIDEO - VOL UP"
+   },
+   "4_1": {
+    "request": "/action/nudge-aux/17/bus4/-3",
+    "poll": "",
+    "field": "",
+    "on": "VIDEO - VOL DOWN",
+    "off": "VIDEO - VOL DOWN"
+   }
+  },
+  {
+   "0_0": {
+    "request": "/action/mute/5",
+    "poll": "/action/state/5",
+    "field": "muted",
+    "on": "PROD 1 - MUTED",
+    "off": "PROD 1 - MUTE"
+   },
+   "0_1": {
+    "request": "/action/mute/6",
+    "poll": "/action/state/6",
+    "field": "muted",
+    "on": "PROD 2 - MUTED",
+    "off": "PROD 2 - MUTE"
+   },
+   "0_2": {
+    "goto": 0
+   },
+   "1_0": {
+    "request": "/action/macro/macro-1774582227201",
+    "poll": "/action/macro-state/macro-1774582227201",
+    "field": "active",
+    "on": "PROD 1 - LIVED",
+    "off": "PROD 1 - LIVE"
+   },
+   "1_1": {
+    "request": "/action/macro/macro-1774582340101",
+    "poll": "/action/macro-state/macro-1774582340101",
+    "field": "active",
+    "on": "PROD 2 - LIVED",
+    "off": "PROD 2 - LIVE"
+   },
+   "2_0": {
+    "request": "/action/macro/prod1-talk-hosts",
+    "poll": "/action/macro-state/prod1-talk-hosts",
+    "field": "active",
+    "on": "PROD 1 - TALKING 1",
+    "off": "PROD 1 - TALK 1"
+   },
+   "2_1": {
+    "request": "/action/macro/macro-1774581643177",
+    "poll": "/action/macro-state/macro-1774581643177",
+    "field": "active",
+    "on": "PROD 2 - TALKING 1",
+    "off": "PROD 2 - TALK 1"
+   },
+   "3_0": {
+    "request": "/action/macro/macro-1774582749617",
+    "poll": "/action/macro-state/macro-1774582749617",
+    "field": "active",
+    "on": "PROD 1 - TALKING CAM",
+    "off": "PROD 1 - TALK CAM"
+   },
+   "3_1": {
+    "request": "/action/macro/macro-1774582877605",
+    "poll": "/action/macro-state/macro-1774582877605",
+    "field": "active",
+    "on": "PROD 2 - TALKING CAM",
+    "off": "PROD 2 - TALK CAM"
+   },
+   "3_2": {
+    "screen": 1
+   }
+  }
+ ]
+}

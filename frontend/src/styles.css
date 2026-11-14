@@ -74,6 +74,21 @@ button:not(:disabled):hover {
   border-color: var(--accent);
 }
 
+/* A download link that looks like a button (D200 profile). */
+a.button {
+  display: inline-block;
+  color: var(--text);
+  background: var(--surface-raised);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.3rem 0.6rem;
+  text-decoration: none;
+}
+
+a.button:hover {
+  border-color: var(--accent);
+}
+
 .top-bar {
   display: flex;
   align-items: center;

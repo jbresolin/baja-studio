@@ -13,12 +13,14 @@ Readiness checks: `readiness.py`.
 from collections.abc import Callable
 from typing import Any
 
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from baja_studio.adapters.xr18_transport import TransportFactory, open_udp_transport
 from baja_studio.audio import defaults
 from baja_studio.audio.config import AudioSettings
+from baja_studio.audio.d200_profile import FILE_NAME, build_profile, d200_base_url
 from baja_studio.audio.stores import LinkStore, OffsetStore, StoredLevels, create_audio_tables
 from baja_studio.core.childproc import EventCallback
 from baja_studio.core.hosts_cards import HostsCard
@@ -37,6 +39,8 @@ from baja_studio.modules.audio.surface import MvaveSurface
 
 MIDI_CHILD_MODULE = "baja_studio.childprocs.midi_child"
 D200_SEEN_PUBLISH_SECONDS = 5.0
+# Ulanzi Studio on the studio PC itself calls the service there.
+DEFAULT_D200_BASE = "http://localhost:8888"
 
 MidiChildFactory = Callable[[ModuleContext, EventCallback], MidiChildHost]
 
@@ -224,6 +228,25 @@ class AudioModule(Module):
     def root_routes(self) -> APIRouter:
         """The D200 contract (`/action/...`)."""
         return d200_routes()
+
+    def routes(self) -> APIRouter:
+        """`GET /d200-profile?base=http://localhost:8888`: a Ulanzi Studio profile for the
+        saved settings, whose buttons call `base` (see `audio/d200_profile.py`)."""
+        router = APIRouter()
+
+        @router.get("/d200-profile")
+        def d200_profile(base: str = DEFAULT_D200_BASE) -> Response:
+            try:
+                base_url = d200_base_url(base)
+            except ValueError as error:
+                raise HTTPException(400, str(error)) from None
+            return Response(
+                build_profile(self.settings(), base_url),
+                media_type="application/octet-stream",
+                headers={"Content-Disposition": f'attachment; filename="{FILE_NAME}"'},
+            )
+
+        return router
 
     def note_d200_request(self) -> None:
         """A D200 called; published at most every few seconds (it polls every second)."""
