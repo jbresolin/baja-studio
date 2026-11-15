@@ -201,6 +201,10 @@ def test_a_port_change_to_a_taken_port_is_refused_and_nothing_is_written(
     assert "UDP 9000 (SRT) is in use by vlc.exe (pid 55)" in state(services, "config.error")
     assert health(services)[0] == HealthState.DEGRADED
 
+    # Still taken half a minute later: still refused (it is tried again by itself).
+    poll(fake_clock, times=16)
+    assert "UDP 9000 (SRT)" in state(services, "config.error")
+
     # The operator picks a free port: it is written, and the error goes away.
     services.settings.update("feeds", {"srt_port": 9001})
     poll(fake_clock, times=2)
@@ -376,3 +380,21 @@ def test_a_refused_password_is_not_echoed_in_the_error(
         refused = http.put("/api/settings/feeds", json={"version": version, "values": both})
         assert refused.status_code == 422
         assert PASSWORD not in refused.text
+
+
+def test_a_refused_port_is_tried_again_once_the_other_program_has_gone(
+    services: StudioServices, feeds_fakes: FeedsFakes, fake_clock: FakeClock, data_directory: Path
+) -> None:
+    # The page says "close it, or pick another port": closing the other
+    # program must be enough, without saving the settings again.
+    feeds_fakes.taken_ports[("TCP", 1940)] = "nginx.exe (pid 99)"
+    services.settings.update("feeds", {"rtmp_port": 1940})
+    poll(fake_clock)
+    assert state(services, "config.error") != ""
+
+    del feeds_fakes.taken_ports[("TCP", 1940)]
+    poll(fake_clock, times=16)  # the retry comes within 30 s
+
+    assert written_config(data_directory)["rtmpAddress"] == ":1940"
+    assert state(services, "config.error") == ""
+    assert feeds_fakes.mediamtx.running

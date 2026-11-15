@@ -56,6 +56,8 @@ __all__ = ["FeedsModule", "FeedsSystem"]
 
 MEDIAMTX_WORKER = "mediamtx"
 POLL_SECONDS = 2.0
+# A refused config (a port taken) is tried again this often, and at every settings change.
+CONFIG_RETRY_SECONDS = 30.0
 
 
 class FeedsModule(Module):
@@ -81,6 +83,7 @@ class FeedsModule(Module):
         self._config_error = ""
         self._apply_requested = threading.Event()
         self._subscribed = False
+        self._retry_apply_at: float | None = None
 
     def initial_state(self) -> dict[str, Any]:
         """Nothing known about MediaMTX until the worker first asks."""
@@ -118,6 +121,7 @@ class FeedsModule(Module):
         context.update_state("config.path", str(config_path(context.data_directory)))
         self._publisher = FeedsStatePublisher(context, self._system, self._service_control)
         self._config_error = ""
+        self._retry_apply_at = None
         self._apply_requested.set()
         if not self._subscribed:
             self._subscribed = True
@@ -130,6 +134,7 @@ class FeedsModule(Module):
     def handle_command(self, command: str, args: dict[str, Any], source: str) -> Any:
         """`apply` (write the config now), `obs_scenes`, `add_to_obs {feed, scene}`."""
         if command == "apply":
+            self._retry_apply_at = None
             self._apply_requested.set()
             self.context.supervisor.wake(self.name, MEDIAMTX_WORKER)
             return {"requested": True}
@@ -195,6 +200,9 @@ class FeedsModule(Module):
         assert self._controller is not None
         if not self._apply_requested.is_set():
             return 0.0
+        now = self.context.clock.monotonic()
+        if self._retry_apply_at is not None and now < self._retry_apply_at:
+            return 0.0
         wait = self._controller.seconds_until_write_allowed()
         if wait > 0:
             return min(wait, POLL_SECONDS)
@@ -206,7 +214,11 @@ class FeedsModule(Module):
                 self.context.logger.warning("feeds settings not applied: %s", error)
             self._config_error = str(error)
             self.context.update_state("config.error", self._config_error)
+            # Try again later by itself: the program on the port may be closed meanwhile.
+            self._apply_requested.set()
+            self._retry_apply_at = now + CONFIG_RETRY_SECONDS
             return 0.0
+        self._retry_apply_at = None
         self._config_error = ""
         self.context.update_state("config.error", "")
         if written:
@@ -248,5 +260,6 @@ class FeedsModule(Module):
         """Settings subscriber: have the worker write the new config right away."""
         if self._context is None:
             return
+        self._retry_apply_at = None
         self._apply_requested.set()
         self.context.supervisor.wake(self.name, MEDIAMTX_WORKER)

@@ -37,7 +37,7 @@ def test_a_laptop_pushes_srt_with_mediamtx_stream_id_and_latency_in_microseconds
         "srt://192.168.10.20:8890?streamid=publish:laptop1&pkt_size=1316&latency=200000"
     )
     slow_radio = FeedsSettings(srt_latency_ms=800, srt_port=9000)
-    assert srt_url(Feed(name="laptop1", password="pw-12"), slow_radio, LAN) == (
+    assert srt_url(Feed(name="laptop1", password="laptop-password"), slow_radio, LAN) == (
         "srt://192.168.10.20:9000?streamid=publish:laptop1:laptop1:<password>"
         "&pkt_size=1316&latency=800000"
     )
