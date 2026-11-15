@@ -8,6 +8,8 @@ The home card then reads, for instance, "finish-ptz ok · joystick offline".
 from baja_studio.core.supervisor import Health, HealthState
 
 MOTION_WORKER = "motion"
+# WP6a: the UVC child's worker (USB cameras), listed as the device "usb".
+UVC_WORKER = "uvc"
 
 
 def device_of(worker_name: str) -> str | None:
@@ -24,11 +26,13 @@ def device_of(worker_name: str) -> str | None:
     return None
 
 
-def summarise(healths: dict[str, Health]) -> Health:
+def summarise(healths: dict[str, Health], usb_in_use: bool = False) -> Health:
     """ok if every device is; offline if every device is away; degraded otherwise.
 
     A failed module worker (the motion loop) makes the module degraded whatever
-    the devices say, because then nothing moves.
+    the devices say, because then nothing moves. The UVC child counts as a
+    device ("usb") only while some enabled camera uses a USB device: on a PC
+    without USB cameras (or without duvc-ctl) it must not turn the card amber.
     """
     motion = healths.get(MOTION_WORKER)
     devices = {
@@ -36,6 +40,8 @@ def summarise(healths: dict[str, Health]) -> Health:
         for name, health in healths.items()
         if (device := device_of(name)) is not None
     }
+    if usb_in_use and UVC_WORKER in healths:
+        devices["usb"] = healths[UVC_WORKER]
     listing = " · ".join(
         f"{device} {health.state.value}" + (f" ({health.message})" if health.message else "")
         for device, health in devices.items()

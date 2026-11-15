@@ -72,7 +72,7 @@ def test_both_axes_of_a_two_axis_move_are_written() -> None:
 
 
 def test_one_refused_control_does_not_stop_the_next() -> None:
-    child, library, _ = child_with_devices()
+    child, _, _ = child_with_devices()
 
     answer = child.handle(
         "write_controls",

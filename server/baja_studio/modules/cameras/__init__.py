@@ -11,9 +11,15 @@ every command.
 State: `state.cameras.cameras.<id>` (the contract's `CameraState` fields plus
 label, owner, route, capabilities, control) and `state.cameras.controllers.<id>`.
 Commands: see `commands.py`. Readiness checks: `cameras/readiness.py`.
+
+Image settings (WP6a, `baja_studio/imaging/`) live here too, because they
+share the registry: the `uvc` worker runs the UVC child (USB cameras), the
+`imaging` worker reapplies saved settings, and `state.cameras.image.<id>`
+and `state.cameras.usb` show them. Commands: `image_commands.py`.
 """
 
 import threading
+from collections.abc import Callable
 from typing import Any
 
 from pydantic import BaseModel
@@ -26,10 +32,24 @@ from baja_studio.cameras.inputs.pelco_d_worker import SerialOpener, open_serial_
 from baja_studio.cameras.inputs.serial_ports import SerialPortLister, list_serial_ports
 from baja_studio.cameras.readiness import camera_checks
 from baja_studio.cameras.registry import CameraRegistry
+from baja_studio.core.childproc import EventCallback
 from baja_studio.core.module import Module, ModuleContext
 from baja_studio.core.readiness import ReadinessCheck
-from baja_studio.core.supervisor import WorkerContext, WorkerSpec
+from baja_studio.core.supervisor import Health, WorkerContext, WorkerSpec
+from baja_studio.imaging.config import StoredPosition
+from baja_studio.imaging.service import CameraEdit, ImagingHost, ImagingService
+from baja_studio.imaging.uvc_link import ChildHost, UvcChildLink
+from baja_studio.imaging.watch import ImagingWatch
 from baja_studio.modules.cameras.commands import CameraCommands
+from baja_studio.modules.cameras.image_commands import IMAGE_COMMANDS, ImageCommands
+
+UVC_CHILD_MODULE = "baja_studio.childprocs.uvc_child"
+UvcChildFactory = Callable[[ModuleContext, EventCallback], ChildHost]
+
+
+def real_uvc_child(context: ModuleContext, on_event: EventCallback) -> ChildHost:
+    """The UVC child process (duvc-ctl, or its fake with BAJA_STUDIO_UVC_BACKEND=fake)."""
+    return context.new_child_process(UVC_CHILD_MODULE, on_event)
 
 
 class CamerasModule(Module):
@@ -45,10 +65,17 @@ class CamerasModule(Module):
         datagram_opener: DatagramOpener = UdpTransport,
         serial_opener: SerialOpener = open_serial_port,
         list_ports: SerialPortLister = list_serial_ports,
+        uvc_child_factory: UvcChildFactory = real_uvc_child,
     ) -> None:
         """`agents` is the agents module; tests pass fake openers for UDP and serial,
-        and a fake list of serial ports."""
+        a fake list of serial ports, and an in-process UVC child."""
         super().__init__()
+        self._uvc_child_factory = uvc_child_factory
+        self._edit_lock = threading.Lock()
+        self._imaging: ImagingService | None = None
+        self._image_commands: ImageCommands | None = None
+        self._imaging_watch: ImagingWatch | None = None
+        self._uvc: UvcChildLink | None = None
         self._agents = agents
         self._datagram_opener = datagram_opener
         self._serial_opener = serial_opener
@@ -62,16 +89,30 @@ class CamerasModule(Module):
 
     def initial_state(self) -> dict[str, Any]:
         """No cameras or controllers until the motion worker applies the settings."""
-        return {"cameras": {}, "controllers": {}, "order": [], "motion": {}}
+        return {
+            "cameras": {},
+            "controllers": {},
+            "order": [],
+            "motion": {},
+            "image": {},
+            "usb": {"status": "starting", "message": "", "devices": []},
+        }
 
     def start(self, context: ModuleContext) -> None:
         """Follow settings edits and summarise health per device."""
         super().start(context)
+        imaging = self._start_imaging(context)
         with self._lock:
             self._registry = CameraRegistry(
-                context, self._agents, self._datagram_opener, self._serial_opener, self._wake_motion
+                context,
+                self._agents,
+                self._datagram_opener,
+                self._serial_opener,
+                self._wake_motion,
+                usb=imaging,
+                save_position=self._save_position,
             )
-        context.supervisor.set_health_summary(self.name, health.summarise)
+        context.supervisor.set_health_summary(self.name, self._summarise_health)
         if not self._subscribed:
             self._subscribed = True
             context.settings.subscribe(self.name, self._apply_new_settings)
@@ -82,8 +123,14 @@ class CamerasModule(Module):
             self._running, self._registry = False, None
 
     def workers(self) -> list[WorkerSpec]:
-        """The motion loop; it also connects the configured devices when it starts."""
-        return [WorkerSpec(health.MOTION_WORKER, self._run_motion)]
+        """The motion loop (it also connects the configured devices when it starts),
+        the UVC child and the imaging worker."""
+        assert self._uvc is not None and self._imaging_watch is not None
+        return [
+            WorkerSpec(health.MOTION_WORKER, self._run_motion),
+            self._uvc.worker_spec(),
+            self._imaging_watch.worker_spec(),
+        ]
 
     def readiness_checks(self) -> list[ReadinessCheck]:
         """Every enabled camera and controller, from what their workers publish."""
@@ -123,7 +170,11 @@ class CamerasModule(Module):
     # --- commands ------------------------------------------------------------------------
 
     def handle_command(self, command: str, args: dict[str, Any], source: str) -> Any:
-        """See `commands.py`: motion, presets, modes, serial ports and raw frames."""
+        """See `commands.py`: motion, presets, modes, serial ports and raw frames;
+        and `image_commands.py`: image settings and USB devices."""
+        if command in IMAGE_COMMANDS:
+            assert self._image_commands is not None
+            return self._image_commands.handle(command, args, source)
         result = self._commands.handle(command, args, source)
         self._wake_motion()
         return result
@@ -131,7 +182,11 @@ class CamerasModule(Module):
     def wants_logged(
         self, command: str, args: dict[str, Any], source: str, result: Any, failed: bool
     ) -> bool:
-        """Keep the start of a browser's move stream, not each of its ten-a-second repeats."""
+        """Keep the start of a browser's move stream, not each of its ten-a-second repeats
+        (and likewise the start of a slider drag's image writes)."""
+        if command in IMAGE_COMMANDS:
+            assert self._image_commands is not None
+            return self._image_commands.wants_logged(command, args, source)
         return self._commands.wants_logged(command, args, source, result, failed)
 
     def _current_registry(self) -> CameraRegistry | None:
@@ -140,3 +195,52 @@ class CamerasModule(Module):
 
     def _save_cameras(self, cameras: list[dict[str, Any]]) -> None:
         self.context.settings.update(self.name, {"cameras": cameras})
+
+    # --- image settings and USB cameras (WP6a) ------------------------------------------
+
+    def _start_imaging(self, context: ModuleContext) -> ImagingService:
+        """Build the UVC link, the imaging service and its worker for this start."""
+        host = ImagingHost(
+            publish=context.update_state,
+            read_state=lambda path: context.state.get(self.name, path),
+            settings=self._settings,
+            edit_camera=self._edit_camera,
+            logger=context.logger,
+        )
+        watch_holder: list[ImagingWatch] = []
+        uvc = UvcChildLink(
+            lambda on_event: self._uvc_child_factory(context, on_event),
+            context.logger,
+            on_started=lambda: watch_holder[0].uvc_started(),
+            on_devices=lambda *changes: watch_holder[0].usb_devices_changed(*changes),
+        )
+        imaging = ImagingService(host, uvc, self._agents)
+        watch = ImagingWatch(imaging)
+        watch_holder.append(watch)
+        self._uvc, self._imaging, self._imaging_watch = uvc, imaging, watch
+        self._image_commands = ImageCommands(imaging, watch, context.clock)
+        return imaging
+
+    def _summarise_health(self, healths: dict[str, Health]) -> Health:
+        """Per device, the UVC child included while some enabled camera uses USB."""
+        usb_in_use = any(
+            camera.enabled and camera.usb_device is not None for camera in self._settings().cameras
+        )
+        return health.summarise(healths, usb_in_use=usb_in_use)
+
+    def _edit_camera(self, camera_id: str, edit: CameraEdit) -> None:
+        """Save an edited copy of one camera's entry; edits never interleave."""
+        with self._edit_lock:
+            cameras = [camera.model_dump(mode="json") for camera in self._settings().cameras]
+            edited = [edit(entry) if entry["id"] == camera_id else entry for entry in cameras]
+            self._save_cameras(edited)
+
+    def _save_position(self, camera_id: str, position: StoredPosition) -> None:
+        """A `uvc` camera's preset, kept in its settings (the Pixy's own slots lose zoom)."""
+
+        def edit(entry: dict[str, Any]) -> dict[str, Any]:
+            kept = [p for p in entry.get("stored_positions", []) if p["n"] != position.n]
+            stored = sorted([*kept, position.model_dump()], key=lambda p: p["n"])
+            return {**entry, "stored_positions": stored}
+
+        self._edit_camera(camera_id, edit)

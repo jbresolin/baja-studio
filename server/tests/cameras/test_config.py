@@ -187,3 +187,60 @@ def test_a_call_bound_to_none_counts_as_unbound() -> None:
     )
 
     assert controller.call_binding(3) is None
+
+
+# --- USB cameras (WP6a) ---------------------------------------------------------------
+
+PIXY_DEVICE = {"path": r"\\?\usb#pixy", "name": "EMEET PIXY"}
+
+
+def test_a_usb_camera_needs_no_host_and_a_uvc_camera_needs_its_device() -> None:
+    # The Pixy is found by its USB device, not by a network address.
+    pixy = CameraConfig.model_validate({"id": "pixy", "driver": "uvc", "usb_device": PIXY_DEVICE})
+    fixed = CameraConfig.model_validate({"id": "wide", "driver": "none"})
+
+    assert pixy.usb_device is not None and pixy.usb_device.index == 0
+    assert fixed.usb_device is None
+    with pytest.raises(ValidationError, match="a uvc camera needs its USB device"):
+        CameraConfig.model_validate({"id": "pixy", "driver": "uvc"})
+
+
+def test_an_agent_camera_cannot_have_a_usb_device() -> None:
+    with pytest.raises(ValidationError, match="come from its agent"):
+        CameraConfig.model_validate(
+            {
+                "id": "trackside",
+                "owner": "agent",
+                "driver": "agent",
+                "address": {"agent_id": "laptop-a", "remote_camera_id": "cam1"},
+                "usb_device": PIXY_DEVICE,
+            }
+        )
+
+
+def test_a_usb_device_needs_a_path_or_at_least_a_name() -> None:
+    with pytest.raises(ValidationError, match="needs its path or, failing that, its name"):
+        CameraConfig.model_validate({"id": "wide", "driver": "none", "usb_device": {}})
+
+
+def test_two_enabled_cameras_cannot_use_the_same_usb_device() -> None:
+    # Paths are compared without letter case, as Windows does.
+    first = {"id": "a", "driver": "none", "usb_device": PIXY_DEVICE}
+    second = {"id": "b", "driver": "none", "usb_device": {"path": PIXY_DEVICE["path"].upper()}}
+
+    with pytest.raises(ValidationError, match="same USB device"):
+        CamerasSettings.model_validate({"cameras": [first, second]})
+    CamerasSettings.model_validate({"cameras": [first, {**second, "enabled": False}]})
+
+
+def test_a_new_usb_device_means_a_new_driver_but_new_image_settings_do_not() -> None:
+    pixy = CameraConfig.model_validate({"id": "pixy", "driver": "uvc", "usb_device": PIXY_DEVICE})
+    moved = CameraConfig.model_validate(
+        {"id": "pixy", "driver": "uvc", "usb_device": {**PIXY_DEVICE, "path": r"\\?\usb#other"}}
+    )
+    tuned = CameraConfig.model_validate(
+        {"id": "pixy", "driver": "uvc", "usb_device": PIXY_DEVICE, "image": {"gain": {"value": 3}}}
+    )
+
+    assert moved.connection_key() != pixy.connection_key()
+    assert tuned.connection_key() == pixy.connection_key()

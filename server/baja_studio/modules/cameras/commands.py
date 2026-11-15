@@ -17,7 +17,7 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 from typing import Any, TypeVar
 
 from baja_studio.agents.client import AgentError
-from baja_studio.agents.contract import Mode
+from baja_studio.agents.contract import CameraKind, Mode
 from baja_studio.cameras.config import CamerasSettings, Owner, PresetName
 from baja_studio.cameras.driver import Velocity
 from baja_studio.cameras.inputs.serial_ports import SerialPortLister
@@ -94,6 +94,10 @@ class CameraCommands:
     def _motion_command(
         self, arbiter: MotionArbiter, command: str, args: dict[str, Any], source: str
     ) -> Any:
+        if command in ("move", "nudge") and arbiter.driver.capabilities().kind == CameraKind.FIXED:
+            # WP6a: a camera with driver `none` (a fixed S600) is in the registry
+            # for its image settings; a move must not look as if it worked.
+            raise CommandError(f"camera {arbiter.camera_id} has no motion of its own")
         if command == "move":
             velocity = Velocity(_number(args, "pan"), _number(args, "tilt"), _number(args, "zoom"))
             ttl_ms = args.get("ttl_ms")
