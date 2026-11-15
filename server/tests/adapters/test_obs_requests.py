@@ -151,3 +151,39 @@ def test_a_screenshot_comes_back_as_a_data_uri(
 
 def test_the_version_names_the_rpc_version(client: ObsWebsocketClient) -> None:
     assert client.get_version()["rpcVersion"] == 1
+
+
+# --- the requests crop cameras use (WP6b) --------------------------------------------------
+
+
+def test_the_input_list_names_every_input_with_its_kind(
+    client: ObsWebsocketClient, fake_obs: FakeObs
+) -> None:
+    # The fake has the two playout media sources; we add a 4K webcam.
+    fake_obs.add_video_input("Cam 4K", 3840, 2160)
+
+    inputs = {item.name: item.kind for item in client.get_input_list()}
+
+    assert inputs == {
+        "baja_program_a": "ffmpeg_source",
+        "baja_program_b": "ffmpeg_source",
+        "Cam 4K": "dshow_input",
+    }
+
+
+def test_a_created_crop_filter_can_be_read_and_changed(
+    client: ObsWebsocketClient, fake_obs: FakeObs
+) -> None:
+    fake_obs.add_video_input("Cam 4K", 3840, 2160)
+
+    # Create OBS's Crop/Pad filter, then cut 100 pixels off the left.
+    client.create_source_filter("Cam 4K", "Baja crop", "crop_filter", {"relative": True})
+    client.set_source_filter_settings("Cam 4K", "Baja crop", {"left": 100})
+    found = client.get_source_filter("Cam 4K", "Baja crop")
+
+    # The settings come back with OBS's defaults filled in (overlay kept "relative").
+    assert found.kind == "crop_filter"
+    assert found.enabled is True
+    assert found.settings["left"] == 100
+    assert found.settings["relative"] is True
+    assert fake_obs.requests_of("SetSourceFilterSettings")[-1].data["overlay"] is True
