@@ -342,6 +342,58 @@ describe("Camera configuration page", () => {
     expect(within(port).getByText("COM3 — Intel AMT")).toBeInTheDocument();
   });
 
+  it("picks the Pixy from the USB camera list and saves it as a uvc camera", async () => {
+    // WP6a: two S600s share a name, so each choice shows its USB port and
+    // which camera already uses it; the Pixy needs no host.
+    await showConfigPage();
+    fireEvent.click(screen.getByRole("button", { name: "Add camera" }));
+    const form = screen.getByRole("form", { name: "New camera" });
+    expect(lastCommand().command).toBe("list_usb_devices");
+    answer({
+      status: "ok",
+      message: "",
+      devices: [
+        { name: "EMEET SmartCam S600", path: "usb#vid#port1#{c}", index: 0, used_by: "wide" },
+        { name: "EMEET SmartCam S600", path: "usb#vid#port2#{c}", index: 1, used_by: null },
+        { name: "EMEET PIXY", path: "usb#vid#port3#{c}", index: 0, used_by: null },
+      ],
+    });
+
+    fireEvent.change(within(form).getByLabelText("Id"), { target: { value: "pixy" } });
+    fireEvent.change(within(form).getByLabelText("Driver"), { target: { value: "uvc" } });
+    expect(within(form).queryByLabelText("Host")).not.toBeInTheDocument();
+    const picker = within(form).getByLabelText("USB device");
+    await waitFor(() =>
+      expect(
+        within(picker).getByText("EMEET SmartCam S600 #1 · port1 (in use by wide)"),
+      ).toBeInTheDocument(),
+    );
+    expect(within(picker).getByText("EMEET SmartCam S600 #2 · port2")).toBeInTheDocument();
+    fireEvent.change(picker, { target: { value: "usb#vid#port3#{c}" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Add camera" }));
+
+    await waitFor(() => expect(saves).toHaveLength(1));
+    expect(saves[0]!.values.cameras!.at(-1)).toMatchObject({
+      id: "pixy",
+      driver: "uvc",
+      usb_device: { path: "usb#vid#port3#{c}", name: "EMEET PIXY", index: 0 },
+    });
+  });
+
+  it("keeps a saved USB device that is not plugged in, and says so", async () => {
+    await showConfigPage();
+    fireEvent.click(
+      within(screen.getByTestId("camera-list")).getAllByRole("button", { name: "Edit" })[1]!,
+    );
+    answer({ status: "unavailable", message: "not on Windows", devices: [] });
+
+    const form = screen.getByRole("form", { name: "Edit wide" });
+    await waitFor(() =>
+      expect(within(form).getByText("USB cameras: not on Windows")).toBeInTheDocument(),
+    );
+    expect(within(form).getByLabelText("USB device")).toHaveValue("");
+  });
+
   it("binds a Call button to selecting a camera and saves it with the controller", async () => {
     await showConfigPage();
     fireEvent.click(

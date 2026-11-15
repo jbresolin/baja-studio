@@ -1,8 +1,10 @@
 /**
  * Add or edit one camera (WP3 brief §4.1). The fields follow the camera's
- * owner: a studio camera is driven directly (VISCA over IP: host and port);
- * an agent camera names one of an agent's cameras, picked from what the
- * agents module sees live, and may have a direct fallback.
+ * owner: a studio camera is driven directly (VISCA over IP: host and port;
+ * a USB PTZ such as the Pixy: driver uvc; or no motion at all: driver none),
+ * and may name its USB device for image settings (WP6a); an agent camera
+ * names one of an agent's cameras, picked from what the agents module sees
+ * live, and may have a direct fallback.
  *
  * "Nudge" and "Stop" try the saved camera through the arbiter like any
  * command, so they also show inversion and scaling at work.
@@ -11,8 +13,16 @@
 import { useState } from "react";
 
 import type { AgentsState } from "../../lib/agents";
-import { emptyAddress, type CameraConfig } from "../../lib/cameras";
+import { emptyAddress, type CameraConfig, type DriverKind } from "../../lib/cameras";
+import type { UsbState } from "../../lib/imaging";
 import { CheckField, NumberField, SelectField, TextField } from "./fields";
+import { UsbDevicePicker } from "./UsbDevicePicker";
+
+const STUDIO_DRIVERS = [
+  { value: "visca_ip", label: "VISCA over IP" },
+  { value: "uvc", label: "USB PTZ (UVC, e.g. the EMEET Pixy)" },
+  { value: "none", label: "none (no motion: a fixed webcam)" },
+];
 
 interface CameraFormProps {
   initial: CameraConfig;
@@ -25,12 +35,15 @@ interface CameraFormProps {
   onSave: (camera: CameraConfig) => void;
   onCancel: () => void;
   run: (command: string, args: Record<string, unknown>) => void;
+  /** The UVC child's USB camera list, for the USB device picker. */
+  listUsbDevices: () => Promise<UsbState>;
 }
 
 export function CameraForm(props: CameraFormProps) {
   const { errors, agents } = props;
   const [draft, setDraft] = useState<CameraConfig>(props.initial);
   const isAgent = draft.owner === "agent";
+  const isVisca = draft.driver === "visca_ip";
   const set = (change: Partial<CameraConfig>) => setDraft((current) => ({ ...current, ...change }));
   const setAddress = (change: Partial<CameraConfig["address"]>) =>
     set({ address: { ...draft.address, ...change } });
@@ -88,13 +101,11 @@ export function CameraForm(props: CameraFormProps) {
         <SelectField
           label="Driver"
           value={draft.driver}
-          options={
-            isAgent
-              ? [{ value: "agent", label: "agent" }]
-              : [{ value: "visca_ip", label: "VISCA over IP" }]
-          }
+          options={isAgent ? [{ value: "agent", label: "agent" }] : STUDIO_DRIVERS}
           error={errors.driver}
-          onChange={() => undefined}
+          onChange={(driver) => {
+            if (!isAgent) set({ driver: driver as DriverKind });
+          }}
         />
         {isAgent ? (
           <>
@@ -117,7 +128,7 @@ export function CameraForm(props: CameraFormProps) {
               onChange={(remote_camera_id) => setAddress({ remote_camera_id })}
             />
           </>
-        ) : (
+        ) : isVisca ? (
           <>
             <TextField
               label="Host"
@@ -135,6 +146,16 @@ export function CameraForm(props: CameraFormProps) {
               onChange={(port) => setAddress({ port: port ?? 52381 })}
             />
           </>
+        ) : null}
+        {!isAgent && (
+          <UsbDevicePicker
+            cameraId={draft.id}
+            value={draft.usb_device}
+            required={draft.driver === "uvc"}
+            error={errors.usb_device ?? errors["usb_device.path"]}
+            listDevices={props.listUsbDevices}
+            onChange={(usb_device) => set({ usb_device })}
+          />
         )}
         <NumberField
           label="Controller address"

@@ -140,6 +140,11 @@ export function CamerasPage() {
           <div className="page-header">
             <h1>{camera.label}</h1>
             <CameraBadges camera={camera} />
+            {state?.image?.[selected] && (
+              <Link to={`/cameras/image#image-${selected}`} title="Image settings">
+                Image…
+              </Link>
+            )}
             <Link
               className="settings-gear"
               to="/cameras/config"
