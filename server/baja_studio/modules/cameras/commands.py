@@ -19,7 +19,7 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 from typing import Any, TypeVar
 
 from baja_studio.agents.client import AgentError
-from baja_studio.agents.contract import Mode
+from baja_studio.agents.contract import CameraKind, Mode
 from baja_studio.cameras.config import CamerasSettings, Owner, PresetName
 from baja_studio.cameras.crop_window import WindowTarget
 from baja_studio.cameras.driver import Velocity
@@ -46,13 +46,13 @@ class CameraCommands:
         self,
         registry: Callable[[], CameraRegistry | None],
         settings: Callable[[], CamerasSettings],
-        save_cameras: Callable[[list[dict[str, Any]]], None],
+        edit_camera: Callable[[str, Callable[[dict[str, Any]], dict[str, Any]]], None],
         list_ports: SerialPortLister,
     ) -> None:
-        """`save_cameras(cameras)` saves an edited camera list through the settings store."""
+        """`edit_camera(camera id, edit)` saves one camera's edited entry atomically."""
         self._registry = registry
         self._settings = settings
-        self._save_cameras = save_cameras
+        self._edit_camera = edit_camera
         self._list_ports = list_ports
         self._lock = threading.Lock()
         self._move_outcomes: dict[tuple[str, str], str] = {}
@@ -97,6 +97,10 @@ class CameraCommands:
     def _motion_command(
         self, arbiter: MotionArbiter, command: str, args: dict[str, Any], source: str
     ) -> Any:
+        if command in ("move", "nudge") and arbiter.driver.capabilities().kind == CameraKind.FIXED:
+            # WP6a: a camera with driver `none` (a fixed S600) is in the registry
+            # for its image settings; a move must not look as if it worked.
+            raise CommandError(f"camera {arbiter.camera_id} has no motion of its own")
         if command == "move":
             velocity = Velocity(_number(args, "pan"), _number(args, "tilt"), _number(args, "zoom"))
             ttl_ms = args.get("ttl_ms")
@@ -157,19 +161,15 @@ class CameraCommands:
                 raise CommandError("a preset name cannot be empty")
             return _agent_answer(arbiter.label_preset(source, n, label)).model_dump(mode="json")
         arbiter.check_preset_number(n)
-        presets = [preset for preset in camera.presets if preset.n != n]
-        if label:
-            presets.append(PresetName(n=n, label=label))
-        cameras = [
-            c.model_dump(mode="json")
-            if c.id != camera.id
-            else {
-                **c.model_dump(mode="json"),
-                "presets": [p.model_dump() for p in sorted(presets, key=lambda p: p.n)],
-            }
-            for c in self._settings().cameras
-        ]
-        self._save_cameras(cameras)
+
+        def rename(entry: dict[str, Any]) -> dict[str, Any]:
+            # Edited from the entry as it is now (another writer may have just saved).
+            presets = [p for p in entry.get("presets", []) if p["n"] != n]
+            if label:
+                presets.append(PresetName(n=n, label=label).model_dump())
+            return {**entry, "presets": sorted(presets, key=lambda p: p["n"])}
+
+        self._edit_camera(camera.id, rename)
         return {"n": n, "label": label}
 
     # --- configuration helpers --------------------------------------------------------

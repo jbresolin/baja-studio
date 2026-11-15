@@ -1,7 +1,9 @@
 /**
  * Add or edit one camera (WP3 brief §4.1). The fields follow the camera's
- * owner: a studio camera is driven directly (VISCA over IP: host and port,
- * or an OBS crop filter: ObsCropFields.tsx); an agent camera names one of an
+ * owner: a studio camera is driven directly (VISCA over IP: host and port;
+ * a USB PTZ such as the Pixy: driver uvc; no motion at all: driver none; or
+ * an OBS crop filter: driver obs_crop, ObsCropFields.tsx), and may name its
+ * USB device for image settings (WP6a); an agent camera names one of an
  * agent's cameras, picked from what the agents module sees live, and may
  * have a direct fallback.
  *
@@ -12,9 +14,18 @@
 import { useState } from "react";
 
 import type { AgentsState } from "../../lib/agents";
-import { emptyAddress, type CameraConfig } from "../../lib/cameras";
+import { emptyAddress, type CameraConfig, type DriverKind } from "../../lib/cameras";
+import type { UsbState } from "../../lib/imaging";
 import { CheckField, NumberField, SelectField, TextField } from "./fields";
 import { ObsCropFields, type ObsSourceList } from "./ObsCropFields";
+import { UsbDevicePicker } from "./UsbDevicePicker";
+
+const STUDIO_DRIVERS = [
+  { value: "visca_ip", label: "VISCA over IP" },
+  { value: "uvc", label: "USB PTZ (UVC, e.g. the EMEET Pixy)" },
+  { value: "none", label: "none (no motion: a fixed webcam)" },
+  { value: "obs_crop", label: "OBS crop (digital PTZ on a 4K webcam)" },
+];
 
 interface CameraFormProps {
   initial: CameraConfig;
@@ -27,6 +38,8 @@ interface CameraFormProps {
   onSave: (camera: CameraConfig) => void;
   onCancel: () => void;
   run: (command: string, args: Record<string, unknown>) => void;
+  /** The UVC child's USB camera list, for the USB device picker. */
+  listUsbDevices: () => Promise<UsbState>;
   /** OBS's inputs, for an OBS crop camera's source (the `list_obs_sources` command). */
   listObsSources: () => Promise<ObsSourceList>;
 }
@@ -36,6 +49,7 @@ export function CameraForm(props: CameraFormProps) {
   const [draft, setDraft] = useState<CameraConfig>(props.initial);
   const isAgent = draft.owner === "agent";
   const isObsCrop = draft.driver === "obs_crop";
+  const isVisca = draft.driver === "visca_ip";
   const set = (change: Partial<CameraConfig>) => setDraft((current) => ({ ...current, ...change }));
   const setAddress = (change: Partial<CameraConfig["address"]>) =>
     set({ address: { ...draft.address, ...change } });
@@ -93,16 +107,11 @@ export function CameraForm(props: CameraFormProps) {
         <SelectField
           label="Driver"
           value={draft.driver}
-          options={
-            isAgent
-              ? [{ value: "agent", label: "agent" }]
-              : [
-                  { value: "visca_ip", label: "VISCA over IP" },
-                  { value: "obs_crop", label: "OBS crop (digital PTZ on a 4K webcam)" },
-                ]
-          }
+          options={isAgent ? [{ value: "agent", label: "agent" }] : STUDIO_DRIVERS}
           error={errors.driver}
-          onChange={(driver) => set({ driver: driver as CameraConfig["driver"] })}
+          onChange={(driver) => {
+            if (!isAgent) set({ driver: driver as DriverKind });
+          }}
         />
         {isAgent ? (
           <>
@@ -125,7 +134,7 @@ export function CameraForm(props: CameraFormProps) {
               onChange={(remote_camera_id) => setAddress({ remote_camera_id })}
             />
           </>
-        ) : isObsCrop ? null : (
+        ) : isVisca ? (
           <>
             <TextField
               label="Host"
@@ -143,6 +152,16 @@ export function CameraForm(props: CameraFormProps) {
               onChange={(port) => setAddress({ port: port ?? 52381 })}
             />
           </>
+        ) : null}
+        {!isAgent && (
+          <UsbDevicePicker
+            cameraId={draft.id}
+            value={draft.usb_device}
+            required={draft.driver === "uvc"}
+            error={errors.usb_device ?? errors["usb_device.path"]}
+            listDevices={props.listUsbDevices}
+            onChange={(usb_device) => set({ usb_device })}
+          />
         )}
         <NumberField
           label="Controller address"
@@ -217,7 +236,7 @@ export function CameraForm(props: CameraFormProps) {
           checked={draft.limits.invert_tilt}
           onChange={(invert_tilt) => setLimits({ invert_tilt })}
         />
-        {!isObsCrop && (
+        {isVisca && (
           <>
             <NumberField
               label="Top pan speed step"

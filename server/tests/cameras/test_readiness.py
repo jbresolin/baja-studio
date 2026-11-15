@@ -7,9 +7,11 @@ each test brings a device up (or not) and runs the module's checks.
 """
 
 from baja_studio.core.readiness import CheckStatus
+from baja_studio.fakes.fake_duvc import S600_A_PATH
 from baja_studio.fakes.fake_serial import SNIFFED_FRAMES
 from tests.conftest import eventually, step_fake_time
 from tests.fake_agents import StartAgent
+from tests.imaging.uvc_harness import s600_camera
 from tests.modules.camera_studio import (
     CAMERA_CLOCK_WORKERS,
     SMTAV_HOST,
@@ -46,6 +48,20 @@ def test_a_direct_camera_that_does_not_answer_fails_with_its_address(studio: Stu
     assert result.status == CheckStatus.FAIL
     assert result.detail.startswith("offline")
     assert SMTAV_HOST in result.fix
+    assert_fix_given(result)
+
+
+def test_an_unplugged_usb_camera_fails_and_says_to_check_its_usb_port(studio: Studio) -> None:
+    # WP6a: a fixed S600 has no network address; its fix is about the USB cable.
+    studio.configure(cameras=[s600_camera()])
+    studio.soon(lambda: studio.status("s600-a") == "ok")
+    studio.usb.unplug(S600_A_PATH)
+    studio.soon(lambda: studio.status("s600-a") == "offline")
+
+    result = run_module_checks(studio.services, "cameras", studio.clock)["camera:s600-a"]
+
+    assert result.status == CheckStatus.FAIL
+    assert result.fix.startswith("Check that EMEET SmartCam S600 is plugged into the studio PC")
     assert_fix_given(result)
 
 

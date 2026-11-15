@@ -2198,3 +2198,61 @@ button.small {
   align-items: flex-start;
   gap: 0.3rem;
 }
+
+/* --- Image settings (WP6a): one card per camera, one per row on a phone. --- */
+
+.image-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 0.75rem;
+}
+
+.image-card:hover {
+  border-color: var(--border);
+}
+
+.image-card .preview-slot {
+  margin: 0.5rem 0;
+}
+
+.image-card-source {
+  font-size: 0.85rem;
+}
+
+.image-control {
+  margin: 0.4rem 0;
+}
+
+.image-control input[type="range"] {
+  width: 100%;
+}
+
+.image-control-head {
+  display: flex;
+  align-items: baseline;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.image-control-value {
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+}
+
+.image-control-range {
+  font-size: 0.8rem;
+}
+
+.image-control-auto {
+  margin-left: auto;
+}
+
+.image-control-error input[type="range"] {
+  accent-color: var(--offline);
+}
+
+@media (max-width: 600px) {
+  .image-grid {
+    grid-template-columns: 1fr;
+  }
+}

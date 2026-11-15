@@ -8,7 +8,7 @@ Cameras page sends them, previews are fetched over HTTP the way the page's
 inside the fake OBS, the module's state and the command log.
 """
 
-from typing import Any
+import threading
 
 import pytest
 
@@ -197,30 +197,27 @@ def test_a_camera_without_an_obs_source_has_no_preview(crop_studio: CropStudio) 
     assert "no OBS source" in answer.json()["detail"]
 
 
-def test_a_preset_save_that_meets_another_save_is_retried_and_both_are_kept(
-    crop_studio: CropStudio, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_presets_stored_at_once_on_two_cameras_are_all_kept(crop_studio: CropStudio) -> None:
+    # Two crop cameras (two webcams) store presets from two pages at the same
+    # time. Each store is a read-modify-write of the cameras settings; done
+    # under the settings store's lock (`edit_camera`), none undoes another.
+    crop_studio.obs.add_video_input("Cam B", 3840, 2160)
+    crop_studio.obs.add_crop_filter("Cam B", CROP_FILTER)
     running(crop_studio)
-    store = crop_studio.services.settings
-    real_update = store.update
-    interfered: list[bool] = []
+    second = {"id": "crop-b", "driver": "obs_crop", "obs_source": "Cam B"}
+    cameras = [camera.model_dump(mode="json") for camera in crop_studio.saved_cameras()]
+    crop_studio.services.settings.update("cameras", {"cameras": [*cameras, second]})
+    crop_studio.soon(lambda: crop_studio.camera("crop-b").get("status") == "ok")
 
-    def update_with_someone_in_between(
-        section: str, patch: dict[str, Any], expected_version: int | None = None
-    ) -> Any:
-        # Just between the preset save's read and its write, someone else saves
-        # (Camera setup renames the camera): the preset save must not undo that.
-        if expected_version is not None and not interfered:
-            interfered.append(True)
-            cameras = [camera.model_dump(mode="json") for camera in crop_studio.saved_cameras()]
-            cameras[0]["label"] = "Renamed meanwhile"
-            real_update("cameras", {"cameras": cameras})
-        return real_update(section, patch, expected_version)
+    def store_many(camera: str) -> None:
+        for n in range(10):
+            crop_studio.command("store_preset", camera=camera, n=n)
 
-    monkeypatch.setattr(store, "update", update_with_someone_in_between)
-    crop_studio.command("store_preset", n=4)
+    pages = [threading.Thread(target=store_many, args=(camera,)) for camera in ("crop", "crop-b")]
+    for page in pages:
+        page.start()
+    for page in pages:
+        page.join(10)
 
-    saved = crop_studio.saved_camera()
-    assert interfered == [True]
-    assert saved.label == "Renamed meanwhile"
-    assert [window.n for window in saved.crop.windows] == [4]
+    for saved in crop_studio.saved_cameras():
+        assert [window.n for window in saved.crop.windows] == list(range(10))

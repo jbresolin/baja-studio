@@ -101,9 +101,10 @@ the Pixy driver). Bench: [docs/bench/wp6b.md](../bench/wp6b.md).
 9. **Presets are stored windows** (`crop.windows`: `n`, `centre_x`,
    `centre_y`, `width`) in the camera's settings, `preset_max` 127.
    `store_preset` saves before the command answers (Camera setup reloads
-   its settings after a store, as after a rename), with the version check:
-   the registry reads, saves on that version and retries on a conflict, so
-   two stores (or a store and a Camera setup save) cannot lose each other.
+   its settings after a store, as after a rename), through WP6a's
+   `CamerasModule.edit_camera` (`SettingsStore.edit`: the read-modify-write
+   under the store's lock), so two stores, or a store and an image-settings
+   save, cannot lose each other.
    A recall jumps there, as `PUT /crop` does on an agent. Preset *names*
    stay in `presets`, as for VISCA.
 10. **Click-to-centre and reset** are `centre_window {camera, x, y}` and
@@ -164,7 +165,11 @@ the Pixy driver). Bench: [docs/bench/wp6b.md](../bench/wp6b.md).
     `overlay` (default true), `clickToCentre` (default false). The box has
     the source's shape (source pixels, or for an agent crop the picture's
     shape scaled by the window's), and shows "1.6×" for crop cameras.
-    Agent PTZ and VISCA cameras show their `obs_source` if set.
+    Agent PTZ and VISCA cameras show their `obs_source` if set. A preview
+    counts as off screen until the browser's IntersectionObserver first
+    says otherwise, so a page of many cards (WP6a's Image page, whose
+    preview slots hold it, without click-to-centre) asks only for the
+    cards shown.
 
 ### Fake OBS, rig, files
 

@@ -4,8 +4,14 @@
  */
 
 import type { CameraKind, CameraPosition, TrackerView } from "./agents";
+import type { ImageCardView, UsbState } from "./imaging";
 
 export type CameraStatus = "ok" | "degraded" | "offline";
+/**
+ * visca_ip and agent (WP2); uvc (the Pixy) and none (no motion, e.g. a fixed
+ * S600): WP6a; obs_crop (a Crop/Pad filter in OBS): WP6b.
+ */
+export type DriverKind = "visca_ip" | "agent" | "uvc" | "none" | "obs_crop";
 export type CameraMode = "manual" | "auto" | "auto_paused" | "hold";
 
 export interface PresetName {
@@ -37,8 +43,6 @@ export interface CameraCapabilities {
   preset_max: number | null;
 }
 
-export type DriverKind = "visca_ip" | "agent" | "obs_crop";
-
 /**
  * A crop camera's window (`state.cameras.cameras.<id>.crop`, ADR 0020): x, y,
  * w, h are fractions of the source (top-left and size). OBS crop cameras also
@@ -66,12 +70,15 @@ export interface CameraView {
   controller_address: number | null;
   obs_source: string | null;
   presets: PresetName[];
+  usb_device?: UsbDeviceRef | null;
   status: CameraStatus;
   status_reason: string;
   route: "direct" | "agent" | "fallback";
   mode: CameraMode | null;
   tracker: TrackerView;
   position: CameraPosition | null;
+  /** True when `position` is only where the camera was last told to go (the Pixy). */
+  position_is_commanded?: boolean;
   moving: boolean;
   last_error: string;
   capabilities?: CameraCapabilities;
@@ -117,6 +124,9 @@ export interface CamerasState {
   /** Enabled cameras in display order (and Alt+1–9 order). */
   order: string[];
   motion: Partial<MotionSettings>;
+  /** WP6a: image cards by camera id, and the USB cameras plugged in. */
+  image?: Record<string, ImageCardView>;
+  usb?: UsbState;
 }
 
 // --- settings (what the configuration page edits) ------------------------------------
@@ -161,6 +171,27 @@ export interface CropSettings {
   windows: CropPresetWindow[];
 }
 
+/** Which USB camera a camera is (WP6a): its DirectShow path, and name + index for display. */
+export interface UsbDeviceRef {
+  path: string;
+  name: string;
+  index: number;
+}
+
+/** A saved image control: a raw value (null: leave as is) and auto (null: has none). */
+export interface ImageSetting {
+  value: number | null;
+  auto: boolean | null;
+}
+
+/** A uvc camera's preset, in device units (the Pixy's own slots lose zoom). */
+export interface StoredPosition {
+  n: number;
+  pan: number;
+  tilt: number;
+  zoom: number;
+}
+
 export interface CameraConfig {
   id: string;
   label: string;
@@ -176,6 +207,11 @@ export interface CameraConfig {
   limits: MotionLimits;
   speed_curve: "linear" | "squared";
   direct_fallback: { driver: "visca_ip"; address: CameraAddress } | null;
+  usb_device: UsbDeviceRef | null;
+  /** Edited on the Image page, not in the camera form. */
+  image: Record<string, ImageSetting>;
+  /** Stored by the Cameras page's preset buttons (uvc cameras). */
+  stored_positions: StoredPosition[];
   /** Used by `obs_crop` cameras only. */
   crop: CropSettings;
 }
@@ -251,6 +287,9 @@ export function newCamera(id: string): CameraConfig {
     },
     speed_curve: "linear",
     direct_fallback: null,
+    usb_device: null,
+    image: {},
+    stored_positions: [],
     crop: defaultCropSettings(),
   };
 }

@@ -79,9 +79,13 @@ export function addToTrail(
   return { kept: trimmed, dropped };
 }
 
-/** True while the element is on screen (always, where the browser cannot tell). */
+/**
+ * True while the element is on screen (always, where the browser cannot tell).
+ * Until the browser first says, it counts as off screen: a page of many
+ * cards must not ask for every preview before it knows which are shown.
+ */
 function useOnScreen(element: RefObject<HTMLElement | null>): boolean {
-  const [onScreen, setOnScreen] = useState(true);
+  const [onScreen, setOnScreen] = useState(() => typeof IntersectionObserver === "undefined");
   useEffect(() => {
     const target = element.current;
     if (!target || typeof IntersectionObserver === "undefined") return;

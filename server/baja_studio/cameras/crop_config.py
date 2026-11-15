@@ -11,7 +11,6 @@ from pydantic import BaseModel, ConfigDict, Field
 from baja_studio.agents.contract import MAX_PRESET_NUMBER
 
 if TYPE_CHECKING:
-    from baja_studio.cameras.config import CameraConfig
     from baja_studio.cameras.crop_window import CropWindow
 
 
@@ -100,23 +99,19 @@ class ObsCropSettings(StrictModel):
         return next((window for window in self.windows if window.n == n), None)
 
 
-def cameras_with_crop_window(
-    cameras: "list[CameraConfig]", camera_id: str, n: int, window: "CropWindow"
-) -> list[dict[str, Any]]:
-    """The camera list as settings JSON, with `window` stored as preset `n` of `camera_id`."""
+def with_crop_window(entry: dict[str, Any], n: int, window: "CropWindow") -> dict[str, Any]:
+    """A camera's settings entry (JSON form) with `window` stored as its preset `n`.
+
+    Used inside `CamerasModule.edit_camera`, which does the read-modify-write
+    under the settings store's lock.
+    """
     stored = CropPresetWindow(
         n=n,
         centre_x=round(window.centre_x, 6),
         centre_y=round(window.centre_y, 6),
         width=round(window.width, 6),
-    )
-    entries = []
-    for camera in cameras:
-        entry = camera.model_dump(mode="json")
-        if camera.id == camera_id:
-            windows = [item for item in camera.crop.windows if item.n != n] + [stored]
-            entry["crop"]["windows"] = [
-                item.model_dump() for item in sorted(windows, key=lambda item: item.n)
-            ]
-        entries.append(entry)
-    return entries
+    ).model_dump()
+    crop = dict(entry.get("crop") or {})
+    kept = [item for item in crop.get("windows", []) if item["n"] != n]
+    crop["windows"] = sorted([*kept, stored], key=lambda item: item["n"])
+    return {**entry, "crop": crop}

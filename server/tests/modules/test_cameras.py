@@ -142,7 +142,8 @@ def test_adding_changing_and_removing_cameras_takes_effect_without_a_restart(
     # Removing the camera removes it from the state the page shows.
     studio.configure(cameras=[])
     eventually(lambda: studio.camera("smtav") is None)
-    assert studio.services.supervisor.worker_names("cameras") == ["motion"]
+    # Only the module's own workers are left (the UVC child and imaging are WP6a's).
+    assert studio.services.supervisor.worker_names("cameras") == ["motion", "uvc", "imaging"]
 
 
 def test_changing_the_controllers_port_moves_its_worker_to_the_new_port(studio: Studio) -> None:

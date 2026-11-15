@@ -13,6 +13,7 @@ from baja_studio.agents.contract import DEFAULT_TTL_MS, MAX_PRESET_NUMBER, MAX_T
 from baja_studio.cameras.crop_config import ObsCropSettings
 from baja_studio.cameras.drivers import visca_packets
 from baja_studio.core.settings import ModuleSettings
+from baja_studio.imaging.config import ImageSetting, StoredPosition, UsbDeviceRef
 
 VISCA_IP_PORT = 52381
 PELCO_D_DEFAULT_BAUD = 2400
@@ -33,8 +34,17 @@ class DriverKind(StrEnum):
 
     VISCA_IP = "visca_ip"
     AGENT = "agent"
+    # A USB camera that pans, tilts and zooms through UVC (the EMEET Pixy), WP6a.
+    UVC = "uvc"
+    # A camera with no motion of its own (a fixed S600 webcam): it lives in the
+    # registry for its image settings and its preview, and refuses motion.
+    NONE = "none"
     # A digital PTZ: a Crop/Pad filter on an OBS source (WP6b, ADR 0020).
     OBS_CROP = "obs_crop"
+
+
+# Drivers whose camera is found by `usb_device` rather than by a network address.
+USB_DRIVERS = (DriverKind.UVC, DriverKind.NONE)
 
 
 class SpeedCurve(StrEnum):
@@ -127,6 +137,12 @@ class CameraConfig(StrictModel):
     limits: MotionLimits = Field(default_factory=MotionLimits)
     speed_curve: SpeedCurve = SpeedCurve.LINEAR
     direct_fallback: DirectFallback | None = None
+    # WP6a: the USB camera on the studio PC (its image settings, and the
+    # device a `uvc` or `none` camera is), the saved image settings by control
+    # name, and a `uvc` camera's presets.
+    usb_device: UsbDeviceRef | None = None
+    image: dict[str, ImageSetting] = Field(default_factory=dict)
+    stored_positions: list[StoredPosition] = Field(default_factory=list)
     # Used by `obs_crop` cameras only (WP6b).
     crop: ObsCropSettings = Field(default_factory=ObsCropSettings)
 
@@ -140,15 +156,20 @@ class CameraConfig(StrictModel):
         elif self.driver == DriverKind.OBS_CROP:
             if not (self.obs_source or "").strip():
                 raise ValueError("an OBS crop camera needs its OBS source")
-        elif not self.address.host:
+        elif self.driver not in USB_DRIVERS and not self.address.host:
             raise ValueError("a direct camera needs address.host")
         if self.direct_fallback is not None and self.owner != Owner.AGENT:
             raise ValueError("only agent-owned cameras have a direct fallback")
+        if self.driver == DriverKind.UVC and self.usb_device is None:
+            raise ValueError("a uvc camera needs its USB device (pick it from the list)")
+        if self.usb_device is not None and self.owner == Owner.AGENT:
+            raise ValueError("an agent camera's image settings come from its agent, not USB")
         return self
 
     def connection_key(self) -> tuple[object, ...]:
         """What the driver is built from; a change here means a new driver."""
-        return (self.driver, self.address, self.direct_fallback)
+        usb = self.usb_device if self.driver in USB_DRIVERS else None
+        return (self.driver, self.address, self.direct_fallback, usb)
 
 
 class ControllerProtocol(StrEnum):
@@ -284,6 +305,13 @@ class CamerasSettings(ModuleSettings):
         ]
         if len(set(addresses)) != len(addresses):
             raise ValueError("two enabled cameras answer to the same controller address")
+        usb_paths = [
+            camera.usb_device.path.lower()
+            for camera in self.cameras
+            if camera.enabled and camera.usb_device is not None
+        ]
+        if len(set(usb_paths)) != len(usb_paths):
+            raise ValueError("two enabled cameras use the same USB device")
         controller_ids = [controller.id for controller in self.controllers]
         if len(set(controller_ids)) != len(controller_ids):
             raise ValueError("two controllers have the same id")

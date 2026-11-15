@@ -25,21 +25,19 @@ from baja_studio.cameras.config import (
     ControllerConfig,
     DriverKind,
 )
-from baja_studio.cameras.crop_config import cameras_with_crop_window
 from baja_studio.cameras.crop_window import CropWindow
 from baja_studio.cameras.driver import CameraDriver, DriverHost
 from baja_studio.cameras.drivers.agent_gateway import AgentGateway
 from baja_studio.cameras.drivers.agent_proxy import AgentProxyDriver
+from baja_studio.cameras.drivers.fixed import FixedCameraDriver
 from baja_studio.cameras.drivers.obs_crop import ObsCropDriver
 from baja_studio.cameras.drivers.obs_gateway import NoObsGateway, ObsGateway
+from baja_studio.cameras.drivers.uvc_ptz import UsbPtzAccess, UvcPtzDriver
 from baja_studio.cameras.drivers.visca_ip import DatagramOpener, ViscaIpDriver
 from baja_studio.cameras.inputs.pelco_d_worker import PelcoDInput, SerialOpener
 from baja_studio.cameras.motion.arbiter import MotionArbiter
 from baja_studio.core.module import ModuleContext
-from baja_studio.core.settings import SettingsConflictError
-
-# Tries at saving a stored crop window when other saves keep coming in between.
-SAVE_ATTEMPTS = 5
+from baja_studio.imaging.config import StoredPosition
 
 
 class CameraRegistry:
@@ -52,13 +50,24 @@ class CameraRegistry:
         datagram_opener: DatagramOpener,
         serial_opener: SerialOpener,
         wake_motion: Callable[[], None],
+        usb: UsbPtzAccess | None = None,
+        save_position: Callable[[str, StoredPosition], None] | None = None,
         obs: ObsGateway | None = None,
+        save_crop_window: Callable[[str, int, CropWindow], None] | None = None,
     ) -> None:
         """Nothing runs until `apply` is called (by the module's motion worker).
 
-        `obs` is playout's OBS connection, for `obs_crop` cameras."""
+        `usb` (the imaging service) reaches USB cameras for the `uvc` and
+        `none` drivers; `save_position(camera id, position)` saves a `uvc`
+        camera's preset in its settings. `obs` is playout's OBS connection, for
+        `obs_crop` cameras; `save_crop_window(camera id, n, window)` saves an
+        `obs_crop` camera's preset.
+        """
         self._context = context
+        self._usb = usb
+        self._save_position = save_position
         self._obs = obs or NoObsGateway()
+        self._save_crop_window = save_crop_window
         self._agents = agents
         self._datagram_opener = datagram_opener
         self._serial_opener = serial_opener
@@ -152,11 +161,13 @@ class CameraRegistry:
     def _build_driver(self, camera: CameraConfig) -> CameraDriver:
         host = self._driver_host(camera.id)
         if camera.driver == DriverKind.OBS_CROP:
+            save_window = self._save_crop_window
+            assert save_window is not None, "the cameras module always passes it"
             return ObsCropDriver(
                 host,
                 self._obs,
                 config=lambda: self._configs.get(camera.id, camera),
-                save_window=lambda n, window: self._save_crop_window(camera.id, n, window),
+                save_window=lambda n, window: save_window(camera.id, n, window),
             )
         if camera.driver == DriverKind.AGENT:
             return AgentProxyDriver(
@@ -172,7 +183,24 @@ class CameraRegistry:
                     "fallback",
                 ),
             )
+        if camera.driver in (DriverKind.UVC, DriverKind.NONE):
+            return self._usb_driver(camera, host)
         return self._visca_driver(camera, host, camera.address, "visca")
+
+    def _usb_driver(self, camera: CameraConfig, host: DriverHost) -> CameraDriver:
+        """WP6a: the Pixy (`uvc`), or a camera without motion (`none`)."""
+        usb, save = self._usb, self._save_position
+        if camera.driver == DriverKind.NONE:
+            if usb is None or camera.usb_device is None:
+                return FixedCameraDriver(host, None)
+            return FixedCameraDriver(host, lambda: usb.locate_camera(camera.id))
+        assert usb is not None and save is not None, "the cameras module always passes both"
+        return UvcPtzDriver(
+            host,
+            usb,
+            stored_positions=lambda: self._configs.get(camera.id, camera).stored_positions,
+            save_position=lambda position: save(camera.id, position),
+        )
 
     def _visca_driver(
         self, camera: CameraConfig, host: DriverHost, address: CameraAddress, suffix: str
@@ -279,24 +307,6 @@ class CameraRegistry:
 
         return log
 
-    def _save_crop_window(self, camera_id: str, n: int, window: CropWindow) -> None:
-        """An `obs_crop` camera stored preset `n`: keep its window in the camera's settings.
-
-        Saved on top of the version just read, and read again if someone saved
-        meanwhile (another camera storing a preset), so no store is lost.
-        """
-        store = self._context.settings
-        for _ in range(SAVE_ATTEMPTS):
-            record = store.record(self._context.name)
-            assert isinstance(record.values, CamerasSettings)
-            cameras = cameras_with_crop_window(record.values.cameras, camera_id, n, window)
-            try:
-                store.update(self._context.name, {"cameras": cameras}, record.version)
-                return
-            except SettingsConflictError:
-                continue
-        raise SettingsConflictError(self._context.name, record.version, record.version + 1)
-
     def arbiter_for_address(self, address: int) -> MotionArbiter | None:
         with self._lock:
             for camera_id, camera in self._configs.items():
@@ -322,6 +332,7 @@ def _camera_details(camera: CameraConfig) -> dict[str, Any]:
         "driver": camera.driver.value,
         "controller_address": camera.controller_address,
         "obs_source": camera.obs_source,
+        "usb_device": camera.usb_device.model_dump() if camera.usb_device else None,
     }
     # An agent camera's presets are the agent's (its driver mirrors them from
     # /agent/info); a direct camera's names live in the registry.
@@ -342,6 +353,9 @@ def _initial_camera_state(camera: CameraConfig) -> dict[str, Any]:
         "mode": "manual" if direct else None,
         "tracker": {"state": "idle", "target_id": None, "confidence": None},
         "position": None,
+        # True for a camera that cannot read its position back (the Pixy's
+        # `uvc` driver): `position` is then where it was last told to go.
+        "position_is_commanded": False,
         "moving": False,
         "last_command_source": None,
         "last_command_ts": None,

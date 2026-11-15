@@ -24,6 +24,7 @@ from baja_studio.modules.agents import AgentsModule
 from baja_studio.modules.cameras import CamerasModule
 from baja_studio.modules.playout import PlayoutModule
 from tests.conftest import AppFactory, FakeClock, eventually, module_worker_threads
+from tests.imaging.uvc_harness import FakeUsb
 
 OBS_HOST, OBS_PORT = "obs.test", 4455
 # Playout never connects without a password, so the fake OBS asks for one.
@@ -123,12 +124,14 @@ def crop_studio(
     obs.add_video_input(WEBCAM, 3840, 2160)
     network.plug(OBS_HOST, OBS_PORT, obs)
     playouts: list[PlayoutModule] = []
+    usb = FakeUsb()  # WP6a's UVC child, in-process (no USB cameras are used here)
 
     def modules(registry: Any) -> list[Any]:
         agents = AgentsModule(transport, studio_id="test-studio")
         playout = PlayoutModule(obs_transport_factory=network.connect)
         playouts.append(playout)
-        return [CamerasModule(agents, obs=playout.obs_gateway), playout, agents]
+        cameras = CamerasModule(agents, obs=playout.obs_gateway, uvc_child_factory=usb.new_host)
+        return [cameras, playout, agents]
 
     app = make_app(modules)
     with TestClient(app) as http:

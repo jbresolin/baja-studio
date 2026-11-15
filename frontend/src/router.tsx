@@ -9,6 +9,7 @@ import { CamerasPage } from "./pages/CamerasPage";
 import { Home } from "./pages/Home";
 import { HostsControlPage } from "./pages/HostsControlPage";
 import { HostsScreen } from "./pages/HostsScreen";
+import { ImagePage } from "./pages/ImagePage";
 import { Logs } from "./pages/Logs";
 import { ModulePage } from "./pages/ModulePage";
 import { PlayoutPage } from "./pages/PlayoutPage";
@@ -25,6 +26,7 @@ export const routes = [
       { index: true, element: <Home /> },
       { path: "cameras", element: <CamerasPage /> },
       { path: "cameras/config", element: <CameraConfigPage /> },
+      { path: "cameras/image", element: <ImagePage /> },
       { path: "playout", element: <PlayoutPage /> },
       { path: "playout/settings", element: <PlayoutSettingsPage /> },
       { path: "audio", element: <AudioPage /> },

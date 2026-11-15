@@ -20,6 +20,7 @@ import type { ObsSourceList } from "../components/config/ObsCropFields";
 import { PresetTable } from "../components/config/PresetTable";
 import { HealthBadge } from "../components/HealthBadge";
 import type { AgentsState } from "../lib/agents";
+import type { UsbState } from "../lib/imaging";
 import {
   newCamera,
   newController,
@@ -62,6 +63,11 @@ export function CameraConfigPage() {
     [sendCommand],
   );
 
+  const listUsbDevices = useCallback(
+    async () => (await sendCommand("cameras", "list_usb_devices")) as UsbState,
+    [sendCommand],
+  );
+
   const listPorts = useCallback(async () => {
     const reply = (await sendCommand("cameras", "list_serial_ports")) as {
       ports: SerialPortChoice[];
@@ -93,9 +99,16 @@ export function CameraConfigPage() {
       void saveCameras([...cameras, draft]);
       return;
     }
-    // Preset names are edited in the preset table (and may have changed
+    // Preset names are edited in the preset table, image settings on the
+    // Image page and uvc presets by the preset buttons (any may have changed
     // since this form opened), so the saved ones are kept.
-    const kept = { ...draft, presets: cameras[index]!.presets };
+    const saved = cameras[index]!;
+    const kept = {
+      ...draft,
+      presets: saved.presets,
+      image: saved.image,
+      stored_positions: saved.stored_positions,
+    };
     void saveCameras(cameras.map((camera, i) => (i === index ? kept : camera)));
   }
 
@@ -116,6 +129,7 @@ export function CameraConfigPage() {
       <div className="page-header">
         <h1>Camera setup</h1>
         <Link to="/cameras">Cameras</Link>
+        <Link to="/cameras/image">Image…</Link>
         <span className="muted">settings version {settings.version}</span>
       </div>
       {notice && (
@@ -166,6 +180,7 @@ export function CameraConfigPage() {
           onCancel={() => setEditing(null)}
           run={(command, args) => void run(command, args)}
           listObsSources={listObsSources}
+          listUsbDevices={listUsbDevices}
         />
       )}
       {editingCamera !== null &&
