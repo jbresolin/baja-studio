@@ -16,6 +16,7 @@ import { CameraTable, RemoveButton } from "../components/config/CameraTable";
 import { ControllerForm, type SerialPortChoice } from "../components/config/ControllerForm";
 import { FrameMonitor } from "../components/config/FrameMonitor";
 import { MotionForm } from "../components/config/MotionForm";
+import type { ObsSourceList } from "../components/config/ObsCropFields";
 import { PresetTable } from "../components/config/PresetTable";
 import { HealthBadge } from "../components/HealthBadge";
 import type { AgentsState } from "../lib/agents";
@@ -53,6 +54,11 @@ export function CameraConfigPage() {
       }
     },
     [sendCommand, settings],
+  );
+
+  const listObsSources = useCallback(
+    async () => (await sendCommand("cameras", "list_obs_sources")) as ObsSourceList,
+    [sendCommand],
   );
 
   const listPorts = useCallback(async () => {
@@ -158,6 +164,7 @@ export function CameraConfigPage() {
           onSave={(draft) => saveCamera(editingCamera, draft)}
           onCancel={() => setEditing(null)}
           run={(command, args) => void run(command, args)}
+          listObsSources={listObsSources}
         />
       )}
       {editingCamera !== null &&

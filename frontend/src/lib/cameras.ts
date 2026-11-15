@@ -37,11 +37,32 @@ export interface CameraCapabilities {
   preset_max: number | null;
 }
 
+export type DriverKind = "visca_ip" | "agent" | "obs_crop";
+
+/**
+ * A crop camera's window (`state.cameras.cameras.<id>.crop`, ADR 0020): x, y,
+ * w, h are fractions of the source (top-left and size). OBS crop cameras also
+ * give the source's pixels; agent crop cameras do not know them.
+ */
+export interface CropView {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  centre_x: number;
+  centre_y: number;
+  zoom: number | null;
+  magnification: number;
+  source_width?: number;
+  source_height?: number;
+  filter?: string;
+}
+
 /** `state.cameras.cameras.<id>`. */
 export interface CameraView {
   label: string;
   owner: "studio" | "agent";
-  driver: "visca_ip" | "agent";
+  driver: DriverKind;
   controller_address: number | null;
   obs_source: string | null;
   presets: PresetName[];
@@ -55,6 +76,8 @@ export interface CameraView {
   last_error: string;
   capabilities?: CameraCapabilities;
   control: CameraControl;
+  /** Crop cameras only: where the window is. */
+  crop?: CropView | null;
 }
 
 /** One decoded frame on the controller's frame monitor. */
@@ -115,12 +138,33 @@ export interface MotionLimits {
   tilt_speed_max_step: number;
 }
 
+/** A stored window of an `obs_crop` camera (its preset `n`). */
+export interface CropPresetWindow {
+  n: number;
+  centre_x: number;
+  centre_y: number;
+  width: number;
+}
+
+/** How an `obs_crop` camera moves its OBS Crop/Pad filter (server: cameras/crop_config.py). */
+export interface CropSettings {
+  filter_name: string;
+  min_window: number;
+  aspect: string;
+  update_hz: number;
+  pan_speed: number;
+  tilt_speed: number;
+  zoom_speed: number;
+  preview_source: string | null;
+  windows: CropPresetWindow[];
+}
+
 export interface CameraConfig {
   id: string;
   label: string;
   enabled: boolean;
   owner: "studio" | "agent";
-  driver: "visca_ip" | "agent";
+  driver: DriverKind;
   address: CameraAddress;
   controller_address: number | null;
   obs_source: string | null;
@@ -130,6 +174,8 @@ export interface CameraConfig {
   limits: MotionLimits;
   speed_curve: "linear" | "squared";
   direct_fallback: { driver: "visca_ip"; address: CameraAddress } | null;
+  /** Used by `obs_crop` cameras only. */
+  crop: CropSettings;
 }
 
 export type CallAction = "none" | "select_camera" | "recall_preset";
@@ -159,6 +205,21 @@ export interface CamerasSettingsValues {
 
 export const VISCA_IP_PORT = 52381;
 
+/** The server's defaults for an `obs_crop` camera's settings. */
+export function defaultCropSettings(): CropSettings {
+  return {
+    filter_name: "Baja crop",
+    min_window: 0.5,
+    aspect: "16:9",
+    update_hz: 25,
+    pan_speed: 0.3,
+    tilt_speed: 0.3,
+    zoom_speed: 0.5,
+    preview_source: null,
+    windows: [],
+  };
+}
+
 export function emptyAddress(): CameraAddress {
   return { host: "", port: VISCA_IP_PORT, agent_id: "", remote_camera_id: "" };
 }
@@ -187,6 +248,7 @@ export function newCamera(id: string): CameraConfig {
     },
     speed_curve: "linear",
     direct_fallback: null,
+    crop: defaultCropSettings(),
   };
 }
 

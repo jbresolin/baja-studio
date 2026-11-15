@@ -70,7 +70,9 @@ export function CameraTable({ cameras, live, onSave, onEdit }: CameraTableProps)
               <td className="muted">
                 {camera.owner === "agent"
                   ? `agent ${camera.address.agent_id}/${camera.address.remote_camera_id}`
-                  : `${camera.address.host}:${camera.address.port}`}
+                  : camera.driver === "obs_crop"
+                    ? `OBS crop ${camera.obs_source ?? ""}`
+                    : `${camera.address.host}:${camera.address.port}`}
                 {camera.controller_address !== null && ` · addr ${camera.controller_address}`}
               </td>
               <td>

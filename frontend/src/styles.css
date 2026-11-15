@@ -489,6 +489,80 @@ kbd {
   color: var(--text-muted);
 }
 
+/* A camera's live thumbnail (components/cameras/CameraPreview.tsx). */
+.camera-preview {
+  position: relative;
+  height: 100%;
+  max-width: 100%;
+  overflow: hidden;
+  border-radius: 4px;
+  background: #000;
+  user-select: none;
+}
+
+.camera-preview-clickable {
+  cursor: crosshair;
+}
+
+.camera-preview .preview-image {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  object-fit: fill;
+}
+
+/* Windows seen before, around the current one: the frame pieced together. */
+.camera-preview .preview-trail {
+  opacity: 0.35;
+  filter: grayscale(0.6);
+}
+
+.camera-preview .preview-window {
+  position: absolute;
+  box-sizing: border-box;
+  border: 2px solid var(--accent);
+  box-shadow: 0 0 0 9999px rgb(0 0 0 / 25%);
+  pointer-events: none;
+}
+
+.camera-preview .preview-zoom,
+.camera-preview .preview-stale {
+  position: absolute;
+  padding: 0.05rem 0.35rem;
+  border-radius: 3px;
+  background: rgb(0 0 0 / 65%);
+  color: #fff;
+  font-size: 0.8rem;
+}
+
+.camera-preview .preview-zoom {
+  right: 0.3rem;
+  bottom: 0.3rem;
+}
+
+.camera-preview .preview-stale {
+  left: 0.3rem;
+  top: 0.3rem;
+  color: var(--degraded);
+}
+
+.camera-preview .preview-message {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0.5rem;
+  text-align: center;
+  color: var(--text-muted);
+  font-size: 0.85rem;
+}
+
+.camera-preview-form {
+  height: 9rem;
+  margin: 0.5rem 0;
+}
+
 .joystick-pad {
   position: relative;
   width: min(18rem, 100%);
