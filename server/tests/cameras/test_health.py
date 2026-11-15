@@ -45,3 +45,15 @@ def test_a_failed_motion_loop_is_degraded_whatever_the_devices_say() -> None:
 
 def test_nothing_configured_is_ok_and_says_so() -> None:
     assert summarise({"motion": OK}) == Health(HealthState.OK, "no cameras or controllers enabled")
+
+
+def test_the_uvc_child_counts_only_while_a_camera_uses_usb() -> None:
+    # On a PC without duvc-ctl (or without USB cameras) the child is "offline"
+    # with a reason; that must not turn the home card amber for nobody.
+    no_uvc = Health(HealthState.OFFLINE, "USB camera control is not available here")
+    healths = {"motion": OK, "camera:smtav:visca": OK, "uvc": no_uvc}
+
+    assert summarise(healths) == Health(HealthState.OK, "smtav ok")
+    assert summarise(healths, usb_in_use=True) == Health(
+        HealthState.DEGRADED, "smtav ok · usb offline (USB camera control is not available here)"
+    )

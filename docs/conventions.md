@@ -228,6 +228,12 @@ reading its tests.
   answer and event with timestamps, as for OBS in LIVESTACK-56), then change
   the fake to match and write the failing test against it, then fix the
   code. Each modelled behaviour names its source in the fake's docstring.
+- **A native library's quirks are modelled by a fake of the library.** When
+  an adapter wraps a library whose calls behave oddly (duvc-ctl's write
+  results have no `value()`), the adapter takes the library as an argument
+  and the fake copies the library's surface and result types
+  (`fakes/fake_duvc.py`), so the tests run the adapter's own code against
+  the quirk instead of a stand-in that hides it.
 - **Every new fake is registered in the rehearsal rig** (`baja_studio/rig/`,
   ADR 0016): started in `rig/fakes.py`, pointed at by the settings bundle
   (`rig/bundle.py`), and reachable by scenarios through its own control

@@ -9,7 +9,13 @@ from datetime import datetime, timedelta
 from functools import partial
 from typing import Any
 
-from baja_studio.cameras.config import CameraConfig, CamerasSettings, ControllerConfig, DriverKind
+from baja_studio.cameras.config import (
+    USB_DRIVERS,
+    CameraConfig,
+    CamerasSettings,
+    ControllerConfig,
+    DriverKind,
+)
 from baja_studio.core.clock import Clock
 from baja_studio.core.readiness import CheckOutcome, ReadinessCheck, failed, passed, warning
 
@@ -85,6 +91,12 @@ def _camera_fix(camera: CameraConfig) -> str:
             f"Check the laptop of agent {camera.address.agent_id} is on, on the network and "
             "its agent running (Agents page), and that it lists camera "
             f"{camera.address.remote_camera_id}."
+        )
+    if camera.driver in USB_DRIVERS:
+        device = camera.usb_device.name if camera.usb_device else "its USB camera"
+        return (
+            f"Check that {device} is plugged into the studio PC, on the USB port it was "
+            "picked on (else pick it again on the Camera setup page)."
         )
     return (
         f"Check the camera's power and network cable; the studio expects it at "

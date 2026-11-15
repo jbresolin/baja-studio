@@ -30,6 +30,7 @@ from tests.conftest import (
     step_fake_time_until,
 )
 from tests.fake_agents import AGENT_HOST, StartAgent
+from tests.imaging.uvc_harness import FakeUsb
 
 SMTAV_HOST = "10.0.0.9"
 # The cameras workers that sleep on the fake clock. Controllers block in a
@@ -47,6 +48,8 @@ class Studio:
     clock: FakeClock
     # What the module's `list_serial_ports` command finds on this "computer".
     serial_ports: list[SerialPortInfo] = field(default_factory=list)
+    # The USB cameras (WP6a): two S600s and a Pixy, through an in-process UVC child.
+    usb: FakeUsb = field(default_factory=FakeUsb)
 
     def command(self, command: str, source: str = "api:test", **args: Any) -> Any:
         return self.services.registry.dispatch_command("cameras", command, args, source)
@@ -89,16 +92,19 @@ def studio(
     start_agent: StartAgent,
     fake_clock: FakeClock,
 ) -> Iterator[Studio]:
-    network, ports = FakeViscaNetwork(fake_clock), FakeSerialPorts()
+    network, ports, usb = FakeViscaNetwork(fake_clock), FakeSerialPorts(), FakeUsb()
     listed: list[SerialPortInfo] = []
 
     def modules(registry: Any) -> list[Any]:
         agents = AgentsModule(transport, studio_id="test-studio")
-        return [CamerasModule(agents, network.open, ports.open, lambda: list(listed)), agents]
+        cameras = CamerasModule(
+            agents, network.open, ports.open, lambda: list(listed), uvc_child_factory=usb.new_host
+        )
+        return [cameras, agents]
 
     app = make_app(modules)
     with TestClient(app):
-        yield Studio(app.state.services, network, ports, fake_clock, listed)
+        yield Studio(app.state.services, network, ports, fake_clock, listed, usb)
 
 
 def smtav(**overrides: Any) -> dict[str, Any]:

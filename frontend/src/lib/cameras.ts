@@ -4,8 +4,11 @@
  */
 
 import type { CameraKind, CameraPosition, TrackerView } from "./agents";
+import type { ImageCardView, UsbState } from "./imaging";
 
 export type CameraStatus = "ok" | "degraded" | "offline";
+/** visca_ip and agent (WP2); uvc (the Pixy) and none (no motion, e.g. a fixed S600): WP6a. */
+export type DriverKind = "visca_ip" | "agent" | "uvc" | "none";
 export type CameraMode = "manual" | "auto" | "auto_paused" | "hold";
 
 export interface PresetName {
@@ -41,16 +44,19 @@ export interface CameraCapabilities {
 export interface CameraView {
   label: string;
   owner: "studio" | "agent";
-  driver: "visca_ip" | "agent";
+  driver: DriverKind;
   controller_address: number | null;
   obs_source: string | null;
   presets: PresetName[];
+  usb_device?: UsbDeviceRef | null;
   status: CameraStatus;
   status_reason: string;
   route: "direct" | "agent" | "fallback";
   mode: CameraMode | null;
   tracker: TrackerView;
   position: CameraPosition | null;
+  /** True when `position` is only where the camera was last told to go (the Pixy). */
+  position_is_commanded?: boolean;
   moving: boolean;
   last_error: string;
   capabilities?: CameraCapabilities;
@@ -94,6 +100,9 @@ export interface CamerasState {
   /** Enabled cameras in display order (and Alt+1–9 order). */
   order: string[];
   motion: Partial<MotionSettings>;
+  /** WP6a: image cards by camera id, and the USB cameras plugged in. */
+  image?: Record<string, ImageCardView>;
+  usb?: UsbState;
 }
 
 // --- settings (what the configuration page edits) ------------------------------------
@@ -115,12 +124,33 @@ export interface MotionLimits {
   tilt_speed_max_step: number;
 }
 
+/** Which USB camera a camera is (WP6a): its DirectShow path, and name + index for display. */
+export interface UsbDeviceRef {
+  path: string;
+  name: string;
+  index: number;
+}
+
+/** A saved image control: a raw value (null: leave as is) and auto (null: has none). */
+export interface ImageSetting {
+  value: number | null;
+  auto: boolean | null;
+}
+
+/** A uvc camera's preset, in device units (the Pixy's own slots lose zoom). */
+export interface StoredPosition {
+  n: number;
+  pan: number;
+  tilt: number;
+  zoom: number;
+}
+
 export interface CameraConfig {
   id: string;
   label: string;
   enabled: boolean;
   owner: "studio" | "agent";
-  driver: "visca_ip" | "agent";
+  driver: DriverKind;
   address: CameraAddress;
   controller_address: number | null;
   obs_source: string | null;
@@ -130,6 +160,11 @@ export interface CameraConfig {
   limits: MotionLimits;
   speed_curve: "linear" | "squared";
   direct_fallback: { driver: "visca_ip"; address: CameraAddress } | null;
+  usb_device: UsbDeviceRef | null;
+  /** Edited on the Image page, not in the camera form. */
+  image: Record<string, ImageSetting>;
+  /** Stored by the Cameras page's preset buttons (uvc cameras). */
+  stored_positions: StoredPosition[];
 }
 
 export type CallAction = "none" | "select_camera" | "recall_preset";
@@ -187,6 +222,9 @@ export function newCamera(id: string): CameraConfig {
     },
     speed_curve: "linear",
     direct_fallback: null,
+    usb_device: null,
+    image: {},
+    stored_positions: [],
   };
 }
 
