@@ -6,6 +6,7 @@ import { AudioConfigPage } from "./pages/AudioConfigPage";
 import { AudioPage } from "./pages/AudioPage";
 import { CameraConfigPage } from "./pages/CameraConfigPage";
 import { CamerasPage } from "./pages/CamerasPage";
+import { FeedsPage } from "./pages/FeedsPage";
 import { Home } from "./pages/Home";
 import { HostsControlPage } from "./pages/HostsControlPage";
 import { HostsScreen } from "./pages/HostsScreen";
@@ -29,6 +30,7 @@ export const routes = [
       { path: "cameras/image", element: <ImagePage /> },
       { path: "playout", element: <PlayoutPage /> },
       { path: "playout/settings", element: <PlayoutSettingsPage /> },
+      { path: "feeds", element: <FeedsPage /> },
       { path: "audio", element: <AudioPage /> },
       { path: "audio/config", element: <AudioConfigPage /> },
       { path: "readiness", element: <ReadinessPage /> },
@@ -39,6 +41,7 @@ export const routes = [
       { path: "modules/audio", element: <AudioPage /> },
       { path: "modules/readiness", element: <ReadinessPage /> },
       { path: "modules/hosts", element: <HostsControlPage /> },
+      { path: "modules/feeds", element: <FeedsPage /> },
       { path: "modules/:name", element: <ModulePage /> },
       { path: "settings", element: <Settings /> },
       { path: "settings/:section", element: <Settings /> },
