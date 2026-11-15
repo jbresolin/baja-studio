@@ -25,10 +25,13 @@ from baja_studio.cameras.config import (
     ControllerConfig,
     DriverKind,
 )
+from baja_studio.cameras.crop_window import CropWindow
 from baja_studio.cameras.driver import CameraDriver, DriverHost
 from baja_studio.cameras.drivers.agent_gateway import AgentGateway
 from baja_studio.cameras.drivers.agent_proxy import AgentProxyDriver
 from baja_studio.cameras.drivers.fixed import FixedCameraDriver
+from baja_studio.cameras.drivers.obs_crop import ObsCropDriver
+from baja_studio.cameras.drivers.obs_gateway import NoObsGateway, ObsGateway
 from baja_studio.cameras.drivers.uvc_ptz import UsbPtzAccess, UvcPtzDriver
 from baja_studio.cameras.drivers.visca_ip import DatagramOpener, ViscaIpDriver
 from baja_studio.cameras.inputs.pelco_d_worker import PelcoDInput, SerialOpener
@@ -49,16 +52,22 @@ class CameraRegistry:
         wake_motion: Callable[[], None],
         usb: UsbPtzAccess | None = None,
         save_position: Callable[[str, StoredPosition], None] | None = None,
+        obs: ObsGateway | None = None,
+        save_crop_window: Callable[[str, int, CropWindow], None] | None = None,
     ) -> None:
         """Nothing runs until `apply` is called (by the module's motion worker).
 
         `usb` (the imaging service) reaches USB cameras for the `uvc` and
         `none` drivers; `save_position(camera id, position)` saves a `uvc`
-        camera's preset in its settings.
+        camera's preset in its settings. `obs` is playout's OBS connection, for
+        `obs_crop` cameras; `save_crop_window(camera id, n, window)` saves an
+        `obs_crop` camera's preset.
         """
         self._context = context
         self._usb = usb
         self._save_position = save_position
+        self._obs = obs or NoObsGateway()
+        self._save_crop_window = save_crop_window
         self._agents = agents
         self._datagram_opener = datagram_opener
         self._serial_opener = serial_opener
@@ -151,6 +160,15 @@ class CameraRegistry:
 
     def _build_driver(self, camera: CameraConfig) -> CameraDriver:
         host = self._driver_host(camera.id)
+        if camera.driver == DriverKind.OBS_CROP:
+            save_window = self._save_crop_window
+            assert save_window is not None, "the cameras module always passes it"
+            return ObsCropDriver(
+                host,
+                self._obs,
+                config=lambda: self._configs.get(camera.id, camera),
+                save_window=lambda n, window: save_window(camera.id, n, window),
+            )
         if camera.driver == DriverKind.AGENT:
             return AgentProxyDriver(
                 host,

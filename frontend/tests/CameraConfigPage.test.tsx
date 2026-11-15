@@ -448,4 +448,82 @@ describe("Camera configuration page", () => {
       motion: { ...savedSettings().motion, controller_silence_ms: 2000 },
     });
   });
+
+  // --- OBS crop cameras (WP6b) ----------------------------------------------------------------
+
+  it("an OBS crop camera picks its source from OBS's inputs and needs no host", async () => {
+    await showConfigPage();
+    fireEvent.click(screen.getByRole("button", { name: "Add camera" }));
+    const form = screen.getByRole("form", { name: "New camera" });
+
+    // Choosing the OBS crop driver: no host and port; the page asks OBS for its inputs.
+    fireEvent.change(within(form).getByLabelText("Driver"), { target: { value: "obs_crop" } });
+    expect(within(form).queryByLabelText("Host")).not.toBeInTheDocument();
+    expect(lastCommand()).toMatchObject({ command: "list_obs_sources" });
+    answer({ connected: true, reason: "", sources: [{ name: "Cam 4K", kind: "dshow_input" }] });
+
+    const source = await within(form).findByRole("combobox", { name: "OBS source" });
+    fireEvent.change(source, { target: { value: "Cam 4K" } });
+    fireEvent.change(within(form).getByLabelText("Id"), { target: { value: "crop" } });
+    fireEvent.change(within(form).getByLabelText("Narrowest window"), {
+      target: { value: "0.25" },
+    });
+    fireEvent.click(within(form).getByRole("button", { name: "Add camera" }));
+
+    await waitFor(() => expect(saves).toHaveLength(1));
+    const saved = saves[0]!.values.cameras!.at(-1)!;
+    expect(saved).toMatchObject({ id: "crop", driver: "obs_crop", obs_source: "Cam 4K" });
+    expect(saved.crop).toMatchObject({
+      filter_name: "Baja crop",
+      min_window: 0.25,
+      aspect: "16:9",
+    });
+  });
+
+  it("without OBS the source is typed by hand, and the form says why", async () => {
+    await showConfigPage();
+    fireEvent.click(screen.getByRole("button", { name: "Add camera" }));
+    const form = screen.getByRole("form", { name: "New camera" });
+    fireEvent.change(within(form).getByLabelText("Driver"), { target: { value: "obs_crop" } });
+
+    answer({ connected: false, reason: "OBS not configured", sources: [] });
+
+    const source = await within(form).findByRole("textbox", { name: "OBS source" });
+    fireEvent.change(source, { target: { value: "Typed cam" } });
+    expect(
+      within(form).getByText(/OBS is not connected \(OBS not configured\)/),
+    ).toBeInTheDocument();
+  });
+
+  it("a saved camera's crop form can create the OBS filter and reset the crop", async () => {
+    await showConfigPage();
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]!);
+    const form = screen.getByRole("form", { name: "Edit smtav" });
+    fireEvent.change(within(form).getByLabelText("Driver"), { target: { value: "obs_crop" } });
+
+    // The camera is saved and running, so the OBS buttons are there.
+    fireEvent.click(within(form).getByRole("button", { name: "Create filter" }));
+    expect(lastCommand()).toMatchObject({
+      command: "create_crop_filter",
+      args: { camera: "smtav" },
+    });
+    fireEvent.click(within(form).getByRole("button", { name: "Reset crop" }));
+    expect(lastCommand()).toMatchObject({ command: "reset_crop", args: { camera: "smtav" } });
+  });
+
+  it("reads the settings again after storing a preset (a crop camera keeps it there)", async () => {
+    await showConfigPage();
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]!);
+    const reads = () =>
+      vi
+        .mocked(fetch)
+        .mock.calls.filter(([path, init]) => path === "/api/settings/cameras" && !init?.method)
+        .length;
+    const before = reads();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Store here" })[1]!);
+    answer({ stored: 1 });
+
+    await waitFor(() => expect(reads()).toBe(before + 1));
+  });
 });

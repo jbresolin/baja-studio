@@ -7,8 +7,11 @@ import type { CameraKind, CameraPosition, TrackerView } from "./agents";
 import type { ImageCardView, UsbState } from "./imaging";
 
 export type CameraStatus = "ok" | "degraded" | "offline";
-/** visca_ip and agent (WP2); uvc (the Pixy) and none (no motion, e.g. a fixed S600): WP6a. */
-export type DriverKind = "visca_ip" | "agent" | "uvc" | "none";
+/**
+ * visca_ip and agent (WP2); uvc (the Pixy) and none (no motion, e.g. a fixed
+ * S600): WP6a; obs_crop (a Crop/Pad filter in OBS): WP6b.
+ */
+export type DriverKind = "visca_ip" | "agent" | "uvc" | "none" | "obs_crop";
 export type CameraMode = "manual" | "auto" | "auto_paused" | "hold";
 
 export interface PresetName {
@@ -40,6 +43,25 @@ export interface CameraCapabilities {
   preset_max: number | null;
 }
 
+/**
+ * A crop camera's window (`state.cameras.cameras.<id>.crop`, ADR 0020): x, y,
+ * w, h are fractions of the source (top-left and size). OBS crop cameras also
+ * give the source's pixels; agent crop cameras do not know them.
+ */
+export interface CropView {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+  centre_x: number;
+  centre_y: number;
+  zoom: number | null;
+  magnification: number;
+  source_width?: number;
+  source_height?: number;
+  filter?: string;
+}
+
 /** `state.cameras.cameras.<id>`. */
 export interface CameraView {
   label: string;
@@ -61,6 +83,8 @@ export interface CameraView {
   last_error: string;
   capabilities?: CameraCapabilities;
   control: CameraControl;
+  /** Crop cameras only: where the window is. */
+  crop?: CropView | null;
 }
 
 /** One decoded frame on the controller's frame monitor. */
@@ -124,6 +148,29 @@ export interface MotionLimits {
   tilt_speed_max_step: number;
 }
 
+/** A stored window of an `obs_crop` camera (its preset `n`). */
+export interface CropPresetWindow {
+  n: number;
+  centre_x: number;
+  centre_y: number;
+  width: number;
+}
+
+/** How an `obs_crop` camera moves its OBS Crop/Pad filter (server: cameras/crop_config.py). */
+export interface CropSettings {
+  filter_name: string;
+  min_window: number;
+  aspect: string;
+  update_hz: number;
+  pan_speed: number;
+  tilt_speed: number;
+  /** Pan and tilt scaled by the window's width, so the picture moves as fast at any zoom. */
+  speed_follows_zoom: boolean;
+  zoom_speed: number;
+  preview_source: string | null;
+  windows: CropPresetWindow[];
+}
+
 /** Which USB camera a camera is (WP6a): its DirectShow path, and name + index for display. */
 export interface UsbDeviceRef {
   path: string;
@@ -165,6 +212,8 @@ export interface CameraConfig {
   image: Record<string, ImageSetting>;
   /** Stored by the Cameras page's preset buttons (uvc cameras). */
   stored_positions: StoredPosition[];
+  /** Used by `obs_crop` cameras only. */
+  crop: CropSettings;
 }
 
 export type CallAction = "none" | "select_camera" | "recall_preset";
@@ -193,6 +242,22 @@ export interface CamerasSettingsValues {
 }
 
 export const VISCA_IP_PORT = 52381;
+
+/** The server's defaults for an `obs_crop` camera's settings. */
+export function defaultCropSettings(): CropSettings {
+  return {
+    filter_name: "Baja crop",
+    min_window: 0.5,
+    aspect: "16:9",
+    update_hz: 25,
+    pan_speed: 0.3,
+    tilt_speed: 0.3,
+    speed_follows_zoom: true,
+    zoom_speed: 0.5,
+    preview_source: null,
+    windows: [],
+  };
+}
 
 export function emptyAddress(): CameraAddress {
   return { host: "", port: VISCA_IP_PORT, agent_id: "", remote_camera_id: "" };
@@ -225,6 +290,7 @@ export function newCamera(id: string): CameraConfig {
     usb_device: null,
     image: {},
     stored_positions: [],
+    crop: defaultCropSettings(),
   };
 }
 

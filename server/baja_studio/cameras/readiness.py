@@ -92,6 +92,12 @@ def _camera_fix(camera: CameraConfig) -> str:
             "its agent running (Agents page), and that it lists camera "
             f"{camera.address.remote_camera_id}."
         )
+    if camera.driver == DriverKind.OBS_CROP:
+        return (
+            f"Check OBS is running and connected (Playout setup), and that its source "
+            f"'{camera.obs_source}' has the Crop/Pad filter '{camera.crop.filter_name}' "
+            "(Camera setup → Create filter)."
+        )
     if camera.driver in USB_DRIVERS:
         device = camera.usb_device.name if camera.usb_device else "its USB camera"
         return (

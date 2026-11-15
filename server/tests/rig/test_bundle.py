@@ -85,6 +85,9 @@ def test_the_bundle_points_every_module_at_the_fakes() -> None:
         if "direct_fallback" in camera
     ]
     assert fallbacks == [52381, 52382]
+    # And a digital PTZ on the fake OBS's webcam, whose filter the fake starts with.
+    crop = values["cameras"]["cameras"][-1]
+    assert (crop["driver"], crop["obs_source"]) == ("obs_crop", "Rig webcam 4K")
     assert values["gateway"] == {"enabled": False}
 
 

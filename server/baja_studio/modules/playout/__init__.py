@@ -40,6 +40,7 @@ from baja_studio.modules.playout.commands import run_command
 from baja_studio.modules.playout.controller import PlayoutController
 from baja_studio.modules.playout.hosts_cards import playout_hosts_cards
 from baja_studio.modules.playout.library_workers import LibraryWorkers
+from baja_studio.modules.playout.obs_gateway import PlayoutObsGateway
 from baja_studio.modules.playout.obs_worker import ObsConnectionWorker
 from baja_studio.modules.playout.publisher import PlayoutPublisher, initial_playout_state
 from baja_studio.modules.playout.readiness import playout_checks
@@ -101,6 +102,8 @@ class PlayoutModule(Module):
         self._notifier: WebhookNotifier | None = None
         self._subscribed = False
         self._last_tools: ToolsSettings | None = None
+        # Lent to the cameras module (OBS crop cameras, previews): one OBS connection.
+        self.obs_gateway = PlayoutObsGateway(lambda: self.context.state.get(self.name, "obs") or {})
 
     @property
     def controller(self) -> PlayoutController:
@@ -129,6 +132,7 @@ class PlayoutModule(Module):
         publisher = PlayoutPublisher(context.update_state, library, queue, playlists)
         client = ObsWebsocketClient(context.clock, self._obs_transport_factory)
         self._obs_client = client
+        self.obs_gateway.attach(client)
         switcher = ProgramSwitcher(client, lambda: self.settings().obs, context.clock)
         self._notifier = WebhookNotifier(
             context.clock,
@@ -186,6 +190,7 @@ class PlayoutModule(Module):
 
     def stop(self) -> None:
         """Workers have stopped (the OBS worker closed its connection); drop the parts."""
+        self.obs_gateway.detach()
         self._controller = None
 
     def workers(self) -> list[WorkerSpec]:

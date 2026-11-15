@@ -244,3 +244,28 @@ def test_a_new_usb_device_means_a_new_driver_but_new_image_settings_do_not() -> 
 
     assert moved.connection_key() != pixy.connection_key()
     assert tuned.connection_key() == pixy.connection_key()
+
+
+def test_an_obs_crop_camera_needs_its_obs_source_and_no_host() -> None:
+    # A digital PTZ lives in OBS: the source is its address (WP6b).
+    camera = CameraConfig.model_validate(
+        {"id": "crop", "driver": "obs_crop", "obs_source": "Cam 4K"}
+    )
+    assert camera.crop.filter_name == "Baja crop"
+    assert camera.crop.min_window == 0.5
+    assert camera.crop.aspect_ratio == pytest.approx(16 / 9)
+
+    with pytest.raises(ValidationError, match="needs its OBS source"):
+        CameraConfig.model_validate({"id": "crop", "driver": "obs_crop"})
+
+
+def test_crop_settings_refuse_impossible_values() -> None:
+    def crop(**values: Any) -> dict[str, Any]:
+        return {"id": "crop", "driver": "obs_crop", "obs_source": "Cam", "crop": values}
+
+    with pytest.raises(ValidationError, match="aspect"):
+        CameraConfig.model_validate(crop(aspect="wide"))
+    with pytest.raises(ValidationError, match="min_window"):
+        CameraConfig.model_validate(crop(min_window=0.0))
+    with pytest.raises(ValidationError, match="update_hz"):
+        CameraConfig.model_validate(crop(update_hz=500))

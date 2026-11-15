@@ -11,12 +11,6 @@ from typing import Any
 from baja_studio.adapters.obs_protocol import MediaAction, RequestStatus
 from baja_studio.fakes.simulated_media import SimulatedMedia
 
-# A 1x1 grey PNG: enough for a page to show "a screenshot came back".
-TINY_PNG_BASE64 = (
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5E"
-    "rkJggg=="
-)
-
 
 class FakeRequestRefusedError(Exception):
     """A request the fake refuses, with OBS's status code."""
@@ -216,14 +210,6 @@ class FakeObsRequests:
             data.get("transitionDuration"),
         )
         return {}
-
-    def _request_GetSourceScreenshot(self, data: dict[str, Any]) -> dict[str, Any]:  # noqa: N802
-        source_name = data.get("sourceName")
-        if source_name not in self.inputs and source_name not in self.scenes:
-            raise FakeRequestRefusedError(
-                RequestStatus.RESOURCE_NOT_FOUND, f"no source {source_name}"
-            )
-        return {"imageData": f"data:image/png;base64,{TINY_PNG_BASE64}"}
 
     def _scene_name(self, data: dict[str, Any]) -> str:
         name = data.get("sceneName")

@@ -22,14 +22,19 @@ import threading
 from collections.abc import Callable
 from typing import Any
 
+from fastapi import APIRouter
 from pydantic import BaseModel
 
 from baja_studio.cameras import health
 from baja_studio.cameras.config import CamerasSettings
+from baja_studio.cameras.crop_config import with_crop_window
+from baja_studio.cameras.crop_window import CropWindow
 from baja_studio.cameras.drivers.agent_gateway import AgentGateway
+from baja_studio.cameras.drivers.obs_gateway import NoObsGateway, ObsGateway
 from baja_studio.cameras.drivers.visca_ip import DatagramOpener, UdpTransport
 from baja_studio.cameras.inputs.pelco_d_worker import SerialOpener, open_serial_port
 from baja_studio.cameras.inputs.serial_ports import SerialPortLister, list_serial_ports
+from baja_studio.cameras.previews import CameraPreviews
 from baja_studio.cameras.readiness import camera_checks
 from baja_studio.cameras.registry import CameraRegistry
 from baja_studio.core.childproc import EventCallback
@@ -42,6 +47,12 @@ from baja_studio.imaging.uvc_link import ChildHost, UvcChildLink
 from baja_studio.imaging.watch import ImagingWatch
 from baja_studio.modules.cameras.commands import CameraCommands
 from baja_studio.modules.cameras.image_commands import IMAGE_COMMANDS, ImageCommands
+from baja_studio.modules.cameras.obs_commands import (
+    OBS_COMMANDS,
+    UNLOGGED_OBS_COMMANDS,
+    ObsCameraCommands,
+)
+from baja_studio.modules.cameras.preview_routes import camera_routes
 
 UVC_CHILD_MODULE = "baja_studio.childprocs.uvc_child"
 UvcChildFactory = Callable[[ModuleContext, EventCallback], ChildHost]
@@ -66,9 +77,11 @@ class CamerasModule(Module):
         serial_opener: SerialOpener = open_serial_port,
         list_ports: SerialPortLister = list_serial_ports,
         uvc_child_factory: UvcChildFactory = real_uvc_child,
+        obs: ObsGateway | None = None,
     ) -> None:
-        """`agents` is the agents module; tests pass fake openers for UDP and serial,
-        a fake list of serial ports, and an in-process UVC child."""
+        """`agents` is the agents module and `obs` playout's OBS connection (crop
+        cameras, previews); tests pass fake openers for UDP and serial, a fake
+        list of serial ports, and an in-process UVC child."""
         super().__init__()
         self._uvc_child_factory = uvc_child_factory
         self._imaging: ImagingService | None = None
@@ -76,6 +89,7 @@ class CamerasModule(Module):
         self._imaging_watch: ImagingWatch | None = None
         self._uvc: UvcChildLink | None = None
         self._agents = agents
+        self._obs = obs or NoObsGateway()
         self._datagram_opener = datagram_opener
         self._serial_opener = serial_opener
         self._lock = threading.Lock()
@@ -85,6 +99,8 @@ class CamerasModule(Module):
         self._commands = CameraCommands(
             self._current_registry, self._settings, self.edit_camera, list_ports
         )
+        self._obs_commands = ObsCameraCommands(self._obs, self._settings)
+        self._previews: CameraPreviews | None = None
 
     def initial_state(self) -> dict[str, Any]:
         """No cameras or controllers until the motion worker applies the settings."""
@@ -110,6 +126,14 @@ class CamerasModule(Module):
                 self._wake_motion,
                 usb=imaging,
                 save_position=self._save_position,
+                obs=self._obs,
+                save_crop_window=self._save_crop_window,
+            )
+            self._previews = CameraPreviews(
+                context.clock,
+                self._obs,
+                self._settings,
+                lambda camera_id: context.state.get(self.name, f"cameras.{camera_id}"),
             )
         context.supervisor.set_health_summary(self.name, self._summarise_health)
         if not self._subscribed:
@@ -119,7 +143,7 @@ class CamerasModule(Module):
     def stop(self) -> None:
         """Workers are already stopped; forget the drivers so a restart builds fresh ones."""
         with self._lock:
-            self._running, self._registry = False, None
+            self._running, self._registry, self._previews = False, None, None
         if self._imaging is not None:
             self._imaging.flush_due(everything=True)  # the last slider drag, not saved yet
 
@@ -132,6 +156,10 @@ class CamerasModule(Module):
             self._uvc.worker_spec(),
             self._imaging_watch.worker_spec(),
         ]
+
+    def routes(self) -> APIRouter:
+        """Camera previews (`preview_routes.py`)."""
+        return camera_routes(lambda: self._previews)
 
     def readiness_checks(self) -> list[ReadinessCheck]:
         """Every enabled camera and controller, from what their workers publish."""
@@ -171,8 +199,11 @@ class CamerasModule(Module):
     # --- commands ------------------------------------------------------------------------
 
     def handle_command(self, command: str, args: dict[str, Any], source: str) -> Any:
-        """See `commands.py`: motion, presets, modes, serial ports and raw frames;
-        and `image_commands.py`: image settings and USB devices."""
+        """See `commands.py` (motion, presets, modes, serial ports, raw frames),
+        `obs_commands.py` (OBS sources, creating a crop filter) and
+        `image_commands.py` (image settings and USB devices)."""
+        if command in OBS_COMMANDS:
+            return self._obs_commands.handle(command, args)
         if command in IMAGE_COMMANDS:
             assert self._image_commands is not None
             return self._image_commands.handle(command, args, source)
@@ -185,6 +216,8 @@ class CamerasModule(Module):
     ) -> bool:
         """Keep the start of a browser's move stream, not each of its ten-a-second repeats
         (and likewise the start of a slider drag's image writes)."""
+        if command in UNLOGGED_OBS_COMMANDS:
+            return False
         if command in IMAGE_COMMANDS:
             assert self._image_commands is not None
             return self._image_commands.wants_logged(command, args, source)
@@ -242,6 +275,10 @@ class CamerasModule(Module):
             camera.enabled and camera.usb_device is not None for camera in self._settings().cameras
         )
         return health.summarise(healths, usb_in_use=usb_in_use)
+
+    def _save_crop_window(self, camera_id: str, n: int, window: CropWindow) -> None:
+        """An `obs_crop` camera's preset `n`: its window, kept in its settings (WP6b)."""
+        self.edit_camera(camera_id, lambda entry: with_crop_window(entry, n, window))
 
     def _save_position(self, camera_id: str, position: StoredPosition) -> None:
         """A `uvc` camera's preset, kept in its settings (the Pixy's own slots lose zoom)."""

@@ -12,6 +12,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { CameraBadges, CameraList } from "../components/cameras/CameraList";
+import { CameraPreview } from "../components/cameras/CameraPreview";
 import { CommandTail } from "../components/cameras/CommandTail";
 import { ModePanel } from "../components/cameras/ModePanel";
 import { PresetPanel } from "../components/cameras/PresetPanel";
@@ -155,7 +156,9 @@ export function CamerasPage() {
             </Link>
           </div>
           {camera.status_reason && <div className="card-message">{camera.status_reason}</div>}
-          <div className="preview-slot">preview — WP6</div>
+          <div className="preview-slot" data-camera={selected}>
+            <CameraPreview camera={selected} width={320} overlay clickToCentre />
+          </div>
           <TouchJoystick onChange={controls.setStick} />
           <div className="button-row zoom-row">
             <HoldButton label="Zoom out" onHold={(held) => controls.setZoomButton(held ? -1 : 0)} />

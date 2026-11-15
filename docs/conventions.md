@@ -121,11 +121,20 @@ reading its tests.
   `baja_studio/adapters/` and speaks the protocol only: connect, requests,
   events, timeouts, reconnect backoff. Which scene to cut to, and when, is
   decided in the module.
+- **One connection per external system.** A module that needs a connection
+  another module owns (the cameras module needs OBS, which playout owns) is
+  handed a small gateway the owner provides (`ObsGateway`, like
+  `AgentGateway`), wired in `build_module_list`; it never opens a second
+  connection, and shows the owner's reason when the link is down.
 - An adapter never opens its socket directly; it takes a transport factory,
   so tests plug in the fake's in-process transport and open no port.
 - Adapter event listeners run on the adapter's reader thread: they queue the
   event and wake a worker, and never make requests or take module locks.
 
+- **Pictures and other bulky data go over HTTP, on demand**, never into
+  the shared state (which goes to every page): a route the page polls only
+  while it shows them, with a short cache and one device request in flight
+  per item (camera previews, ADR 0020).
 - HTTP routes go under `/api/<module>` (`Module.routes`). Only a contract
   fixed by a device that cannot change goes at the root
   (`Module.root_routes`, e.g. the D200's `/action/...`); `/api` and `/ws`

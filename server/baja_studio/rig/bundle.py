@@ -5,8 +5,9 @@ other file (`POST /api/home/settings-import`, dry run, apply), or by hand on
 Settings → Export / import when the rig runs with `--no-studio`. What it sets:
 
 - agents: both fake agents with their token; cameras: each agent's two
-  cameras, cam1 with a fake VISCA camera as its direct fallback, and the
-  fake USB cameras (two fixed S600s and the Pixy as a `uvc` PTZ);
+  cameras, cam1 with a fake VISCA camera as its direct fallback, the fake
+  USB cameras (two fixed S600s and the Pixy as a `uvc` PTZ), and an OBS crop
+  camera on the fake OBS's 4K webcam (which has its Crop/Pad filter);
 - playout: the fake OBS, the fake orchestrator, the delivery folder as the
   receiver root and the "Patrocinadores" folder;
 - audio: the fake XR18, every channel visible that the default link matrix
@@ -130,6 +131,16 @@ def section_values(ports: fakes.FakePorts, clips_folder: Path) -> dict[str, dict
                 }
             cameras.append(camera)
     cameras.extend(usb_cameras())
+    # A digital PTZ on the fake OBS's 4K webcam (WP6b).
+    cameras.append(
+        {
+            "id": "rig-crop",
+            "label": "Studio webcam (crop)",
+            "driver": "obs_crop",
+            "obs_source": fakes.OBS_WEBCAM,
+            "crop": {"filter_name": fakes.OBS_CROP_FILTER},
+        }
+    )
     channels = audio_defaults.channels()
     for channel in PRODUCTION_CHANNELS:
         channels[channel]["visible"] = True

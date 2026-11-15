@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from baja_studio.agents.contract import Mode
+from baja_studio.agents.contract import CameraKind, Mode
 from baja_studio.cameras.config import (
     CameraAddress,
     CameraConfig,
@@ -19,7 +19,8 @@ from baja_studio.cameras.config import (
     MotionSettings,
     SpeedCurve,
 )
-from baja_studio.cameras.driver import Velocity
+from baja_studio.cameras.crop_window import WindowTarget
+from baja_studio.cameras.driver import DriverCapabilities, Velocity
 from baja_studio.cameras.motion.arbiter import MotionArbiter, MotionRefusedError
 from tests.cameras.recording_driver import RecordingDriver, RecordingModeDriver
 from tests.conftest import FakeClock
@@ -397,3 +398,43 @@ def test_every_command_records_its_source_in_the_cameras_control_state(setup: Se
     assert control["last_source"] == API
     assert control["last_command"] == "move"
     assert control["velocity"] == {"pan": 0.2, "tilt": 0.0, "zoom": 0.0}
+
+
+# --- crop windows (WP6b) ---------------------------------------------------------------------
+
+
+class RecordingCropDriver(RecordingDriver):
+    """A recording driver for a crop camera, whose window can jump."""
+
+    def capabilities(self) -> DriverCapabilities:
+        return DriverCapabilities(CameraKind.CROP, True, True, False, 127)
+
+    def place_window(self, target: WindowTarget) -> None:
+        self.calls.append(("place_window", target))
+
+
+def test_click_to_centre_reaches_a_crop_driver_and_ends_the_held_velocity(
+    fake_clock: FakeClock,
+) -> None:
+    setup = Setup(fake_clock, RecordingCropDriver())
+    setup.arbiter.move(WEB, Velocity(pan=0.5), ttl_ms=300)
+
+    setup.arbiter.place_window(WEB, WindowTarget(0.2, 0.3))
+
+    assert setup.driver.calls[-1] == ("place_window", WindowTarget(0.2, 0.3))
+    assert setup.published["control"]["velocity_owner"] is None  # nobody holds it now
+    assert setup.published["control"]["last_command"] == "centre_window 0.20,0.30"
+
+
+def test_click_to_centre_obeys_the_holder_rule_like_a_preset(fake_clock: FakeClock) -> None:
+    # The joystick is moving the crop: a click on another page must not yank it away.
+    setup = Setup(fake_clock, RecordingCropDriver())
+    setup.arbiter.move(JOYSTICK, Velocity(pan=0.5), latched=True)
+
+    with pytest.raises(MotionRefusedError, match="being moved by joystick:ctl1"):
+        setup.arbiter.place_window(WEB, WindowTarget(0.2, 0.3))
+
+
+def test_a_camera_that_is_not_a_crop_cannot_be_centred(setup: Setup) -> None:
+    with pytest.raises(MotionRefusedError, match="not a crop camera"):
+        setup.arbiter.place_window(WEB, WindowTarget(whole=True))

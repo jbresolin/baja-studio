@@ -25,6 +25,33 @@ class MediaStatus:
 
 
 @dataclass(frozen=True)
+class InputInfo:
+    """One entry of `GetInputList`: an input's name and kind (e.g. `dshow_input`)."""
+
+    name: str
+    kind: str
+
+
+@dataclass(frozen=True)
+class FilterInfo:
+    """What `GetSourceFilter` says about one filter on a source."""
+
+    kind: str
+    enabled: bool
+    settings: dict[str, Any]
+
+
+@dataclass(frozen=True)
+class NamedFilter:
+    """One entry of `GetSourceFilterList`: a filter with its name, in the source's order."""
+
+    name: str
+    kind: str
+    enabled: bool
+    settings: dict[str, Any]
+
+
+@dataclass(frozen=True)
 class SceneList:
     """The program scene and every scene name, top of the OBS list first."""
 
@@ -131,10 +158,75 @@ class ObsRequestsMixin:
             },
         )
 
+    def get_input_list(self) -> list[InputInfo]:
+        """Every input OBS has (cameras, media sources, ...), for the camera setup page."""
+        inputs = self.request("GetInputList").get("inputs", [])
+        return [
+            InputInfo(str(item["inputName"]), str(item.get("inputKind", ""))) for item in inputs
+        ]
+
+    def get_source_filter(self, source_name: str, filter_name: str) -> FilterInfo:
+        """One filter of a source; fails with OBS's "not found" if either is missing."""
+        data = self.request(
+            "GetSourceFilter", {"sourceName": source_name, "filterName": filter_name}
+        )
+        settings = data.get("filterSettings")
+        return FilterInfo(
+            kind=str(data.get("filterKind", "")),
+            enabled=bool(data.get("filterEnabled", True)),
+            settings=settings if isinstance(settings, dict) else {},
+        )
+
+    def get_source_filter_list(self, source_name: str) -> list[NamedFilter]:
+        """Every filter of a source, first applied first; "not found" if the source is missing."""
+        filters = self.request("GetSourceFilterList", {"sourceName": source_name}).get("filters")
+        return [
+            NamedFilter(
+                name=str(item.get("filterName", "")),
+                kind=str(item.get("filterKind", "")),
+                enabled=bool(item.get("filterEnabled", True)),
+                settings=dict(item.get("filterSettings") or {}),
+            )
+            for item in filters or []
+        ]
+
+    def set_source_filter_settings(
+        self, source_name: str, filter_name: str, settings: dict[str, Any]
+    ) -> None:
+        """Change some of a filter's settings (`overlay`: the others stay as they are)."""
+        self.request(
+            "SetSourceFilterSettings",
+            {
+                "sourceName": source_name,
+                "filterName": filter_name,
+                "filterSettings": settings,
+                "overlay": True,
+            },
+        )
+
+    def create_source_filter(
+        self, source_name: str, filter_name: str, filter_kind: str, settings: dict[str, Any]
+    ) -> None:
+        """Add a filter (kind `crop_filter` is OBS's Crop/Pad) at the end of a source's list."""
+        self.request(
+            "CreateSourceFilter",
+            {
+                "sourceName": source_name,
+                "filterName": filter_name,
+                "filterKind": filter_kind,
+                "filterSettings": settings,
+            },
+        )
+
     def get_source_screenshot(
         self, source_name: str, image_format: str = "jpg", width: int | None = None
     ) -> str:
-        """A still of a source as a data URI (`data:image/jpg;base64,...`), for previews."""
+        """A still of a source as a data URI (`data:image/jpg;base64,...`), for previews.
+
+        Without `width` the image has the source's full size *after* its
+        filters (OBS renders it with `obs_source_get_width`); with it, the
+        height follows the source's aspect ratio.
+        """
         data: dict[str, Any] = {"sourceName": source_name, "imageFormat": image_format}
         if width is not None:
             data["imageWidth"] = width

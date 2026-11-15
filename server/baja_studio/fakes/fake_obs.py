@@ -44,6 +44,8 @@ from baja_studio.fakes.fake_obs_requests import (
     FakeRequestRefusedError,
     FakeSceneItem,
 )
+from baja_studio.fakes.fake_obs_sources import FakeObsSources
+from baja_studio.fakes.fake_obs_video import FakeFilter, VideoInput
 from baja_studio.fakes.obs_timing import ObsTiming
 from baja_studio.fakes.simulated_media import SimulatedMedia
 
@@ -80,7 +82,7 @@ class RequestRecord:
     data: dict[str, Any] = field(default_factory=dict)
 
 
-class FakeObs(FakeObsRequests):
+class FakeObs(FakeObsSources, FakeObsRequests):
     """The fake's scenes, inputs, sessions and media clock."""
 
     def __init__(
@@ -103,6 +105,9 @@ class FakeObs(FakeObsRequests):
         self.lock = threading.RLock()
         self.scenes: dict[str, list[FakeSceneItem]] = {}
         self.inputs: dict[str, FakeInput] = {}
+        # Camera inputs' sizes and every source's filters (`fake_obs_sources.py`).
+        self.video_inputs: dict[str, VideoInput] = {}
+        self.filters: dict[str, list[FakeFilter]] = {}
         self.program_scene = ""
         # OBS's two default transitions, with their English names.
         self.transitions = ["Cut", "Fade"]
@@ -374,6 +379,19 @@ def main(argv: list[str] | None = None) -> None:
         default=DEFAULT_KEYFRAME_INTERVAL_SECONDS,
         help="seeks land on the keyframe before; one every this many seconds (8.333: old clips)",
     )
+    parser.add_argument(
+        "--video-source",
+        action="append",
+        default=[],
+        metavar="NAME=WxH",
+        help="add a camera input of that size (repeatable), e.g. 'Cam 4K=3840x2160'",
+    )
+    parser.add_argument(
+        "--crop-filter",
+        default=None,
+        metavar="NAME",
+        help="give every --video-source an empty Crop/Pad filter of this name",
+    )
     options = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     fixed_duration: float = options.duration
@@ -395,8 +413,21 @@ def main(argv: list[str] | None = None) -> None:
         timing=ObsTiming(options.seed) if options.seed is not None else None,
         keyframe_interval_s=options.keyframe_interval,
     )
+    for name, width, height in map(parse_video_source, options.video_source):
+        fake.add_video_input(name, width, height)
+        if options.crop_filter:
+            fake.add_crop_filter(name, options.crop_filter)
     with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(serve_fake_obs(fake, options.host, options.port))
+
+
+def parse_video_source(text: str) -> tuple[str, int, int]:
+    """`Cam 4K=3840x2160` → ("Cam 4K", 3840, 2160), for `--video-source`."""
+    name, _, size = text.rpartition("=")
+    width, _, height = size.partition("x")
+    if not name or not width.isdigit() or not height.isdigit():
+        raise argparse.ArgumentTypeError(f"--video-source wants NAME=WIDTHxHEIGHT, not {text!r}")
+    return name, int(width), int(height)
 
 
 if __name__ == "__main__":

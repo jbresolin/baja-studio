@@ -1,10 +1,11 @@
 /**
  * Add or edit one camera (WP3 brief §4.1). The fields follow the camera's
  * owner: a studio camera is driven directly (VISCA over IP: host and port;
- * a USB PTZ such as the Pixy: driver uvc; or no motion at all: driver none),
- * and may name its USB device for image settings (WP6a); an agent camera
- * names one of an agent's cameras, picked from what the agents module sees
- * live, and may have a direct fallback.
+ * a USB PTZ such as the Pixy: driver uvc; no motion at all: driver none; or
+ * an OBS crop filter: driver obs_crop, ObsCropFields.tsx), and may name its
+ * USB device for image settings (WP6a); an agent camera names one of an
+ * agent's cameras, picked from what the agents module sees live, and may
+ * have a direct fallback.
  *
  * "Nudge" and "Stop" try the saved camera through the arbiter like any
  * command, so they also show inversion and scaling at work.
@@ -16,12 +17,14 @@ import type { AgentsState } from "../../lib/agents";
 import { emptyAddress, type CameraConfig, type DriverKind } from "../../lib/cameras";
 import type { UsbState } from "../../lib/imaging";
 import { CheckField, NumberField, SelectField, TextField } from "./fields";
+import { ObsCropFields, type ObsSourceList } from "./ObsCropFields";
 import { UsbDevicePicker } from "./UsbDevicePicker";
 
 const STUDIO_DRIVERS = [
   { value: "visca_ip", label: "VISCA over IP" },
   { value: "uvc", label: "USB PTZ (UVC, e.g. the EMEET Pixy)" },
   { value: "none", label: "none (no motion: a fixed webcam)" },
+  { value: "obs_crop", label: "OBS crop (digital PTZ on a 4K webcam)" },
 ];
 
 interface CameraFormProps {
@@ -37,12 +40,15 @@ interface CameraFormProps {
   run: (command: string, args: Record<string, unknown>) => void;
   /** The UVC child's USB camera list, for the USB device picker. */
   listUsbDevices: () => Promise<UsbState>;
+  /** OBS's inputs, for an OBS crop camera's source (the `list_obs_sources` command). */
+  listObsSources: () => Promise<ObsSourceList>;
 }
 
 export function CameraForm(props: CameraFormProps) {
   const { errors, agents } = props;
   const [draft, setDraft] = useState<CameraConfig>(props.initial);
   const isAgent = draft.owner === "agent";
+  const isObsCrop = draft.driver === "obs_crop";
   const isVisca = draft.driver === "visca_ip";
   const set = (change: Partial<CameraConfig>) => setDraft((current) => ({ ...current, ...change }));
   const setAddress = (change: Partial<CameraConfig["address"]>) =>
@@ -166,13 +172,15 @@ export function CameraForm(props: CameraFormProps) {
           error={errors.controller_address}
           onChange={(controller_address) => set({ controller_address })}
         />
-        <TextField
-          label="OBS source"
-          value={draft.obs_source ?? ""}
-          help="The OBS source this camera feeds (used from WP6)."
-          error={errors.obs_source}
-          onChange={(text) => set({ obs_source: text.trim() ? text : null })}
-        />
+        {!isObsCrop && (
+          <TextField
+            label="OBS source"
+            value={draft.obs_source ?? ""}
+            help="The OBS source this camera feeds (its preview on the Cameras page)."
+            error={errors.obs_source}
+            onChange={(text) => set({ obs_source: text.trim() ? text : null })}
+          />
+        )}
         <CheckField
           label="Needs presets (the readiness checks warn while it has none)"
           checked={draft.needs_presets}
@@ -192,6 +200,17 @@ export function CameraForm(props: CameraFormProps) {
           }
         />
       </div>
+
+      {isObsCrop && (
+        <ObsCropFields
+          draft={draft}
+          onChange={set}
+          errors={errors}
+          saved={props.canTest}
+          listSources={props.listObsSources}
+          run={props.run}
+        />
+      )}
 
       <h3>Limits</h3>
       <div className="form-grid">
@@ -217,24 +236,28 @@ export function CameraForm(props: CameraFormProps) {
           checked={draft.limits.invert_tilt}
           onChange={(invert_tilt) => setLimits({ invert_tilt })}
         />
-        <NumberField
-          label="Top pan speed step"
-          value={draft.limits.pan_speed_max_step}
-          min={1}
-          max={24}
-          help="VISCA step at full deflection (1–24); direct cameras only."
-          error={errors["limits.pan_speed_max_step"]}
-          onChange={(value) => setLimits({ pan_speed_max_step: value ?? 24 })}
-        />
-        <NumberField
-          label="Top tilt speed step"
-          value={draft.limits.tilt_speed_max_step}
-          min={1}
-          max={23}
-          help="VISCA step at full deflection (1–23); direct cameras only."
-          error={errors["limits.tilt_speed_max_step"]}
-          onChange={(value) => setLimits({ tilt_speed_max_step: value ?? 20 })}
-        />
+        {isVisca && (
+          <>
+            <NumberField
+              label="Top pan speed step"
+              value={draft.limits.pan_speed_max_step}
+              min={1}
+              max={24}
+              help="VISCA step at full deflection (1–24); direct cameras only."
+              error={errors["limits.pan_speed_max_step"]}
+              onChange={(value) => setLimits({ pan_speed_max_step: value ?? 24 })}
+            />
+            <NumberField
+              label="Top tilt speed step"
+              value={draft.limits.tilt_speed_max_step}
+              min={1}
+              max={23}
+              help="VISCA step at full deflection (1–23); direct cameras only."
+              error={errors["limits.tilt_speed_max_step"]}
+              onChange={(value) => setLimits({ tilt_speed_max_step: value ?? 20 })}
+            />
+          </>
+        )}
       </div>
 
       {isAgent && (

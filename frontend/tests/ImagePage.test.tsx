@@ -11,7 +11,7 @@ import { resolve } from "node:path";
 
 import { act, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import type { CamerasState } from "../src/lib/cameras";
 import type { ImageCardView, ImageControlView } from "../src/lib/imaging";
@@ -294,5 +294,53 @@ describe("Image page", () => {
       "href",
       "/cameras/image#image-s600-a",
     );
+  });
+});
+
+describe("Image page previews (WP6b)", () => {
+  it("each card shows its camera's preview, and only cards on screen ask for one", async () => {
+    // The browser tells which cards are on screen: here only S600 B is.
+    const observed: { element: Element; report: (visible: boolean) => void }[] = [];
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        callback: (entries: { isIntersecting: boolean }[]) => void;
+        constructor(callback: (entries: { isIntersecting: boolean }[]) => void) {
+          this.callback = callback;
+        }
+        observe(element: Element) {
+          observed.push({
+            element,
+            report: (visible) => this.callback([{ isIntersecting: visible }]),
+          });
+        }
+        disconnect() {}
+      },
+    );
+    const asked: string[] = [];
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (path: string) => {
+        asked.push(path);
+        return new Response("jpeg", { headers: { "X-Preview-Shows": "full" } });
+      }),
+    );
+    URL.createObjectURL = vi.fn(() => "blob:preview");
+    URL.revokeObjectURL = vi.fn();
+    const state = camerasState();
+    for (const id of state.order) state.cameras[id]!.obs_source = `${id} in OBS`;
+
+    showPage(<ImagePage />, state);
+    act(() => {
+      for (const { element, report } of observed)
+        report(element.getAttribute("data-testid") === "preview-s600-b");
+    });
+    await waitFor(() => expect(asked).toContain("/api/cameras/preview/s600-b?width=320"));
+
+    expect(
+      card("S600 B").querySelector(".preview-slot [data-testid='preview-s600-b']"),
+    ).not.toBeNull();
+    expect(asked.every((path) => path.includes("s600-b"))).toBe(true);
+    vi.unstubAllGlobals();
   });
 });

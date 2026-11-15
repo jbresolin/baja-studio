@@ -16,6 +16,7 @@ import { CameraTable, RemoveButton } from "../components/config/CameraTable";
 import { ControllerForm, type SerialPortChoice } from "../components/config/ControllerForm";
 import { FrameMonitor } from "../components/config/FrameMonitor";
 import { MotionForm } from "../components/config/MotionForm";
+import type { ObsSourceList } from "../components/config/ObsCropFields";
 import { PresetTable } from "../components/config/PresetTable";
 import { HealthBadge } from "../components/HealthBadge";
 import type { AgentsState } from "../lib/agents";
@@ -46,14 +47,20 @@ export function CameraConfigPage() {
       setCommandError(null);
       try {
         const result = await sendCommand("cameras", command, args);
-        // A studio camera's preset name is saved in these settings: read them again.
-        if (command === "rename_preset") settings.reload();
+        // A studio camera's preset names (and an OBS crop camera's stored windows)
+        // are saved in these settings: read them again.
+        if (command === "rename_preset" || command === "store_preset") settings.reload();
         return result;
       } catch (error) {
         setCommandError(`${command}: ${(error as Error).message}`);
       }
     },
     [sendCommand, settings],
+  );
+
+  const listObsSources = useCallback(
+    async () => (await sendCommand("cameras", "list_obs_sources")) as ObsSourceList,
+    [sendCommand],
   );
 
   const listUsbDevices = useCallback(
@@ -172,6 +179,7 @@ export function CameraConfigPage() {
           onSave={(draft) => saveCamera(editingCamera, draft)}
           onCancel={() => setEditing(null)}
           run={(command, args) => void run(command, args)}
+          listObsSources={listObsSources}
           listUsbDevices={listUsbDevices}
         />
       )}

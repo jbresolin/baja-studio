@@ -40,6 +40,7 @@ if TYPE_CHECKING:
 pytest_plugins = [
     "tests.fake_agents",
     "tests.modules.camera_studio",
+    "tests.modules.crop_studio",
     "tests.modules.playout_studio",
     "tests.modules.audio_studio",
     "tests.modules.gateway_studio",

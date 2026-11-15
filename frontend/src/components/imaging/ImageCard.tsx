@@ -9,13 +9,14 @@
  * - Copy settings from: another camera's values, for the controls both have,
  *   fitted to this camera's ranges (`copy_image`).
  *
- * The preview slot is a marked `div` (class `preview-slot`, `data-camera`);
- * WP6b's preview component goes into it.
+ * The preview slot (class `preview-slot`, `data-camera`) holds WP6b's
+ * `CameraPreview`, which fetches only while the card is on screen.
  */
 
 import { useState } from "react";
 
 import { allAutoChanges, type ImageCardView, type ImageChange } from "../../lib/imaging";
+import { CameraPreview } from "../cameras/CameraPreview";
 import { HealthBadge } from "../HealthBadge";
 import { ControlSlider } from "./ControlSlider";
 
@@ -70,7 +71,10 @@ export function ImageCard({ cameraId, label, card, others, run }: ImageCardProps
         {card.source === "usb" ? `USB: ${card.device?.name ?? "?"}` : `agent ${card.agent ?? "?"}`}
       </div>
       {card.status_reason && <div className="card-message">{card.status_reason}</div>}
-      <div className="preview-slot" data-camera={cameraId} />
+      <div className="preview-slot" data-camera={cameraId}>
+        {/* Matching cameras by eye: the picture (and a crop camera's window), no clicks. */}
+        <CameraPreview camera={cameraId} width={320} overlay />
+      </div>
       {controls.length === 0 && <p className="muted">No controls read yet.</p>}
       {controls.map(([name, control]) => (
         <ControlSlider
