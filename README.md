@@ -171,6 +171,7 @@ each child's output in `logs/` there.
 | `--scenario NAME` | Plays failures against the fakes on a timeline, printing each step: `calm` (default), `flaky-agent`, `mixer-drop`, `obs-restart`, `stale-state`, `post-fader-tap`, `lr-assign-silent`. They are JSON files in `server/baja_studio/rig/scenarios/`; add one there. |
 | `--seed N` | The fake OBS's timing seed (default 2026, printed at start), so an odd result can be replayed. |
 | `--fast-obs` | The fake OBS opens and seeks at once (no realistic timing). |
+| `--measured-visca` | The fake VISCA cameras answer like the bench PTZ of 2026-11-15: their own sequence numbers, late batched replies, position data only now and then (`python -m baja_studio.fakes.fake_visca_camera --measured` on its own). |
 | `--no-open` | Opens no browser tabs; the two addresses are printed instead. |
 | `--no-studio` | Fakes only. Import the printed `rig-settings.json` on **Settings → Export / import** of a studio started with `BAJA_STUDIO_MIDI_BACKEND=fake`. |
 | `--reset` | Wipes the rig's folder (clips included) first. |

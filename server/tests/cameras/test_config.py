@@ -124,6 +124,28 @@ def test_top_speed_steps_default_to_0x18_and_0x14_and_stay_inside_the_visca_spec
         )  # tilt tops at 0x17
 
 
+def test_position_is_polled_once_a_second_by_default_and_zero_turns_it_off() -> None:
+    # The bench PTZ's video froze under the old four inquiries a second.
+    assert CameraConfig.model_validate(direct()).position_poll_seconds == 1.0
+    assert CameraConfig.model_validate(direct(position_poll_seconds=0)).position_poll_seconds == 0
+
+
+def test_a_position_poll_faster_than_a_quarter_second_is_refused() -> None:
+    # One inquiry waits up to half a second anyway; faster only adds traffic.
+    with pytest.raises(ValidationError, match=r"0 \(off\) or at least 0\.25"):
+        CameraConfig.model_validate(direct(position_poll_seconds=0.1))
+    with pytest.raises(ValidationError):
+        CameraConfig.model_validate(direct(position_poll_seconds=11))
+
+
+def test_the_cameras_settings_layout_is_version_2_since_the_position_poll_setting() -> None:
+    # An older studio importing a newer export is told to upgrade, instead of
+    # failing on the unknown key; a newer one fills in the default.
+    assert CamerasSettings.settings_version == 2
+    old_file = {"cameras": [direct()]}
+    assert CamerasSettings.model_validate(old_file).cameras[0].position_poll_seconds == 1.0
+
+
 def test_the_resend_interval_must_be_shorter_than_the_ttl() -> None:
     # Otherwise every held velocity would expire before it was renewed.
     with pytest.raises(ValidationError, match="shorter than ttl_ms"):

@@ -28,3 +28,9 @@ def test_each_default_can_be_turned_off() -> None:
     )
     assert options.seed == 7
     assert options.rig_dir == Path("x")
+
+
+def test_the_fake_visca_cameras_answer_like_the_bench_ptz_only_when_asked() -> None:
+    # Off by default: the rig's cameras are well-behaved unless `--measured-visca`.
+    assert parse_arguments([]).measured_visca is False
+    assert parse_arguments(["--measured-visca"]).measured_visca is True

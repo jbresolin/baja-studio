@@ -249,6 +249,36 @@ describe("Camera configuration page", () => {
     });
   });
 
+  it("sets how often a VISCA camera's position is polled, and 0 turns it off", async () => {
+    // The bench PTZ's video froze under heavy VISCA traffic: the poll is a
+    // per-camera setting next to the camera's address (default: once a second).
+    await showConfigPage();
+    fireEvent.click(screen.getByRole("button", { name: "Add camera" }));
+    const form = screen.getByRole("form", { name: "New camera" });
+    const poll = within(form).getByLabelText("Position poll (s)");
+    expect(poll).toHaveValue(1);
+
+    fireEvent.change(within(form).getByLabelText("Id"), { target: { value: "ptz" } });
+    fireEvent.change(within(form).getByLabelText("Host"), { target: { value: "10.0.0.12" } });
+    fireEvent.change(poll, { target: { value: "0" } });
+    fireEvent.click(within(form).getByRole("button", { name: "Add camera" }));
+
+    await waitFor(() => expect(saves).toHaveLength(1));
+    expect(saves[0]!.values.cameras!.at(-1)!.position_poll_seconds).toBe(0);
+  });
+
+  it("an agent camera shows the poll only with its direct fallback", async () => {
+    await showConfigPage();
+    fireEvent.click(screen.getByRole("button", { name: "Add camera" }));
+    const form = screen.getByRole("form", { name: "New camera" });
+    fireEvent.change(within(form).getByLabelText("Owner"), { target: { value: "agent" } });
+    expect(within(form).queryByLabelText("Position poll (s)")).not.toBeInTheDocument();
+
+    fireEvent.click(within(form).getByLabelText(/Drive the camera directly/));
+
+    expect(within(form).getByLabelText("Position poll (s)")).toBeInTheDocument();
+  });
+
   it("shows the server's validation message next to the field it is about", async () => {
     await showConfigPage();
     nextSaveAnswer = Response.json(

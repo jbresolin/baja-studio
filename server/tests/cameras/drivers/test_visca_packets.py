@@ -164,6 +164,63 @@ def test_a_datagram_too_short_to_hold_a_header_and_reply_is_ignored() -> None:
     assert packets.parse_reply(hex_bytes("01 11 00 03 00 00")) is None
 
 
+# --- several messages in one datagram (the bench PTZ, probe of 2026-11-15) ------------------
+
+# A datagram exactly as the bench PTZ sent it: three messages, each with its own
+# 8-byte header ("01 11" reply, its length, the camera's own sequence number):
+# an ACK, a completion, and a pan/tilt answer (pan 0x01A5, tilt 0xFFFF).
+BENCH_DATAGRAM = (
+    "01 11 00 03 00 00 a8 e2 90 48 ff "
+    "01 11 00 03 00 00 a8 e3 90 58 ff "
+    "01 11 00 0b 00 00 a8 e4 90 50 00 01 0a 05 0f 0f 0f 0f ff"
+)
+
+
+def test_every_message_of_a_datagram_is_read_not_only_the_first() -> None:
+    replies = packets.parse_replies(hex_bytes(BENCH_DATAGRAM))
+
+    # Three messages, in order, each with its own sequence number.
+    assert [reply.kind for reply in replies] == [
+        packets.ReplyKind.ACK,
+        packets.ReplyKind.COMPLETION,
+        packets.ReplyKind.INQUIRY_ANSWER,
+    ]
+    assert [reply.sequence for reply in replies] == [0xA8E2, 0xA8E3, 0xA8E4]
+    # The third one's payload is a whole pan/tilt answer: 11 bytes.
+    assert packets.parse_pan_tilt_position(replies[2].payload) == (0x01A5, -1)
+
+
+def test_a_datagram_with_one_message_gives_a_list_of_one() -> None:
+    replies = packets.parse_replies(reply("90 41 FF", sequence=7))
+
+    assert [(reply.kind, reply.sequence) for reply in replies] == [(packets.ReplyKind.ACK, 7)]
+
+
+def test_a_message_cut_short_at_the_end_is_dropped_and_the_ones_before_it_kept() -> None:
+    # The last message says it has 11 bytes of payload but only 4 arrived.
+    cut = hex_bytes(BENCH_DATAGRAM)[:-7]
+
+    replies = packets.parse_replies(cut)
+
+    assert [reply.kind for reply in replies] == [
+        packets.ReplyKind.ACK,
+        packets.ReplyKind.COMPLETION,
+    ]
+
+
+def test_bytes_too_short_for_a_header_give_no_messages() -> None:
+    assert packets.parse_replies(hex_bytes("01 11 00 03 00 00")) == []
+    assert packets.parse_replies(b"") == []
+
+
+def test_a_header_saying_zero_bytes_of_payload_stops_the_reading() -> None:
+    # Nothing sensible can follow a message with no payload: stop there rather
+    # than reading the rest of the datagram as headers.
+    empty = hex_bytes("01 11 00 00 00 00 00 01")
+
+    assert packets.parse_replies(empty + reply("90 41 FF")) == []
+
+
 def test_a_pan_tilt_answer_is_read_as_signed_steps() -> None:
     # Pan 0x0123 = 291; tilt 0xFFF6 = -10 (16-bit two's complement).
     answer = hex_bytes("90 50 00 01 02 03 0F 0F 0F 06 FF")

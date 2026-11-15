@@ -5,18 +5,23 @@ Velocities, zoom and scales are normalised; device tables live in the drivers.
 """
 
 from enum import StrEnum
-from typing import Self
+from typing import ClassVar, Self
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from baja_studio.agents.contract import DEFAULT_TTL_MS, MAX_PRESET_NUMBER, MAX_TTL_MS
 from baja_studio.cameras.crop_config import ObsCropSettings
 from baja_studio.cameras.drivers import visca_packets
+from baja_studio.cameras.drivers.visca_link import DEFAULT_POSITION_POLL_SECONDS
 from baja_studio.core.settings import ModuleSettings
 from baja_studio.imaging.config import ImageSetting, StoredPosition, UsbDeviceRef
 
 VISCA_IP_PORT = 52381
 PELCO_D_DEFAULT_BAUD = 2400
+# A VISCA position poll faster than this is refused: one inquiry is in flight
+# at a time and waits up to 0.5 s anyway.
+MIN_POSITION_POLL_SECONDS = 0.25
+MAX_POSITION_POLL_SECONDS = 10.0
 MAX_CALL_BUTTON = 9
 # No dots: ids become parts of dotted state paths (state.cameras.cameras.<id>.status).
 ID_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_-]{0,39}$"
@@ -137,6 +142,19 @@ class CameraConfig(StrictModel):
     limits: MotionLimits = Field(default_factory=MotionLimits)
     speed_curve: SpeedCurve = SpeedCurve.LINEAR
     direct_fallback: DirectFallback | None = None
+    # VISCA/IP only (a direct camera, or an agent camera's direct fallback):
+    # one position inquiry every this many seconds, pan/tilt and zoom in turn.
+    # The bench PTZ's video froze under heavy VISCA traffic (ADR 0003).
+    position_poll_seconds: float = Field(
+        default=DEFAULT_POSITION_POLL_SECONDS,
+        ge=0.0,
+        le=MAX_POSITION_POLL_SECONDS,
+        description=(
+            "Seconds between VISCA position inquiries (0: none, only a check every 3 s that "
+            "the camera is there). Raise it or set 0 if the camera's video stutters. The "
+            "bench PTZ (192.168.10.245, 2026-11-15) gives no usable position: set 0."
+        ),
+    )
     # WP6a: the USB camera on the studio PC (its image settings, and the
     # device a `uvc` or `none` camera is), the saved image settings by control
     # name, and a `uvc` camera's presets.
@@ -164,6 +182,10 @@ class CameraConfig(StrictModel):
             raise ValueError("a uvc camera needs its USB device (pick it from the list)")
         if self.usb_device is not None and self.owner == Owner.AGENT:
             raise ValueError("an agent camera's image settings come from its agent, not USB")
+        if 0 < self.position_poll_seconds < MIN_POSITION_POLL_SECONDS:
+            raise ValueError(
+                f"position_poll_seconds must be 0 (off) or at least {MIN_POSITION_POLL_SECONDS}"
+            )
         return self
 
     def connection_key(self) -> tuple[object, ...]:
@@ -273,6 +295,10 @@ class MotionSettings(StrictModel):
 
 class CamerasSettings(ModuleSettings):
     """Settings of the cameras module."""
+
+    # 2: cameras gained `position_poll_seconds` (2026-11-15). Older files get
+    # its default (one inquiry a second, where they polled four times as often).
+    settings_version: ClassVar[int] = 2
 
     # Edited on the Camera configuration page (/cameras/config), so the generic
     # Settings form leaves them out. The list order is the Cameras page's order.

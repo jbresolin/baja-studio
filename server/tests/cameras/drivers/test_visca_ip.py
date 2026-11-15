@@ -18,6 +18,7 @@ from baja_studio.cameras.drivers import visca_packets as packets
 from baja_studio.cameras.drivers.visca_ip import ViscaIpDriver
 from baja_studio.core.supervisor import HealthState, Supervisor
 from baja_studio.fakes.fake_visca_camera import FakeViscaCamera, InProcessDatagramTransport
+from baja_studio.fakes.fake_visca_measured import MeasuredReplies
 from tests.conftest import FakeClock, eventually, module_worker_threads, step_fake_time
 
 STEP_SECONDS = 0.05
@@ -48,6 +49,8 @@ class Bench:
         )
         # The camera's limits.pan_speed_max_step / tilt_speed_max_step; tests change them.
         self.top_speed_steps = (0x18, 0x14)
+        # The camera's position_poll_seconds setting; tests change it.
+        self.position_poll_seconds = 1.0
         self.driver = ViscaIpDriver(
             host,
             "10.0.0.9",
@@ -55,6 +58,7 @@ class Bench:
             resend_interval_seconds=lambda: 0.1,
             opener=self.open,
             top_speed_steps=lambda: self.top_speed_steps,
+            position_poll_seconds=lambda: self.position_poll_seconds,
         )
 
     def open(self, address: str, port: int) -> InProcessDatagramTransport:
@@ -71,6 +75,10 @@ class Bench:
 
     def health(self) -> HealthState:
         return self.supervisor.module_health("cameras").state
+
+    def sent_times(self) -> list[float]:
+        """When each datagram the driver sent left, on the fake clock (all sockets)."""
+        return [moment for transport in self.transports for moment in transport.sent_at]
 
 
 @pytest.fixture
@@ -102,7 +110,7 @@ def test_connecting_sends_no_motion_and_no_stop(bench: Bench) -> None:
     connected(bench)
     advance_in_steps(bench.clock, 1.0)
 
-    # Only the twice-a-second position inquiries have reached the camera.
+    # Only the once-a-second position inquiries have reached the camera.
     inquiries = {packets.pan_tilt_position_inquiry(), packets.zoom_position_inquiry()}
     assert set(bench.camera.received) == inquiries
 
@@ -147,15 +155,15 @@ def test_dropped_replies_make_the_camera_degraded_then_offline_then_ok_again(
     bench.camera.dropping_replies = True
     seen: list[HealthState] = []
 
-    # Two inquiries every 0.5 s go unanswered: 3 misses take ~1.5 s, 10 take ~5 s.
+    # One inquiry a second goes unanswered: 3 misses take ~3 s, 10 take ~10 s.
     for _ in range(12):
-        advance_in_steps(bench.clock, 0.5)
+        advance_in_steps(bench.clock, 1.0)
         seen.append(bench.health())
     assert HealthState.DEGRADED in seen
     assert seen[-1] == HealthState.OFFLINE
 
     bench.camera.dropping_replies = False
-    advance_in_steps(bench.clock, 0.6)
+    advance_in_steps(bench.clock, 1.1)
 
     assert bench.health() == HealthState.OK
 
@@ -184,8 +192,10 @@ def test_no_runaway_when_the_stick_is_released_during_an_outage(bench: Bench) ->
     advance_in_steps(bench.clock, 0.5)
     assert bench.camera.moving  # it never heard the stop
 
+    # Plugged back in: the next poll (once a second) is answered, and the
+    # stop that never arrived is sent again.
     bench.unplug(False)
-    advance_in_steps(bench.clock, 0.3)
+    advance_in_steps(bench.clock, 1.5)
 
     assert not bench.camera.moving
 
@@ -226,10 +236,123 @@ def test_disconnect_stops_the_worker_and_closes_the_socket(bench: Bench) -> None
     assert bench.transports[-1].closed
 
 
-def test_settled_is_true_only_once_a_stop_has_been_answered(bench: Bench) -> None:
+def test_settled_is_true_only_once_a_stop_has_been_sent(bench: Bench) -> None:
     connected(bench)
     bench.driver.move(Velocity(pan=1.0), ttl_ms=5000)
     assert not bench.driver.settled()
 
     bench.driver.stop()
     eventually(lambda: bench.driver.settled())
+
+
+# --- the bench PTZ: the fake in its measured mode ---------------------------------------------
+
+
+def measured(bench: Bench) -> Bench:
+    """Make the bench's camera answer like the real PTZ, and connect past its silent start."""
+    bench.camera.measured = MeasuredReplies()
+    bench.driver.connect()
+    advance_in_steps(bench.clock, 5.0)
+    return bench
+
+
+def most_packets_in_one_second(times: list[float], start: float, end: float) -> int:
+    """The busiest one-second window (sliding by 50 ms) between `start` and `end`."""
+    windows = range(round((end - start - 1.0) / STEP_SECONDS) + 1)
+    return max(
+        sum(1 for moment in times if begin <= moment < begin + 1.0 - 1e-9)
+        for begin in (start + window * STEP_SECONDS for window in windows)
+    )
+
+
+def test_at_rest_the_driver_sends_the_measured_camera_one_packet_a_second(bench: Bench) -> None:
+    # The bench bug: ~14 packets a second at rest froze the camera's video.
+    # Now, with the default poll of one inquiry a second, that is all it gets.
+    measured(bench)
+    start = bench.clock.monotonic()
+
+    advance_in_steps(bench.clock, 20.0)
+
+    times = bench.sent_times()
+    assert most_packets_in_one_second(times, start, start + 20.0) <= 1
+    assert bench.driver.health() == Status.OK
+
+
+def test_a_stop_to_the_measured_camera_is_a_short_burst_and_then_quiet_again(
+    bench: Bench,
+) -> None:
+    # The stop is sent three times (a pan-tilt stop and a zoom stop each),
+    # 100 ms apart, and never again: the old driver resent it forever.
+    measured(bench)
+    bench.driver.move(Velocity(pan=0.5), ttl_ms=5000)
+    advance_in_steps(bench.clock, 1.0)
+    sent_before_the_stop = len(bench.sent_times())
+    bench.driver.stop()
+    stopped_at = bench.clock.monotonic()
+
+    advance_in_steps(bench.clock, 20.0)
+
+    times = bench.sent_times()[sent_before_the_stop:]
+    stops = [payload for payload in bench.camera.received if payload == packets.pan_tilt_stop()]
+    assert len(stops) == 3
+    # The second with the stop: six stop packets and at most one inquiry.
+    assert most_packets_in_one_second(times, stopped_at, stopped_at + 1.0) <= 7
+    # Every second after it: back to one inquiry.
+    assert most_packets_in_one_second(times, stopped_at + 1.0, stopped_at + 20.0) <= 1
+    assert not bench.camera.moving
+    assert bench.driver.settled()
+
+
+def test_the_measured_camera_stays_ok_and_its_position_is_published(bench: Bench) -> None:
+    bench.camera.pan.position = 0x01A5
+    measured(bench)
+    seen = set()
+
+    for _ in range(60):
+        advance_in_steps(bench.clock, 1.0)
+        seen.add(bench.health())
+
+    assert seen == {HealthState.OK}
+    assert bench.state["status"] == "ok"
+    # At rest its occasional pan/tilt answers are read, whatever their number.
+    assert bench.state["position"]["pan"] == 0x01A5 * packets.DEGREES_PER_PAN_TILT_STEP
+
+
+def test_the_measured_camera_s_position_is_unknown_while_it_moves(bench: Bench) -> None:
+    # It answers no position while moving, and its late answers may predate
+    # the move: the page is shown no position rather than an old one.
+    measured(bench)
+    advance_in_steps(bench.clock, 60.0)
+    assert bench.state["position"] is not None
+
+    bench.driver.move(Velocity(pan=0.5), ttl_ms=5000)
+    advance_in_steps(bench.clock, 0.2)
+
+    assert bench.state["position"] is None
+    assert bench.driver.health() == Status.OK
+
+
+def test_the_driver_logs_once_that_the_camera_does_not_echo_sequence_numbers(
+    bench: Bench, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO, logger="test")
+
+    measured(bench)
+    advance_in_steps(bench.clock, 5.0)
+
+    lines = [record.getMessage() for record in caplog.records if "echo" in record.getMessage()]
+    assert lines == ["camera cam1 does not echo VISCA sequence numbers; judging it by any reply"]
+
+
+def test_a_poll_setting_of_zero_leaves_only_a_check_every_three_seconds(bench: Bench) -> None:
+    bench.position_poll_seconds = 0.0  # "set 0 if the camera's video stutters"
+    measured(bench)
+    start = bench.clock.monotonic()
+
+    advance_in_steps(bench.clock, 30.0)
+
+    sent = [moment for moment in bench.sent_times() if moment >= start]
+    assert 9 <= len(sent) <= 11  # one every 3 s
+    # Its ACKs and completions keep it ok; no position is published at all.
+    assert bench.driver.health() == Status.OK
+    assert bench.state["position"] is None

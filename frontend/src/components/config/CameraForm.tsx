@@ -59,6 +59,20 @@ export function CameraForm(props: CameraFormProps) {
   const agentIds = Object.keys(agents?.agents ?? {});
   const agentCameras = agents?.agents[draft.address.agent_id]?.info?.cameras ?? [];
   const fallback = draft.direct_fallback;
+  // VISCA traffic choked the bench PTZ's video (ADR 0003): its polling is per camera.
+  // Shown with the VISCA address, or with the fallback's for an agent camera.
+  const positionPollField = (
+    <NumberField
+      label="Position poll (s)"
+      value={draft.position_poll_seconds}
+      min={0}
+      max={10}
+      step={0.25}
+      help="Seconds between VISCA position inquiries (0: none); raise it or set 0 if the camera's video stutters. The bench PTZ (192.168.10.245, 2026-11-15) gives no usable position: set 0."
+      error={errors.position_poll_seconds}
+      onChange={(value) => set({ position_poll_seconds: value ?? 1 })}
+    />
+  );
 
   return (
     <form
@@ -151,6 +165,7 @@ export function CameraForm(props: CameraFormProps) {
               error={errors["address.port"]}
               onChange={(port) => setAddress({ port: port ?? 52381 })}
             />
+            {positionPollField}
           </>
         ) : null}
         {!isAgent && (
@@ -295,6 +310,7 @@ export function CameraForm(props: CameraFormProps) {
                   })
                 }
               />
+              {positionPollField}
             </div>
           )}
         </>
