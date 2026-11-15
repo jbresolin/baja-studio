@@ -183,6 +183,12 @@ results decided the design; each is modelled by the fake
   privilege the studio does not take yet.
 - **Diagnostics bundle**: it already carries `mediamtx-stdout.log` (the logs
   folder); `mediamtx.yml` could join the Caddyfile there.
+- **Windows file replace.** On Windows a file being replaced cannot be opened
+  for a moment (CI's Windows runner showed it to a test reading the file in a
+  loop). The writer retries; MediaMTX itself reads the file ~10 ms after the
+  rename it is told about, and writes are 2 s apart, so its reload should not
+  meet a replace in progress. If it did, it would exit and NSSM would restart
+  it within 2 s with the new file. The bench (steps 12, 13) exercises reloads.
 - **Windows-only paths are not exercised in CI**: `netstat` UDP parsing is
   tested on recorded-shaped output, and the installer's service and firewall
   steps are reviewed by hand (PR description) and by the release smoke test.

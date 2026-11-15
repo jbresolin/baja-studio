@@ -240,7 +240,10 @@ def test_a_reload_mediamtx_missed_is_written_again(
     feeds_fakes.mediamtx.look_at_config_file()
     services.settings.update("feeds", {"feeds": [DRONE]})
     # The studio wrote at once (same fake second), so MediaMTX did not take it.
-    eventually(lambda: "drone" in written_config(data_directory)["paths"])
+    # (Wait for the module to say it wrote, rather than reading the file while
+    # it is being replaced: Windows refuses that read, as it would MediaMTX's.)
+    eventually(lambda: state(services, "config.written_at") is not None)
+    assert "drone" in written_config(data_directory)["paths"]
     assert not feeds_fakes.mediamtx.publish("drone")
 
     # A few polls later the module noticed the fingerprint did not match,
