@@ -1,0 +1,80 @@
+# Written by Baja Studio from the feeds settings (Feeds page). Edits here are overwritten.
+# The body is JSON, which MediaMTX reads as YAML.
+{
+  "sysLogPrefix": "baja-studio-310d51a94d07b4f5",
+  "logLevel": "info",
+  "logDestinations": [
+    "stdout"
+  ],
+  "api": true,
+  "apiAddress": "127.0.0.1:9995",
+  "metrics": false,
+  "pprof": false,
+  "playback": false,
+  "hls": false,
+  "webrtc": false,
+  "moq": false,
+  "rtsp": true,
+  "rtspTransports": [
+    "tcp"
+  ],
+  "rtspEncryption": "no",
+  "rtspAddress": ":8555",
+  "rtmp": true,
+  "rtmpEncryption": "no",
+  "rtmpAddress": ":1936",
+  "srt": true,
+  "srtAddress": ":8891",
+  "authMethod": "internal",
+  "authInternalUsers": [
+    {
+      "user": "any",
+      "pass": "",
+      "ips": [],
+      "permissions": [
+        {
+          "action": "publish",
+          "path": ""
+        }
+      ]
+    },
+    {
+      "user": "any",
+      "pass": "",
+      "ips": [],
+      "permissions": [
+        {
+          "action": "read",
+          "path": ""
+        }
+      ]
+    },
+    {
+      "user": "any",
+      "pass": "",
+      "ips": [
+        "127.0.0.1",
+        "::1"
+      ],
+      "permissions": [
+        {
+          "action": "api"
+        }
+      ]
+    }
+  ],
+  "pathDefaults": {
+    "record": false,
+    "recordPath": "D:/Grava\u00e7\u00f5es/%path/%Y-%m-%d_%H-%M-%S-%f_%z",
+    "recordFormat": "fmp4",
+    "recordSegmentDuration": "10m",
+    "recordDeleteAfter": "0s",
+    "overridePublisher": true
+  },
+  "paths": {
+    "drone": {
+      "record": false
+    },
+    "all_others": {}
+  }
+}

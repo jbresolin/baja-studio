@@ -33,6 +33,7 @@ from tests.core.fake_system_probes import FakeSystemProbes
 
 if TYPE_CHECKING:
     # Only for the annotation: importing it here would stop pytest rewriting its asserts.
+    from tests.modules.feeds_studio import FeedsFakes
     from tests.modules.gateway_studio import GatewayFakes
 
 # Fixtures for tests that need fake camera-laptop agents (tests/fake_agents.py),
@@ -44,6 +45,7 @@ pytest_plugins = [
     "tests.modules.playout_studio",
     "tests.modules.audio_studio",
     "tests.modules.gateway_studio",
+    "tests.modules.feeds_studio",
     "tests.modules.hosts_studio",
 ]
 
@@ -395,14 +397,15 @@ def make_app(
     data_directory: Path,
     frontend_directory: Path,
     gateway_fakes: "GatewayFakes",
+    feeds_fakes: "FeedsFakes",
     system_probes: FakeSystemProbes,
 ) -> AppFactory:
     """Build an app on the fake clock and temp data directory.
 
     Pass a function returning a module list to run only those modules;
     pass None for the real module list from `main.py`, whose services and
-    Caddy are then the `gateway_fakes` (no NSSM, no network) and whose view
-    of the PC is `system_probes`.
+    Caddy are then the `gateway_fakes` (no NSSM, no network), whose MediaMTX
+    is the `feeds_fakes`' and whose view of the PC is `system_probes`.
     """
 
     def real_modules_with_fakes(registry: ModuleRegistry) -> list[Module]:
@@ -411,6 +414,7 @@ def make_app(
             gateway_fakes.services,
             gateway_fakes.system(),
             system_probes=system_probes.probes(),
+            feeds_system=feeds_fakes.system(),
         )
 
     def build(module_list_builder: Callable[[ModuleRegistry], list[Module]] | None) -> FastAPI:

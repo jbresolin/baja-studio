@@ -111,6 +111,8 @@ def test_the_install_folder_comes_from_the_environment_the_installer_sets() -> N
     assert layout is not None
     assert layout.nssm_executable == Path("C:/BajaStudio/nssm/nssm.exe")
     assert layout.caddy_executable == Path("C:/BajaStudio/caddy/caddy.exe")
+    # MediaMTX, which the feeds service (BajaStudioFeeds) runs.
+    assert layout.mediamtx_executable == Path("C:/BajaStudio/mediamtx/mediamtx.exe")
     assert InstallLayout.from_environment({}) is None
 
 

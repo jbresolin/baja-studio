@@ -72,6 +72,7 @@ def test_create_app_registers_every_module_in_home_page_order(
         "readiness",
         "cameras",
         "playout",
+        "feeds",
         "audio",
         "hosts",
         "gateway",

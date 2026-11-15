@@ -1,0 +1,103 @@
+# Written by Baja Studio from the feeds settings (Feeds page). Edits here are overwritten.
+# The body is JSON, which MediaMTX reads as YAML.
+{
+  "sysLogPrefix": "baja-studio-20a8caed5c3263f3",
+  "logLevel": "info",
+  "logDestinations": [
+    "stdout"
+  ],
+  "api": true,
+  "apiAddress": "127.0.0.1:9997",
+  "metrics": false,
+  "pprof": false,
+  "playback": false,
+  "hls": false,
+  "webrtc": false,
+  "moq": false,
+  "rtsp": true,
+  "rtspTransports": [
+    "tcp"
+  ],
+  "rtspEncryption": "no",
+  "rtspAddress": "127.0.0.1:8554",
+  "rtmp": true,
+  "rtmpEncryption": "no",
+  "rtmpAddress": ":1935",
+  "srt": true,
+  "srtAddress": ":8890",
+  "authMethod": "internal",
+  "authInternalUsers": [
+    {
+      "user": "laptop1",
+      "pass": "argon2:$argon2id$v=19$m=19456,t=2,p=1$/C5wr9DbHl4OUbQDyUKtWQ$eKoQY0MYqwZIbBUWJgSjK+K4fFx+ixnAZPYHg66jtJM",
+      "ips": [],
+      "permissions": [
+        {
+          "action": "publish",
+          "path": "laptop1"
+        }
+      ]
+    },
+    {
+      "user": "any",
+      "pass": "",
+      "ips": [],
+      "permissions": [
+        {
+          "action": "publish",
+          "path": "drone"
+        },
+        {
+          "action": "publish",
+          "path": "laptop2"
+        }
+      ]
+    },
+    {
+      "user": "any",
+      "pass": "",
+      "ips": [
+        "127.0.0.1",
+        "::1"
+      ],
+      "permissions": [
+        {
+          "action": "read",
+          "path": ""
+        }
+      ]
+    },
+    {
+      "user": "any",
+      "pass": "",
+      "ips": [
+        "127.0.0.1",
+        "::1"
+      ],
+      "permissions": [
+        {
+          "action": "api"
+        }
+      ]
+    }
+  ],
+  "pathDefaults": {
+    "record": false,
+    "recordPath": "C:/ProgramData/BajaStudio/feeds-recordings/%path/%Y-%m-%d_%H-%M-%S-%f_%z",
+    "recordFormat": "fmp4",
+    "recordSegmentDuration": "10m",
+    "recordDeleteAfter": "0s",
+    "overridePublisher": true
+  },
+  "paths": {
+    "drone": {
+      "record": false
+    },
+    "laptop1": {
+      "record": false
+    },
+    "laptop2": {
+      "record": true
+    }
+  }
+}

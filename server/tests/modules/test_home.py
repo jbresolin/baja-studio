@@ -32,6 +32,7 @@ def test_home_lists_every_module_with_title_and_health(make_app: AppFactory) -> 
         "readiness",
         "cameras",
         "playout",
+        "feeds",
         "audio",
         "hosts",
         "gateway",
