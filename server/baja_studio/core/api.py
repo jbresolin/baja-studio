@@ -111,7 +111,10 @@ def save_settings(section: str, body: SettingsSaveRequest, request: Request) -> 
             409, {"message": str(conflict), "current_version": conflict.current_version}
         ) from None
     except ValidationError as invalid:
-        raise HTTPException(422, json.loads(invalid.json(include_url=False))) from None
+        # Never echo the submitted values back (`include_input=False`): they can
+        # hold secrets (OBS and agent passwords, tokens). Where and why is enough.
+        details = invalid.json(include_url=False, include_input=False)
+        raise HTTPException(422, json.loads(details)) from None
     return get_settings(section, request)
 
 

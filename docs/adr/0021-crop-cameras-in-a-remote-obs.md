@@ -171,10 +171,10 @@ the same as stopping a driver).
   JPEG at the widest window, ADR 0020 rule 4) fits in the 3 s request
   timeout over the radio, and the laptop OBS's CPU with one and two 4K
   sources.
-- A settings save the server refuses (422) echoes the submitted values,
-  password included, back to the page that sent them. That is the settings
-  API's generic behaviour for every secret (playout's OBS password too), not
-  new here; a fix belongs in `core/api.py`.
+- (Fixed in this PR, `core/api.py`) A settings save the server refused (422)
+  used to echo the submitted values, password included, back to the page;
+  the error now carries only where and why (`include_input=False`), for every
+  section.
 - The two cameras of one laptop show a new connection state at their own
   next step, up to a second apart.
 - "Saved last" is known only while the service runs. After a restart, two
