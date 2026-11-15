@@ -2,26 +2,33 @@
 
 This is for the streaming PC (Windows 10 or 11, 64-bit). You need an
 administrator account. Nothing has to be installed first: the installer
-brings its own Python, Caddy, NSSM, and ffmpeg/ffprobe for playout.
+brings its own Python, Caddy, NSSM, ffmpeg/ffprobe for playout, and MediaMTX
+for the remote feeds.
 
 ## What the installer does
 
 - Copies the program to `C:\Program Files\BajaStudio\` (Python, the web
-  pages, Caddy, NSSM, and `ffmpeg\` with ffmpeg and ffprobe, which playout
-  uses for clip durations and thumbnails).
+  pages, Caddy, NSSM, `ffmpeg\` with ffmpeg and ffprobe, which playout
+  uses for clip durations and thumbnails, and `mediamtx\` for the feeds).
 - Keeps the data in `C:\ProgramData\BajaStudio\` (you can pick another folder
   on the first install): the settings and playout queue (`baja-studio.sqlite3`),
-  `logs\`, `diagnostics\`, and `caddy\` (Caddy's config and certificates).
-- Registers two **Windows services** that start with Windows and restart by
+  `logs\`, `diagnostics\`, `caddy\` (Caddy's config and certificates),
+  `mediamtx\` (MediaMTX's config) and `feeds-recordings\` (feeds recorded to disk).
+- Registers three **Windows services** that start with Windows and restart by
   themselves if they stop:
   - **Baja Studio** (`BajaStudio`): the studio, on port 8888;
   - **Baja Studio gateway** (`BajaStudioGateway`): Caddy, on ports 80 and 443.
     It starts once the studio answers, because the studio writes its config.
+  - **Baja Studio feeds** (`BajaStudioFeeds`): MediaMTX, which receives the
+    drone (RTMP, TCP 1935) and the trackside laptops (SRT, UDP 8890) for OBS
+    (RTSP on 127.0.0.1:8554). It does not depend on the studio: restarting
+    or upgrading the studio does not drop a feed. See the Feeds page.
 - Shows the **Baja Studio status icon** in the taskbar for everyone who logs
   on (an option, ticked by default; see *The status icon* below).
-- Opens the firewall for TCP 80, 443 and 8888 on **private and domain**
-  networks only (one rule, "Baja Studio (LAN)"). Untick the option if you do
-  not want that.
+- Opens the firewall for TCP 80, 443, 8888 and 1935, and UDP 8890, on
+  **private and domain** networks only (rules "Baja Studio (LAN)" and
+  "Baja Studio feeds (LAN, SRT)"). Untick the option if you do not want that.
+  A feed port changed in the feeds settings must be opened by hand.
 - Adds a Start-menu folder **Baja Studio**: *Baja Studio* (opens the page),
   *Baja Studio logs* (opens the logs folder), *Baja Studio status icon*
   (starts the icon if it was closed), *Uninstall Baja Studio*.
@@ -83,7 +90,8 @@ check says which copy is in use.
 
 ## Upgrade
 
-Run the newer installer. It closes the status icons, stops both services,
+Run the newer installer. It closes the status icons, stops the services
+(the feeds too: a live feed drops for the minute the upgrade takes),
 replaces the program folder, and starts them again. The data folder is not
 touched: settings, the queue, logs and certificates survive. The version at
 the bottom of the home page changes. The release notes say whether an upgrade
@@ -92,7 +100,7 @@ needs anything more (from v0.1.0 to v0.2.0: nothing).
 ## Uninstall
 
 Start menu → Baja Studio → *Uninstall Baja Studio* (or Windows Settings →
-Apps). It stops and removes both services and the firewall rule, and deletes
+Apps). It stops and removes the services and the firewall rules, and deletes
 the program folder. It asks whether to **keep the data** (the default): say
 *Yes* to keep it for a later install, which then finds everything where it was.
 
@@ -210,8 +218,8 @@ page) and run the readiness check.
   the logs, settings (secrets masked), health, state, recent commands,
   versions and the Caddyfile. Attach it to the Plane issue.
 - **Logs folder** (Start menu → Baja Studio logs): `baja-studio.log` (the
-  service's own log), `service-*.log` and `caddy-*.log` (what each service
-  printed, rotated at 5 MB).
+  service's own log), `service-*.log`, `caddy-*.log` and `mediamtx-*.log`
+  (what each service printed, rotated at 5 MB).
 - The services can be restarted from Windows' *Services* app like any other.
 
 ### Port 80 or 443 in use
@@ -235,3 +243,14 @@ on :80 … forbidden" or "address already in use".)
 Then start *Baja Studio gateway* in the *Services* app. If it shows as
 *Paused*, NSSM is waiting between retries after quick failures; *Start* it
 anyway. The red line goes away within ten seconds of Caddy starting.
+
+### A feed port in use
+
+MediaMTX stops when another program holds one of its ports (TCP 1935 for
+RTMP, UDP 8890 for SRT, TCP 8554 for RTSP, TCP 9997 for its control API), and
+NSSM keeps restarting it. The Feeds page then shows *MediaMTX is not
+answering*, names the program on the port, and lists MediaMTX's last log
+lines. Close that program, or pick another port in the feeds settings (at the
+bottom of the Feeds page): the studio checks a new port is free before it
+writes it, so a change never stops MediaMTX. Then start *Baja Studio feeds*
+in the *Services* app if it shows as *Paused*.
