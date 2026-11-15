@@ -97,7 +97,8 @@ class PreviewCache:
             entry = self._entries.get(key)
             # In flight (however long OBS takes), or answered less than a second ago.
             usable = entry is not None and (
-                entry.taken_at is None or now - entry.taken_at < MAX_AGE_SECONDS
+                # (Float tolerance: ten 0.1 s steps add up to 0.9999999999999999 s.)
+                entry.taken_at is None or now - entry.taken_at < MAX_AGE_SECONDS - 1e-6
             )
             leader = not usable
             if leader:
