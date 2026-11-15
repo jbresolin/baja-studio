@@ -8,6 +8,10 @@ M-VAVE is not a process: the studio's MIDI child uses its fake backend when
 `BAJA_STUDIO_UVC_BACKEND=fake`, and scenarios reach its switches through the
 cameras module's `simulate_usb` command.
 
+The fake MediaMTX (WP14) watches the `mediamtx.yml` the rig studio writes in
+its data folder and writes MediaMTX-style lines where the studio reads the
+real one's log; it opens only its control API, not the RTMP/SRT/RTSP ports.
+
 The passwords and tokens below protect nothing but these local fakes, so they
 are plain constants (and travel in the settings bundle; ADR 0016).
 """
@@ -25,6 +29,8 @@ from baja_studio.childprocs.midi_child import BACKEND_ENVIRONMENT_VARIABLE
 from baja_studio.childprocs.uvc_child import (
     BACKEND_ENVIRONMENT_VARIABLE as UVC_BACKEND_ENVIRONMENT_VARIABLE,
 )
+from baja_studio.modules.feeds.mediamtx_config import config_path
+from baja_studio.modules.feeds.service_log import log_path
 from baja_studio.rig.layout import LOOPBACK, free_tcp_port, free_udp_port
 from baja_studio.rig.processes import ProcessStartError, RigProcess
 
@@ -38,6 +44,8 @@ XR18_NAME = "XR18-RIG"
 # Agent ids as the studio's registry knows them; the fakes report the same.
 AGENT_IDS = ("rig-laptop-a", "rig-laptop-b")
 CAMERAS_PER_AGENT = 2
+# The feeds the bundle configures; the fake MediaMTX has them publishing from the start.
+FEED_SENDERS = ("drone", "laptop1")
 # What the studio needs in its environment to drive the fake M-VAVE and USB cameras.
 STUDIO_ENVIRONMENT = {
     BACKEND_ENVIRONMENT_VARIABLE: "fake",
@@ -56,6 +64,10 @@ class FakePorts:
     cameras: tuple[int, int]
     agents: tuple[int, int]
     orchestrator: int
+    # The fake MediaMTX's control API, and the (unopened) RTMP, SRT and RTSP ports
+    # the feeds settings name.
+    mediamtx_api: int = 9997
+    feeds: tuple[int, int, int] = (1935, 8890, 8554)
 
     @classmethod
     def pick(cls) -> "FakePorts":
@@ -66,6 +78,8 @@ class FakePorts:
             cameras=(free_udp_port(), free_udp_port()),
             agents=(free_tcp_port(), free_tcp_port()),
             orchestrator=free_tcp_port(),
+            mediamtx_api=free_tcp_port(),
+            feeds=(free_tcp_port(), free_udp_port(), free_tcp_port()),
         )
 
 
@@ -85,13 +99,16 @@ def build_fakes(
     obs_seed: int | None,
     ffprobe: str | None,
     measured_visca: bool = False,
+    studio_data: Path | None = None,
 ) -> dict[str, RigFake]:
     """Every fake, keyed by the name scenarios use (`obs`, `xr18`, `agent1`, ...); not started.
 
     `obs_seed` None turns the fake OBS's realistic timing off (`--fast-obs`);
     `ffprobe` (if found) lets it play the demo clips at their real length;
     `measured_visca` makes the VISCA cameras answer like the bench PTZ
-    (`--measured-visca`: late, batched replies with their own sequence numbers).
+    (`--measured-visca`: late, batched replies with their own sequence numbers);
+    `studio_data` is the rig studio's data folder, where the fake MediaMTX
+    finds the config the studio writes and leaves its log.
     """
     fakes: dict[str, RigFake] = {}
 
@@ -180,6 +197,18 @@ def build_fakes(
         ],
         f"http://{LOOPBACK}:{ports.orchestrator}/manifest",
         lambda: tcp_answers(ports.orchestrator),
+    )
+    mediamtx_arguments = ["--host", LOOPBACK, "--port", str(ports.mediamtx_api)]
+    mediamtx_arguments += ["--senders", ",".join(FEED_SENDERS)]
+    if studio_data is not None:
+        mediamtx_arguments += ["--config", str(config_path(studio_data))]
+        mediamtx_arguments += ["--log", str(log_path(studio_data))]
+    add(
+        "mediamtx",
+        "fake_mediamtx",
+        mediamtx_arguments,
+        f"http://{LOOPBACK}:{ports.mediamtx_api}/v3 ({', '.join(FEED_SENDERS)} publishing)",
+        lambda: tcp_answers(ports.mediamtx_api),
     )
     return fakes
 

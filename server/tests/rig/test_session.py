@@ -83,7 +83,8 @@ def studio(
     frontend = tmp_path / "frontend"
     frontend.mkdir()
     app = create_app(
-        data_directory=tmp_path / "studio",
+        # The rig's own studio folder: the fake MediaMTX watches the config written there.
+        data_directory=session.layout.studio_data,
         frontend_directory=frontend,
         log_to_file=False,
         module_list_builder=modules,
@@ -102,6 +103,7 @@ def test_the_studio_set_up_by_the_rig_is_all_green(session: RigSession, studio: 
         "playout",
         "audio",
         "hosts",
+        "feeds",
         "gateway",
     }
     studio.restore_audio_defaults()
@@ -194,6 +196,7 @@ def test_no_fake_can_be_reached_from_another_pc(session: RigSession) -> None:
         "agent1": (ports.agents[0], None),
         "agent2": (ports.agents[1], None),
         "orchestrator": (ports.orchestrator, None),
+        "mediamtx": (ports.mediamtx_api, None),
     }
     assert set(listening) == set(session.fakes)
 

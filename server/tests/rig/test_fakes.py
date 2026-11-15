@@ -27,7 +27,7 @@ def host_argument(command: list[str]) -> str | None:
 def test_every_fake_the_rig_starts_listens_on_loopback_only(tmp_path: Path) -> None:
     fakes = build_fakes(PORTS, tmp_path / "delivery", tmp_path / "logs", 1, None)
 
-    # The rig starts all seven fakes ...
+    # The rig starts all eight fakes (MediaMTX's since WP14) ...
     assert set(fakes) == {
         "obs",
         "xr18",
@@ -36,6 +36,7 @@ def test_every_fake_the_rig_starts_listens_on_loopback_only(tmp_path: Path) -> N
         "agent1",
         "agent2",
         "orchestrator",
+        "mediamtx",
     }
     # ... and each is told to listen on 127.0.0.1. Without `--host` several fakes
     # would listen on every network card (0.0.0.0 is their default).

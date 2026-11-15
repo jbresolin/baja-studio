@@ -132,3 +132,13 @@ def test_the_fake_usb_cameras_are_in_the_bundle_as_camera_setup_saves_them() -> 
     assert cameras["rig-s600-b"]["usb_device"]["index"] == 1
     assert cameras["rig-pixy"]["driver"] == "uvc"
     CamerasSettings.model_validate({"cameras": list(cameras.values())})
+
+
+def test_the_feeds_point_at_the_fake_mediamtx_with_two_feeds() -> None:
+    # The studio reads the fake MediaMTX's API on its port; the RTMP, SRT and
+    # RTSP ports are free ones (nothing opens them in the rig).
+    values = section_values(PORTS, CLIPS)["feeds"]
+    assert values["api_port"] == PORTS.mediamtx_api
+    assert (values["rtmp_port"], values["srt_port"], values["rtsp_port"]) == PORTS.feeds
+    # The same names the fake MediaMTX has publishing, so both feeds show live.
+    assert [feed["name"] for feed in values["feeds"]] == list(fakes.FEED_SENDERS)

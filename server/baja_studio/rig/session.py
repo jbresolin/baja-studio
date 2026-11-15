@@ -61,6 +61,7 @@ class RigSession:
             self.obs_seed,
             tools.ffprobe.found_at,
             self.measured_visca,
+            self.layout.studio_data,
         )
         for fake in self.fakes.values():
             fake.process.start()

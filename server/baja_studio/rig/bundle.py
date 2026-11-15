@@ -14,6 +14,8 @@ Settings → Export / import when the rig runs with `--no-studio`. What it sets:
   links (PROD 3 and 4 included), seats 1-4 on channels 1-4 and buses 1-4,
   the production bus and microphones;
 - hosts: the four seats with names and colours, all switched on;
+- feeds: the fake MediaMTX's control API, free ports for RTMP/SRT/RTSP, and
+  two feeds (drone, laptop1);
 - gateway: off (there is no Caddy on a desk PC).
 
 Every key is checked against the settings models of this checkout; one the
@@ -38,6 +40,7 @@ from baja_studio.fakes import fake_duvc
 from baja_studio.modules.agents import AgentsModule
 from baja_studio.modules.audio import AudioModule
 from baja_studio.modules.cameras import CamerasModule
+from baja_studio.modules.feeds import FeedsModule
 from baja_studio.modules.gateway import GatewayModule
 from baja_studio.modules.hosts import HostsModule
 from baja_studio.modules.playout import PlayoutModule
@@ -53,6 +56,7 @@ SECTION_MODELS: dict[str, type[ModuleSettings]] = {
         AgentsModule,
         CamerasModule,
         PlayoutModule,
+        FeedsModule,
         AudioModule,
         HostsModule,
         GatewayModule,
@@ -181,6 +185,16 @@ def section_values(ports: fakes.FakePorts, clips_folder: Path) -> dict[str, dict
                 {"id": seat_id, "screen_name": name, "color": colour, "enabled": True}
                 for seat_id, name, colour in SEATS
             ]
+        },
+        "feeds": {
+            "feeds": [
+                {"id": "rig-drone", "name": "drone", "label": "Rig drone", "kind": "drone"},
+                {"id": "rig-laptop1", "name": "laptop1", "label": "Rig laptop 1", "kind": "laptop"},
+            ],
+            "api_port": ports.mediamtx_api,
+            "rtmp_port": ports.feeds[0],
+            "srt_port": ports.feeds[1],
+            "rtsp_port": ports.feeds[2],
         },
         "gateway": {"enabled": False},
     }
