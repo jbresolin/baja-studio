@@ -144,3 +144,18 @@ def test_an_unplugged_controller_fails_and_says_which_port(studio: Studio) -> No
     assert statuses(results) == {"controller:desk": CheckStatus.FAIL}
     assert results["controller:desk"].fix.startswith("Check the RS485 adapter is plugged in")
     assert "COM8" in results["controller:desk"].fix
+
+
+def test_an_obs_crop_camera_without_obs_fails_and_says_where_to_look(studio: Studio) -> None:
+    # The `studio` fixture has no OBS at all, so the crop camera stays offline.
+    crop = {"id": "crop", "driver": "obs_crop", "obs_source": "Cam 4K"}
+    studio.configure(cameras=[crop])
+    # (A new camera starts "offline: starting"; wait for the driver's own reason.)
+    eventually(lambda: studio.camera("crop")["status_reason"].startswith("OBS offline"))
+
+    result = run_module_checks(studio.services, "cameras", studio.clock)["camera:crop"]
+
+    assert result.status == CheckStatus.FAIL
+    assert "OBS offline" in result.detail
+    assert "'Cam 4K'" in result.fix and "Create filter" in result.fix
+    assert_fix_given(result)

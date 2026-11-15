@@ -16,20 +16,29 @@ Commands: see `commands.py`. Readiness checks: `cameras/readiness.py`.
 import threading
 from typing import Any
 
+from fastapi import APIRouter
 from pydantic import BaseModel
 
 from baja_studio.cameras import health
 from baja_studio.cameras.config import CamerasSettings
 from baja_studio.cameras.drivers.agent_gateway import AgentGateway
+from baja_studio.cameras.drivers.obs_gateway import NoObsGateway, ObsGateway
 from baja_studio.cameras.drivers.visca_ip import DatagramOpener, UdpTransport
 from baja_studio.cameras.inputs.pelco_d_worker import SerialOpener, open_serial_port
 from baja_studio.cameras.inputs.serial_ports import SerialPortLister, list_serial_ports
+from baja_studio.cameras.previews import CameraPreviews
 from baja_studio.cameras.readiness import camera_checks
 from baja_studio.cameras.registry import CameraRegistry
 from baja_studio.core.module import Module, ModuleContext
 from baja_studio.core.readiness import ReadinessCheck
 from baja_studio.core.supervisor import WorkerContext, WorkerSpec
 from baja_studio.modules.cameras.commands import CameraCommands
+from baja_studio.modules.cameras.obs_commands import (
+    OBS_COMMANDS,
+    UNLOGGED_OBS_COMMANDS,
+    ObsCameraCommands,
+)
+from baja_studio.modules.cameras.preview_routes import camera_routes
 
 
 class CamerasModule(Module):
@@ -45,11 +54,14 @@ class CamerasModule(Module):
         datagram_opener: DatagramOpener = UdpTransport,
         serial_opener: SerialOpener = open_serial_port,
         list_ports: SerialPortLister = list_serial_ports,
+        obs: ObsGateway | None = None,
     ) -> None:
-        """`agents` is the agents module; tests pass fake openers for UDP and serial,
-        and a fake list of serial ports."""
+        """`agents` is the agents module and `obs` playout's OBS connection (crop
+        cameras, previews); tests pass fake openers for UDP and serial, and a fake
+        list of serial ports."""
         super().__init__()
         self._agents = agents
+        self._obs = obs or NoObsGateway()
         self._datagram_opener = datagram_opener
         self._serial_opener = serial_opener
         self._lock = threading.Lock()
@@ -59,6 +71,8 @@ class CamerasModule(Module):
         self._commands = CameraCommands(
             self._current_registry, self._settings, self._save_cameras, list_ports
         )
+        self._obs_commands = ObsCameraCommands(self._obs, self._settings)
+        self._previews: CameraPreviews | None = None
 
     def initial_state(self) -> dict[str, Any]:
         """No cameras or controllers until the motion worker applies the settings."""
@@ -69,7 +83,18 @@ class CamerasModule(Module):
         super().start(context)
         with self._lock:
             self._registry = CameraRegistry(
-                context, self._agents, self._datagram_opener, self._serial_opener, self._wake_motion
+                context,
+                self._agents,
+                self._datagram_opener,
+                self._serial_opener,
+                self._wake_motion,
+                self._obs,
+            )
+            self._previews = CameraPreviews(
+                context.clock,
+                self._obs,
+                self._settings,
+                lambda camera_id: context.state.get(self.name, f"cameras.{camera_id}"),
             )
         context.supervisor.set_health_summary(self.name, health.summarise)
         if not self._subscribed:
@@ -79,11 +104,15 @@ class CamerasModule(Module):
     def stop(self) -> None:
         """Workers are already stopped; forget the drivers so a restart builds fresh ones."""
         with self._lock:
-            self._running, self._registry = False, None
+            self._running, self._registry, self._previews = False, None, None
 
     def workers(self) -> list[WorkerSpec]:
         """The motion loop; it also connects the configured devices when it starts."""
         return [WorkerSpec(health.MOTION_WORKER, self._run_motion)]
+
+    def routes(self) -> APIRouter:
+        """Camera previews (`preview_routes.py`)."""
+        return camera_routes(lambda: self._previews)
 
     def readiness_checks(self) -> list[ReadinessCheck]:
         """Every enabled camera and controller, from what their workers publish."""
@@ -123,7 +152,10 @@ class CamerasModule(Module):
     # --- commands ------------------------------------------------------------------------
 
     def handle_command(self, command: str, args: dict[str, Any], source: str) -> Any:
-        """See `commands.py`: motion, presets, modes, serial ports and raw frames."""
+        """See `commands.py` (motion, presets, modes, serial ports, raw frames) and
+        `obs_commands.py` (OBS sources, creating a crop filter)."""
+        if command in OBS_COMMANDS:
+            return self._obs_commands.handle(command, args)
         result = self._commands.handle(command, args, source)
         self._wake_motion()
         return result
@@ -132,6 +164,8 @@ class CamerasModule(Module):
         self, command: str, args: dict[str, Any], source: str, result: Any, failed: bool
     ) -> bool:
         """Keep the start of a browser's move stream, not each of its ten-a-second repeats."""
+        if command in UNLOGGED_OBS_COMMANDS:
+            return False
         return self._commands.wants_logged(command, args, source, result, failed)
 
     def _current_registry(self) -> CameraRegistry | None:

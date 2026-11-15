@@ -31,8 +31,9 @@ from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import Any
 
-from baja_studio.agents.contract import MAX_TTL_MS, Mode, ModeReply, Preset
+from baja_studio.agents.contract import MAX_TTL_MS, CameraKind, Mode, ModeReply, Preset
 from baja_studio.cameras.config import CameraConfig, MotionSettings
+from baja_studio.cameras.crop_window import WindowPlacingDriver, WindowTarget
 from baja_studio.cameras.driver import CameraDriver, Logger, ModeCapableDriver, Velocity
 from baja_studio.cameras.motion.shaping import shape
 from baja_studio.core.clock import Clock
@@ -163,6 +164,22 @@ class MotionArbiter:
             self._driver.recall_preset(n)
             self._publish_control(source, f"recall_preset {n}")
         return {"recalled": n}
+
+    def place_window(self, source: str, target: WindowTarget) -> dict[str, Any]:
+        """Jump a crop camera's window (click-to-centre, reset); like a preset recall,
+        it ends any velocity and so obeys the holder rule."""
+        driver = self._driver
+        if (
+            not isinstance(driver, WindowPlacingDriver)
+            or driver.capabilities().kind != CameraKind.CROP
+        ):
+            raise MotionRefusedError(f"camera {self._config().id} is not a crop camera")
+        with self._lock:
+            self._refuse_if_held_by_another(source, self._clock.monotonic())
+            self._hold = None
+            driver.place_window(target)
+            self._publish_control(source, target.describe())
+        return {"placed": target.describe()}
 
     def store_preset(self, source: str, n: int) -> None:
         """Store the current position as preset `n` (no motion, so any source may)."""

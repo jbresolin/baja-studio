@@ -79,11 +79,15 @@ def build_module_list(
         gateway_system = GatewaySystem(caddy_version=installed_caddy_version(layout))
     probes = system_probes or SystemProbes()
     agents = AgentsModule()
+    playout = PlayoutModule(
+        free_disk_bytes=probes.free_disk_bytes, dispatch=registry.dispatch_command
+    )
     return [
         HomeModule(registry, service_control, probes),
         ReadinessModule(registry),
-        CamerasModule(agents),
-        PlayoutModule(free_disk_bytes=probes.free_disk_bytes, dispatch=registry.dispatch_command),
+        # Crop cameras and previews use playout's one OBS connection (ADR 0020).
+        CamerasModule(agents, obs=playout.obs_gateway),
+        playout,
         AudioModule(),
         HostsModule(registry),
         GatewayModule(service_control, gateway_system),

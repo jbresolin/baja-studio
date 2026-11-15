@@ -152,3 +152,14 @@ def test_filter_changes_send_the_events_obs_sends(
 
 def test_the_command_line_names_a_video_source_with_its_size() -> None:
     assert parse_video_source("Cam 4K=3840x2160") == ("Cam 4K", 3840, 2160)
+
+
+def test_an_empty_crop_filter_can_be_there_from_the_start(
+    client: ObsWebsocketClient, fake_obs: FakeObs
+) -> None:
+    # What `--crop-filter` does for the rehearsal rig: the camera is ready to move.
+    fake_obs.add_crop_filter(CAMERA, FILTER)
+
+    found = client.get_source_filter(CAMERA, FILTER)
+    assert found.kind == "crop_filter"
+    assert screenshot_size(client) == (3840, 2160)  # nothing cut yet

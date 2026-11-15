@@ -23,6 +23,7 @@ from typing import Any
 
 from baja_studio.agents.contract import CameraKind, Mode, ModeReply, Position, Preset, Status
 from baja_studio.cameras.config import DirectFallback
+from baja_studio.cameras.crop_window import WindowTarget
 from baja_studio.cameras.driver import (
     CameraDriver,
     DriverCapabilities,
@@ -31,6 +32,7 @@ from baja_studio.cameras.driver import (
     Velocity,
 )
 from baja_studio.cameras.drivers.agent_commands import MOVE, STOP, AgentCommandQueue
+from baja_studio.cameras.drivers.agent_crop import AgentCropMirror
 from baja_studio.cameras.drivers.agent_gateway import AgentCall, AgentGateway, AgentLinkView
 from baja_studio.core.supervisor import HealthState, WorkerContext, WorkerSpec
 
@@ -70,6 +72,8 @@ class AgentProxyDriver(ModeCapableDriver):
         self.worker_name = f"{host.worker_prefix}:agent"
         self._lock = threading.Lock()
         self._commands = AgentCommandQueue(gateway, agent_id, self._command_failed)
+        # A `kind=crop` camera's window, for the preview (WP6b).
+        self._crop = AgentCropMirror(gateway, agent_id, remote_camera_id, host.publish)
         self._view: AgentLinkView | None = None
         self._offline_since: float | None = None
         self._fallback: CameraDriver | None = None
@@ -152,6 +156,16 @@ class AgentProxyDriver(ModeCapableDriver):
         self._forward("label_preset", lambda client: client.label_preset(remote, n, label), result)
         return result
 
+    def place_window(self, target: WindowTarget) -> None:
+        """Jump a crop camera's window with `PUT /crop`, in order with the other commands."""
+        call = self._crop.put_call(target)
+        if call is None or self._route == ROUTE_FALLBACK:
+            self._host.publish("last_error", "the crop window has not been read from the agent")
+            return
+        result: Future[Any] = Future()
+        result.add_done_callback(self._crop.accept_answer)
+        self._forward("set_crop", call, result)
+
     def _refused_in_fallback(self, result: "Future[Any]") -> bool:
         if self._route != ROUTE_FALLBACK:
             return False
@@ -229,6 +243,9 @@ class AgentProxyDriver(ModeCapableDriver):
             self._return_to_agent(now)
         self._health = self._judge(view)
         self._mirror()
+        if self.capabilities().kind == CameraKind.CROP:
+            linked = self._route == ROUTE_AGENT and status == "ok"
+            self._crop.follow(linked, (self._remote_state() or {}).get("position"), now)
 
     def _fallback_due(self, now: float) -> bool:
         if self._fallback_config is None or self._offline_since is None:

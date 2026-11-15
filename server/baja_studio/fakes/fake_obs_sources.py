@@ -110,6 +110,13 @@ class FakeObsSources:
             self.video_sizes[name] = (width, height)
             self.filters.setdefault(name, [])
 
+    def add_crop_filter(self, source_name: str, filter_name: str) -> None:
+        """An empty Crop/Pad filter on a source, as if made in OBS before the studio looked."""
+        with self.lock:
+            self.filters.setdefault(source_name, []).append(
+                FakeFilter(filter_name, CROP_FILTER_KIND)
+            )
+
     def change_video_size(self, name: str, width: int, height: int) -> None:
         """The operator switched the camera to another resolution in its properties."""
         with self.lock:

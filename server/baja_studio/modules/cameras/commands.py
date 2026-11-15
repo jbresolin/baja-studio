@@ -2,7 +2,9 @@
 
 Motion: `move {camera, pan, tilt, zoom, ttl_ms?}`, `stop {camera, release?}`,
 `nudge {camera}`, `recall_preset {camera, n}`, `store_preset {camera, n}`,
-`rename_preset {camera, n, label}`, `set_mode {camera, mode, profile?}`.
+`rename_preset {camera, n, label}`, `set_mode {camera, mode, profile?}`, and
+for crop cameras `centre_window {camera, x, y}` (click-to-centre on a
+preview, fractions of the source) and `reset_crop {camera}` (whole picture).
 Configuration helpers: `list_serial_ports {}`, `raw_frames {controller}`.
 
 A browser holding a control sends `move` ten times a second. The command
@@ -19,6 +21,7 @@ from typing import Any, TypeVar
 from baja_studio.agents.client import AgentError
 from baja_studio.agents.contract import Mode
 from baja_studio.cameras.config import CamerasSettings, Owner, PresetName
+from baja_studio.cameras.crop_window import WindowTarget
 from baja_studio.cameras.driver import Velocity
 from baja_studio.cameras.inputs.serial_ports import SerialPortLister
 from baja_studio.cameras.motion.arbiter import MotionArbiter, MotionRefusedError
@@ -115,9 +118,15 @@ class CameraCommands:
             return self._rename_preset(arbiter, args, source)
         if command == "set_mode":
             return self._set_mode(arbiter, args, source)
+        if command == "centre_window":
+            target = WindowTarget(_fraction(args, "x"), _fraction(args, "y"))
+            return arbiter.place_window(source, target)
+        if command == "reset_crop":
+            return arbiter.place_window(source, WindowTarget(whole=True))
         raise CommandError(
             f"cameras has no command {command!r}; try move, stop, nudge, recall_preset, "
-            "store_preset, rename_preset, set_mode, list_serial_ports or raw_frames"
+            "store_preset, rename_preset, set_mode, centre_window, reset_crop, "
+            "create_crop_filter, list_obs_sources, list_serial_ports or raw_frames"
         )
 
     def _set_mode(self, arbiter: MotionArbiter, args: dict[str, Any], source: str) -> Any:
@@ -218,6 +227,13 @@ def _number(args: dict[str, Any], key: str) -> float:
         raise CommandError(f"{key} must be a number from -1 to 1")
     if not -1.0 <= value <= 1.0:
         raise CommandError(f"{key} must be from -1 to 1")
+    return float(value)
+
+
+def _fraction(args: dict[str, Any], key: str) -> float:
+    value = args.get(key)
+    if isinstance(value, bool) or not isinstance(value, int | float) or not 0 <= value <= 1:
+        raise CommandError(f"{key} must be a fraction of the picture, from 0 to 1")
     return float(value)
 
 

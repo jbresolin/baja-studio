@@ -10,6 +10,7 @@ from typing import Self
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from baja_studio.agents.contract import DEFAULT_TTL_MS, MAX_PRESET_NUMBER, MAX_TTL_MS
+from baja_studio.cameras.crop_config import ObsCropSettings
 from baja_studio.cameras.drivers import visca_packets
 from baja_studio.core.settings import ModuleSettings
 
@@ -28,10 +29,12 @@ class Owner(StrEnum):
 
 
 class DriverKind(StrEnum):
-    """Which driver speaks to the camera. Pixy and OBS crop arrive in WP6."""
+    """Which driver speaks to the camera."""
 
     VISCA_IP = "visca_ip"
     AGENT = "agent"
+    # A digital PTZ: a Crop/Pad filter on an OBS source (WP6b, ADR 0020).
+    OBS_CROP = "obs_crop"
 
 
 class SpeedCurve(StrEnum):
@@ -124,6 +127,8 @@ class CameraConfig(StrictModel):
     limits: MotionLimits = Field(default_factory=MotionLimits)
     speed_curve: SpeedCurve = SpeedCurve.LINEAR
     direct_fallback: DirectFallback | None = None
+    # Used by `obs_crop` cameras only (WP6b).
+    crop: ObsCropSettings = Field(default_factory=ObsCropSettings)
 
     @model_validator(mode="after")
     def _owner_matches_driver(self) -> Self:
@@ -132,6 +137,9 @@ class CameraConfig(StrictModel):
         if self.driver == DriverKind.AGENT:
             if not (self.address.agent_id and self.address.remote_camera_id):
                 raise ValueError("an agent camera needs address.agent_id and remote_camera_id")
+        elif self.driver == DriverKind.OBS_CROP:
+            if not (self.obs_source or "").strip():
+                raise ValueError("an OBS crop camera needs its OBS source")
         elif not self.address.host:
             raise ValueError("a direct camera needs address.host")
         if self.direct_fallback is not None and self.owner != Owner.AGENT:

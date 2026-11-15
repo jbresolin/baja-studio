@@ -25,9 +25,13 @@ from baja_studio.cameras.config import (
     ControllerConfig,
     DriverKind,
 )
+from baja_studio.cameras.crop_config import cameras_with_crop_window
+from baja_studio.cameras.crop_window import CropWindow
 from baja_studio.cameras.driver import CameraDriver, DriverHost
 from baja_studio.cameras.drivers.agent_gateway import AgentGateway
 from baja_studio.cameras.drivers.agent_proxy import AgentProxyDriver
+from baja_studio.cameras.drivers.obs_crop import ObsCropDriver
+from baja_studio.cameras.drivers.obs_gateway import NoObsGateway, ObsGateway
 from baja_studio.cameras.drivers.visca_ip import DatagramOpener, ViscaIpDriver
 from baja_studio.cameras.inputs.pelco_d_worker import PelcoDInput, SerialOpener
 from baja_studio.cameras.motion.arbiter import MotionArbiter
@@ -44,9 +48,13 @@ class CameraRegistry:
         datagram_opener: DatagramOpener,
         serial_opener: SerialOpener,
         wake_motion: Callable[[], None],
+        obs: ObsGateway | None = None,
     ) -> None:
-        """Nothing runs until `apply` is called (by the module's motion worker)."""
+        """Nothing runs until `apply` is called (by the module's motion worker).
+
+        `obs` is playout's OBS connection, for `obs_crop` cameras."""
         self._context = context
+        self._obs = obs or NoObsGateway()
         self._agents = agents
         self._datagram_opener = datagram_opener
         self._serial_opener = serial_opener
@@ -139,6 +147,13 @@ class CameraRegistry:
 
     def _build_driver(self, camera: CameraConfig) -> CameraDriver:
         host = self._driver_host(camera.id)
+        if camera.driver == DriverKind.OBS_CROP:
+            return ObsCropDriver(
+                host,
+                self._obs,
+                config=lambda: self._configs.get(camera.id, camera),
+                save_window=lambda n, window: self._save_crop_window(camera.id, n, window),
+            )
         if camera.driver == DriverKind.AGENT:
             return AgentProxyDriver(
                 host,
@@ -259,6 +274,11 @@ class CameraRegistry:
             self._context.command_log.append(self._context.name, source, command, args, result)
 
         return log
+
+    def _save_crop_window(self, camera_id: str, n: int, window: CropWindow) -> None:
+        """An `obs_crop` camera stored preset `n`: keep its window in the camera's settings."""
+        cameras = cameras_with_crop_window(self._settings().cameras, camera_id, n, window)
+        self._context.settings.update(self._context.name, {"cameras": cameras})
 
     def arbiter_for_address(self, address: int) -> MotionArbiter | None:
         with self._lock:

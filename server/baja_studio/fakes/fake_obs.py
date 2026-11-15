@@ -385,6 +385,12 @@ def main(argv: list[str] | None = None) -> None:
         metavar="NAME=WxH",
         help="add a camera input of that size (repeatable), e.g. 'Cam 4K=3840x2160'",
     )
+    parser.add_argument(
+        "--crop-filter",
+        default=None,
+        metavar="NAME",
+        help="give every --video-source an empty Crop/Pad filter of this name",
+    )
     options = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     fixed_duration: float = options.duration
@@ -408,6 +414,8 @@ def main(argv: list[str] | None = None) -> None:
     )
     for name, width, height in map(parse_video_source, options.video_source):
         fake.add_video_input(name, width, height)
+        if options.crop_filter:
+            fake.add_crop_filter(name, options.crop_filter)
     with contextlib.suppress(KeyboardInterrupt):
         asyncio.run(serve_fake_obs(fake, options.host, options.port))
 

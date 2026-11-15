@@ -23,6 +23,9 @@ from baja_studio.rig.layout import LOOPBACK, free_tcp_port, free_udp_port
 from baja_studio.rig.processes import ProcessStartError, RigProcess
 
 OBS_PASSWORD = "rig-obs-password"
+# A 4K webcam input in the fake OBS, with its Crop/Pad filter: the rig's OBS crop camera.
+OBS_WEBCAM = "Rig webcam 4K"
+OBS_CROP_FILTER = "Baja crop"
 AGENT_TOKEN = "rig-agent-token"
 ORCHESTRATOR_TOKEN = "rig-orchestrator-token"
 XR18_NAME = "XR18-RIG"
@@ -94,6 +97,7 @@ def build_fakes(
         fakes[name] = RigFake(process, describe, is_up)
 
     obs_arguments = ["--host", LOOPBACK, "--port", str(ports.obs), "--password", OBS_PASSWORD]
+    obs_arguments += ["--video-source", f"{OBS_WEBCAM}=3840x2160", "--crop-filter", OBS_CROP_FILTER]
     if obs_seed is not None:
         obs_arguments += ["--seed", str(obs_seed)]
     if ffprobe:
