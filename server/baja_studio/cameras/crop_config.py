@@ -1,12 +1,14 @@
-"""Settings of an `obs_crop` camera (WP6b, ADR 0020): its filter, limits and stored windows.
+"""Settings of an `obs_crop` camera (WP6b, ADR 0020): its OBS, filter, limits and stored windows.
 
 Part of a camera's entry in the registry (`config.CameraConfig.crop`); kept
-in its own file so the registry's models stay readable.
+in its own file so the registry's models stay readable. `crop.obs` says which
+OBS holds the camera's source: playout's, on this PC (the default), or a
+remote OBS on a trackside laptop (WP13, ADR 0021).
 """
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from baja_studio.agents.contract import MAX_PRESET_NUMBER
 
@@ -29,6 +31,51 @@ class CropPresetWindow(StrictModel):
     width: float = Field(gt=0.0, le=1.0, description="Window width as a fraction of the source's.")
 
 
+DEFAULT_OBS_PORT = 4455
+
+
+class ObsConnection(StrictModel):
+    """Which OBS an `obs_crop` camera's source is in (WP13, ADR 0021).
+
+    `remote` false (the default): playout's OBS on this PC, through playout's
+    connection; host, port and password are then ignored (kept, so ticking
+    "remote" again brings them back). `remote` true: the OBS at host:port, on
+    a laptop beside its 4K webcam. Cameras naming the same host and port share
+    one connection; the password is a secret (masked in the API, left out of
+    exported settings, never logged or published).
+    """
+
+    remote: bool = Field(default=False, description="The source is in another PC's OBS.")
+    host: str = Field(
+        default="", max_length=253, description="That PC's address, e.g. 192.168.10.50."
+    )
+    port: int = Field(default=DEFAULT_OBS_PORT, ge=1, le=65535)
+    password: str = Field(
+        default="",
+        max_length=200,
+        description="Its obs-websocket password (Tools → WebSocket Server Settings).",
+        json_schema_extra={"secret": True},
+    )
+
+    @field_validator("host")
+    @classmethod
+    def _strip_host(cls, value: str) -> str:
+        return value.strip()
+
+    @model_validator(mode="after")
+    def _remote_needs_a_host(self) -> Self:
+        if self.remote and not self.host:
+            raise ValueError("a remote OBS needs its address")
+        return self
+
+    def key(self) -> tuple[str, int] | None:
+        """Which connection a camera uses: None for playout's, else (host, port).
+
+        Hosts are compared without case, so "Laptop1" and "laptop1" share one.
+        """
+        return (self.host.lower(), self.port) if self.remote else None
+
+
 class ObsCropSettings(StrictModel):
     """How an `obs_crop` camera moves its OBS Crop/Pad filter (ADR 0020).
 
@@ -37,6 +84,10 @@ class ObsCropSettings(StrictModel):
     speeds in frame fractions (zoom range) per second at full deflection.
     """
 
+    obs: ObsConnection = Field(
+        default_factory=ObsConnection,
+        description="Which OBS holds the source: this PC's (playout's) or a remote one.",
+    )
     filter_name: str = Field(
         default="Baja crop",
         min_length=1,

@@ -1,12 +1,18 @@
 """A test bench for the OBS crop driver: a fake OBS, a real client to it, and the driver.
 
 The client reaches the fake OBS over the in-process network (no port). It is
-lent to the driver through the same gateway the playout module provides, so
-the driver sees exactly what it sees in the service. The driver's worker runs
-under a supervisor on the fake clock; `step` lets fake time pass only while
-the worker sleeps *and* OBS has answered everything (a request waiting for
-its answer also sleeps on the fake clock, and moving time then would time it
-out).
+lent to the driver through a real gateway, so the driver sees exactly what it
+sees in the service. The bench runs with either kind (`gateway_kind`):
+
+- "playout": the gateway the playout module provides (OBS on this PC);
+- "remote": a remote OBS's shared connection (`cameras/remote_obs_connection.py`,
+  ADR 0021), whose own worker connects and reconnects. The same driver tests
+  run against both, so a remote camera can do everything a local one can.
+
+The driver's worker runs under a supervisor on the fake clock; `step` lets
+fake time pass only while the workers sleep *and* OBS has answered
+everything (a request waiting for its answer also sleeps on the fake clock,
+and moving time then would time it out).
 """
 
 import logging
@@ -19,6 +25,8 @@ from baja_studio.cameras.config import CameraConfig
 from baja_studio.cameras.crop_window import CropWindow
 from baja_studio.cameras.driver import DriverHost
 from baja_studio.cameras.drivers.obs_crop import ObsCropDriver
+from baja_studio.cameras.drivers.obs_gateway import ObsGateway
+from baja_studio.cameras.remote_obs_connection import RemoteObsConnection
 from baja_studio.core.supervisor import Supervisor
 from baja_studio.fakes.fake_obs import FakeObs
 from baja_studio.fakes.fake_obs_in_process import InProcessObsNetwork
@@ -31,6 +39,7 @@ OBS_ADDRESS = ObsAddress("obs.test", 4455)
 # The driver's worker steps 25 times a second while moving; fake time moves as much.
 STEP_SECONDS = 0.04
 CAMERA_WORKERS = module_worker_threads("cameras")
+GATEWAY_KINDS = ("playout", "remote")
 
 
 def crop_camera(**crop: Any) -> CameraConfig:
@@ -43,18 +52,46 @@ def crop_camera(**crop: Any) -> CameraConfig:
 class ObsBench:
     """The fake OBS (one 4K webcam), the connection to it, and one OBS crop driver."""
 
-    def __init__(self, fake_clock: FakeClock, supervisor: Supervisor) -> None:
+    def __init__(
+        self, fake_clock: FakeClock, supervisor: Supervisor, gateway_kind: str = "playout"
+    ) -> None:
         self.clock = fake_clock
+        self.gateway_kind = gateway_kind
         self.obs = FakeObs(fake_clock)
         self.obs.add_video_input(CAMERA, 3840, 2160)
         self.network = InProcessObsNetwork()
         self.network.plug(OBS_ADDRESS.host, OBS_ADDRESS.port, self.obs)
-        self.client = ObsWebsocketClient(fake_clock, self.network.connect)
-        # What playout would say about OBS while the connection is down.
-        self.playout_obs_state = {"connection": "offline", "message": "OBS closed the connection"}
-        self.gateway = PlayoutObsGateway(lambda: self.playout_obs_state)
-        self.gateway.attach(self.client)
-        self.client.connect(OBS_ADDRESS, "")
+        # The person at OBS: adds filters, as the operator would in OBS's own window.
+        self.operator = ObsWebsocketClient(fake_clock, self.network.connect)
+        self.operator.connect(OBS_ADDRESS, "")
+        self.gateway: ObsGateway
+        if gateway_kind == "playout":
+            # The driver shares playout's client (here the operator's, as playout is
+            # the one client of the OBS on this PC).
+            self.client = self.operator
+            # What playout would say about OBS while the connection is down.
+            self.playout_obs_state = {
+                "connection": "offline",
+                "message": "OBS closed the connection",
+            }
+            playout = PlayoutObsGateway(lambda: self.playout_obs_state)
+            playout.attach(self.client)
+            self.gateway = playout
+            self.obs_away_reason = "OBS offline: OBS closed the connection"
+        else:
+            # A laptop's OBS: the cameras module's own connection, with its worker.
+            remote = RemoteObsConnection(
+                OBS_ADDRESS.host,
+                OBS_ADDRESS.port,
+                "",
+                fake_clock,
+                self.network.connect,
+                logging.getLogger("test"),
+            )
+            supervisor.start_worker("cameras", remote.worker_spec())
+            self.client = remote.obs_client
+            self.gateway = remote
+            self.obs_away_reason = "OBS at obs.test:4455 "
         self.config = crop_camera()
         self.state: dict[str, Any] = {}
         self.saved_presets: list[tuple[int, CropWindow]] = []
@@ -80,7 +117,7 @@ class ObsBench:
 
         A bit of time passes, so OBS has rendered a frame with it.
         """
-        self.client.create_source_filter(CAMERA, FILTER, "crop_filter", settings)
+        self.operator.create_source_filter(CAMERA, FILTER, "crop_filter", settings)
         self.step(0.12)
 
     def crop_in_obs(self) -> dict[str, Any]:
@@ -119,9 +156,10 @@ class ObsBench:
         eventually(lambda: not self.client.is_connected)
 
     def restart_obs(self) -> None:
-        """OBS is back with the same scene collection; playout reconnects."""
+        """OBS is back with the same scene collection; playout (or the remote
+        connection's own worker, a moment later) reconnects."""
         self.network.plug(OBS_ADDRESS.host, OBS_ADDRESS.port, self.obs)
-        self.client.connect(OBS_ADDRESS, "")
+        self.operator.connect(OBS_ADDRESS, "")
 
     # --- time ---------------------------------------------------------------------------
 
@@ -163,4 +201,5 @@ class ObsBench:
         eventually(condition)
 
     def close(self) -> None:
+        self.operator.close()
         self.client.close()

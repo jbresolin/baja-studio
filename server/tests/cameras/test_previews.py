@@ -19,6 +19,7 @@ from baja_studio.cameras.config import CamerasSettings
 from baja_studio.cameras.drivers.obs_gateway import NoObsGateway, ObsLinkView, ObsListener
 from baja_studio.cameras.previews import (
     MAX_PREVIEWS_AT_ONCE,
+    MAX_PREVIEWS_PER_OBS,
     SHOWS_FULL,
     SHOWS_WINDOW,
     CameraPreviews,
@@ -128,31 +129,172 @@ def test_a_request_taking_longer_than_a_second_is_still_the_only_one(
     assert len(obs.calls) == 1
 
 
-def test_only_a_few_previews_are_served_at_once(fake_clock: FakeClock) -> None:
-    # A hung OBS: every request waits. Beyond the cap, pages are told to try again
-    # at once instead of taking one more of the web server's threads.
-    obs = CountingObs()
-    obs.release.clear()
-    cameras = [
-        {"id": f"cam{n}", "address": {"host": "10.0.0.9"}, "obs_source": f"Source {n}"}
-        for n in range(MAX_PREVIEWS_AT_ONCE)
+def no_state(camera_id: str) -> dict[str, Any] | None:
+    """No camera has published anything yet."""
+    return None
+
+
+class HungGateway:
+    """A connected OBS that answers no screenshot until `release` is set (or 5 s pass)."""
+
+    def __init__(self) -> None:
+        self.release = threading.Event()
+        self.asked: list[str] = []
+
+    def link(self) -> ObsLinkView:
+        return ObsLinkView(True)
+
+    def client(self) -> ObsRequestsMixin | None:
+        gateway = self
+
+        class Client(ObsRequestsMixin):
+            def request(
+                self,
+                request_type: str,
+                request_data: dict[str, Any] | None = None,
+                timeout_s: float | None = None,
+            ) -> dict[str, Any]:
+                gateway.asked.append(str((request_data or {}).get("sourceName")))
+                gateway.release.wait(5)
+                return {"imageData": "data:image/jpg;base64,/9g="}
+
+        return Client()
+
+    def add_listener(self, listener: ObsListener) -> Any:
+        return lambda: None
+
+
+def ptz_cameras(count: int, prefix: str = "cam") -> list[dict[str, Any]]:
+    """Cameras on playout's OBS, each with its own source."""
+    return [
+        {"id": f"{prefix}{n}", "address": {"host": "10.0.0.9"}, "obs_source": f"{prefix} {n}"}
+        for n in range(count)
     ]
-    service = previews(fake_clock, cameras, {}, StubGateway())
-    service._cache = PreviewCache(fake_clock, obs.fetch)
-    waiting = [
-        threading.Thread(target=service.preview, args=(f"cam{n}", 320))
-        for n in range(MAX_PREVIEWS_AT_ONCE)
+
+
+def laptop_cameras(count: int) -> list[dict[str, Any]]:
+    """Crop cameras in a laptop's OBS (WP13), each on its own webcam."""
+    obs = {"remote": True, "host": "laptop.test", "password": "pw"}
+    return [
+        {"id": f"lap{n}", "driver": "obs_crop", "obs_source": f"Lap {n}", "crop": {"obs": obs}}
+        for n in range(count)
     ]
-    for thread in waiting:
+
+
+def ask_in_background(service: CameraPreviews, camera_ids: list[str]) -> list[threading.Thread]:
+    """Pages asking for these previews at once; each waits in its own thread."""
+    threads = [
+        threading.Thread(target=service.preview, args=(camera, 320)) for camera in camera_ids
+    ]
+    for thread in threads:
         thread.start()
-    eventually(lambda: len(obs.calls) == MAX_PREVIEWS_AT_ONCE)
+    return threads
 
-    with pytest.raises(PreviewUnavailableError, match="too many previews at once"):
-        service.preview("cam0", 320)
 
-    obs.release.set()
+def test_one_hung_obs_takes_only_its_own_share_of_the_previews(fake_clock: FakeClock) -> None:
+    # Playout's OBS hangs: every page asking for one of its cameras waits.
+    playouts, laptop = HungGateway(), StubGateway()
+    cameras = ptz_cameras(MAX_PREVIEWS_PER_OBS + 1) + laptop_cameras(1)
+    service = CameraPreviews(
+        fake_clock,
+        playouts,
+        lambda: CamerasSettings.model_validate({"cameras": cameras}),
+        no_state,
+        gateway_for=lambda connection: laptop,
+    )
+    waiting = ask_in_background(service, [f"cam{n}" for n in range(MAX_PREVIEWS_PER_OBS)])
+    eventually(lambda: len(playouts.asked) == MAX_PREVIEWS_PER_OBS)
+
+    # One more for the hung OBS is told to try again at once, instead of waiting too...
+    with pytest.raises(PreviewUnavailableError, match="this OBS is slow to answer"):
+        service.preview(f"cam{MAX_PREVIEWS_PER_OBS}", 320)
+    # ...while a laptop's camera, in another OBS, is served straight away.
+    assert service.preview("lap0", 320).headers["X-Preview-Shows"] == SHOWS_WINDOW
+    assert laptop.asked == ["Lap 0"]
+
+    playouts.release.set()
     for thread in waiting:
         thread.join(5)
+
+
+def test_only_a_few_previews_are_served_at_once_across_all_obses(fake_clock: FakeClock) -> None:
+    # Two hung OBSes (this PC's and a laptop's): beyond the overall cap, pages are
+    # told to try again instead of taking one more of the web server's threads.
+    playouts, laptop = HungGateway(), HungGateway()
+    from_laptop = MAX_PREVIEWS_AT_ONCE - MAX_PREVIEWS_PER_OBS
+    cameras = ptz_cameras(MAX_PREVIEWS_PER_OBS) + laptop_cameras(from_laptop + 1)
+    service = CameraPreviews(
+        fake_clock,
+        playouts,
+        lambda: CamerasSettings.model_validate({"cameras": cameras}),
+        no_state,
+        gateway_for=lambda connection: laptop,
+    )
+    camera_ids = [f"cam{n}" for n in range(MAX_PREVIEWS_PER_OBS)]
+    camera_ids += [f"lap{n}" for n in range(from_laptop)]
+    waiting = ask_in_background(service, camera_ids)
+    eventually(lambda: len(playouts.asked) + len(laptop.asked) == MAX_PREVIEWS_AT_ONCE)
+
+    with pytest.raises(PreviewUnavailableError, match="too many previews at once"):
+        service.preview(f"lap{from_laptop}", 320)
+
+    playouts.release.set()
+    laptop.release.set()
+    for thread in waiting:
+        thread.join(5)
+
+
+def test_the_same_source_name_in_two_obses_is_two_screenshots(fake_clock: FakeClock) -> None:
+    # Two laptops both call their webcam "Lap 0"; their pictures must not be mixed up.
+    first, second = StubGateway(), StubGateway()
+    cameras = laptop_cameras(1)
+    other = {**cameras[0], "id": "other"}
+    other["crop"] = {"obs": {"remote": True, "host": "laptop2.test", "password": "pw"}}
+    service = CameraPreviews(
+        fake_clock,
+        NoObsGateway("not used"),
+        lambda: CamerasSettings.model_validate({"cameras": [*cameras, other]}),
+        no_state,
+        gateway_for=lambda connection: first if connection.host == "laptop.test" else second,
+    )
+
+    service.preview("lap0", 320)
+    service.preview("other", 320)
+
+    assert (first.asked, second.asked) == (["Lap 0"], ["Lap 0"])
+
+
+def test_a_remote_obss_refusal_names_that_obs(fake_clock: FakeClock) -> None:
+    class Refusing(StubGateway):
+        def link(self) -> ObsLinkView:
+            return ObsLinkView(True, where="laptop.test:4455")
+
+        def client(self) -> ObsRequestsMixin | None:
+            class Client(ObsRequestsMixin):
+                def request(
+                    self,
+                    request_type: str,
+                    request_data: dict[str, Any] | None = None,
+                    timeout_s: float | None = None,
+                ) -> dict[str, Any]:
+                    raise ObsRequestFailedError(request_type, 600, "No source was found")
+
+            return Client()
+
+    service = CameraPreviews(
+        fake_clock,
+        NoObsGateway("not used"),
+        lambda: CamerasSettings.model_validate({"cameras": laptop_cameras(1)}),
+        no_state,
+        gateway_for=lambda connection: Refusing(),
+    )
+
+    with pytest.raises(PreviewUnavailableError) as refused:
+        service.preview("lap0", 320)
+
+    assert refused.value.detail == (
+        "OBS at laptop.test:4455: OBS refused GetSourceScreenshot: No source was found"
+    )
 
 
 def test_a_refusal_is_remembered_for_a_second_too(fake_clock: FakeClock) -> None:

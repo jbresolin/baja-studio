@@ -31,11 +31,12 @@ from baja_studio.cameras.drivers.agent_gateway import AgentGateway
 from baja_studio.cameras.drivers.agent_proxy import AgentProxyDriver
 from baja_studio.cameras.drivers.fixed import FixedCameraDriver
 from baja_studio.cameras.drivers.obs_crop import ObsCropDriver
-from baja_studio.cameras.drivers.obs_gateway import NoObsGateway, ObsGateway
+from baja_studio.cameras.drivers.obs_gateway import NoObsGateway
 from baja_studio.cameras.drivers.uvc_ptz import UsbPtzAccess, UvcPtzDriver
 from baja_studio.cameras.drivers.visca_ip import DatagramOpener, ViscaIpDriver
 from baja_studio.cameras.inputs.pelco_d_worker import PelcoDInput, SerialOpener
 from baja_studio.cameras.motion.arbiter import MotionArbiter
+from baja_studio.cameras.remote_obs import RemoteObsPool
 from baja_studio.core.module import ModuleContext
 from baja_studio.imaging.config import StoredPosition
 
@@ -52,21 +53,22 @@ class CameraRegistry:
         wake_motion: Callable[[], None],
         usb: UsbPtzAccess | None = None,
         save_position: Callable[[str, StoredPosition], None] | None = None,
-        obs: ObsGateway | None = None,
+        obs_pool: RemoteObsPool | None = None,
         save_crop_window: Callable[[str, int, CropWindow], None] | None = None,
     ) -> None:
         """Nothing runs until `apply` is called (by the module's motion worker).
 
         `usb` (the imaging service) reaches USB cameras for the `uvc` and
         `none` drivers; `save_position(camera id, position)` saves a `uvc`
-        camera's preset in its settings. `obs` is playout's OBS connection, for
-        `obs_crop` cameras; `save_crop_window(camera id, n, window)` saves an
-        `obs_crop` camera's preset.
+        camera's preset in its settings. `obs_pool` hands `obs_crop` cameras
+        their OBS (playout's, or a shared remote connection, ADR 0021);
+        `save_crop_window(camera id, n, window)` saves an `obs_crop` camera's
+        preset.
         """
         self._context = context
         self._usb = usb
         self._save_position = save_position
-        self._obs = obs or NoObsGateway()
+        self._obs_pool = obs_pool or RemoteObsPool.for_module(context, NoObsGateway())
         self._save_crop_window = save_crop_window
         self._agents = agents
         self._datagram_opener = datagram_opener
@@ -106,8 +108,10 @@ class CameraRegistry:
                     self._configs.pop(camera_id, None)
             for camera_id, arbiter in removed:
                 arbiter.driver.disconnect()
+                self._obs_pool.release(camera_id)  # closes a remote OBS no camera uses now
                 if camera_id not in wanted:
                     self._forget_state("cameras", camera_id)
+            self._obs_pool.choose_passwords(list(wanted.values()))
             for camera_id, camera in wanted.items():
                 with self._lock:
                     self._configs[camera_id] = camera
@@ -116,6 +120,7 @@ class CameraRegistry:
                     self._publish_camera_details(camera)
                 else:
                     self._add_camera(camera)
+                self._publish_obs_connection(camera)
             self._apply_controllers(settings.controllers)
             self._context.update_state("order", list(wanted))
             self._context.update_state("motion", settings.motion.model_dump(mode="json"))
@@ -165,7 +170,7 @@ class CameraRegistry:
             assert save_window is not None, "the cameras module always passes it"
             return ObsCropDriver(
                 host,
-                self._obs,
+                self._obs_pool.lease(camera.id, camera.crop.obs),
                 config=lambda: self._configs.get(camera.id, camera),
                 save_window=lambda n, window: save_window(camera.id, n, window),
             )
@@ -241,6 +246,11 @@ class CameraRegistry:
                 self._context.update_state(f"cameras.{camera_id}.{key}", value)
 
         return publish
+
+    def _publish_obs_connection(self, camera: CameraConfig) -> None:
+        """An `obs_crop` camera's OBS for the pages: where, and a note (e.g. two passwords)."""
+        if camera.driver == DriverKind.OBS_CROP:
+            self._context.update_state(f"cameras.{camera.id}.obs", self._obs_pool.describe(camera))
 
     def _publish_camera_details(self, camera: CameraConfig) -> None:
         """Fields that may change without a new driver (labels, presets, addresses)."""

@@ -12,6 +12,10 @@ State: `state.cameras.cameras.<id>` (the contract's `CameraState` fields plus
 label, owner, route, capabilities, control) and `state.cameras.controllers.<id>`.
 Commands: see `commands.py`. Readiness checks: `cameras/readiness.py`.
 
+OBS crop cameras (WP6b) reach playout's OBS through playout's connection,
+or a trackside laptop's OBS through a connection this module opens and
+shares per laptop (`cameras/remote_obs.py`, WP13, ADR 0021).
+
 Image settings (WP6a, `baja_studio/imaging/`) live here too, because they
 share the registry: the `uvc` worker runs the UVC child (USB cameras), the
 `imaging` worker reapplies saved settings, and `state.cameras.image.<id>`
@@ -25,6 +29,7 @@ from typing import Any
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from baja_studio.adapters.obs_transport import TransportFactory, open_websocket_transport
 from baja_studio.cameras import health
 from baja_studio.cameras.config import CamerasSettings
 from baja_studio.cameras.crop_config import with_crop_window
@@ -37,6 +42,7 @@ from baja_studio.cameras.inputs.serial_ports import SerialPortLister, list_seria
 from baja_studio.cameras.previews import CameraPreviews
 from baja_studio.cameras.readiness import camera_checks
 from baja_studio.cameras.registry import CameraRegistry
+from baja_studio.cameras.remote_obs import RemoteObsPool
 from baja_studio.core.childproc import EventCallback
 from baja_studio.core.module import Module, ModuleContext
 from baja_studio.core.readiness import ReadinessCheck
@@ -78,10 +84,12 @@ class CamerasModule(Module):
         list_ports: SerialPortLister = list_serial_ports,
         uvc_child_factory: UvcChildFactory = real_uvc_child,
         obs: ObsGateway | None = None,
+        remote_obs_transport: TransportFactory = open_websocket_transport,
     ) -> None:
         """`agents` is the agents module and `obs` playout's OBS connection (crop
-        cameras, previews); tests pass fake openers for UDP and serial, a fake
-        list of serial ports, and an in-process UVC child."""
+        cameras, previews); `remote_obs_transport` opens connections to remote
+        OBSes (ADR 0021). Tests pass fake openers for UDP, serial and OBS, a
+        fake list of serial ports, and an in-process UVC child."""
         super().__init__()
         self._uvc_child_factory = uvc_child_factory
         self._imaging: ImagingService | None = None
@@ -90,6 +98,8 @@ class CamerasModule(Module):
         self._uvc: UvcChildLink | None = None
         self._agents = agents
         self._obs = obs or NoObsGateway()
+        self._remote_obs_transport = remote_obs_transport
+        self._obs_pool: RemoteObsPool | None = None
         self._datagram_opener = datagram_opener
         self._serial_opener = serial_opener
         self._lock = threading.Lock()
@@ -99,7 +109,7 @@ class CamerasModule(Module):
         self._commands = CameraCommands(
             self._current_registry, self._settings, self.edit_camera, list_ports
         )
-        self._obs_commands = ObsCameraCommands(self._obs, self._settings)
+        self._obs_commands: ObsCameraCommands | None = None
         self._previews: CameraPreviews | None = None
 
     def initial_state(self) -> dict[str, Any]:
@@ -117,7 +127,9 @@ class CamerasModule(Module):
         """Follow settings edits and summarise health per device."""
         super().start(context)
         imaging = self._start_imaging(context)
+        pool = RemoteObsPool.for_module(context, self._obs, self._remote_obs_transport)
         with self._lock:
+            self._obs_pool = pool
             self._registry = CameraRegistry(
                 context,
                 self._agents,
@@ -126,7 +138,7 @@ class CamerasModule(Module):
                 self._wake_motion,
                 usb=imaging,
                 save_position=self._save_position,
-                obs=self._obs,
+                obs_pool=pool,
                 save_crop_window=self._save_crop_window,
             )
             self._previews = CameraPreviews(
@@ -134,6 +146,10 @@ class CamerasModule(Module):
                 self._obs,
                 self._settings,
                 lambda camera_id: context.state.get(self.name, f"cameras.{camera_id}"),
+                gateway_for=pool.gateway_for,
+            )
+            self._obs_commands = ObsCameraCommands(
+                pool, self._settings, context.clock, self._remote_obs_transport
             )
         context.supervisor.set_health_summary(self.name, self._summarise_health)
         if not self._subscribed:
@@ -144,8 +160,15 @@ class CamerasModule(Module):
         """Workers are already stopped; forget the drivers so a restart builds fresh ones."""
         with self._lock:
             self._running, self._registry, self._previews = False, None, None
+            self._obs_pool = None  # its connections' workers stopped with the module's
         if self._imaging is not None:
             self._imaging.flush_due(everything=True)  # the last slider drag, not saved yet
+
+    @property
+    def obs_pool(self) -> RemoteObsPool | None:
+        """While running: which OBS each crop camera uses, and the remote connections."""
+        with self._lock:
+            return self._obs_pool
 
     def workers(self) -> list[WorkerSpec]:
         """The motion loop (it also connects the configured devices when it starts),
@@ -203,6 +226,7 @@ class CamerasModule(Module):
         `obs_commands.py` (OBS sources, creating a crop filter) and
         `image_commands.py` (image settings and USB devices)."""
         if command in OBS_COMMANDS:
+            assert self._obs_commands is not None, "commands only reach a running module"
             return self._obs_commands.handle(command, args)
         if command in IMAGE_COMMANDS:
             assert self._image_commands is not None
