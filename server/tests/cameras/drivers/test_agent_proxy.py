@@ -244,9 +244,24 @@ def test_the_fallback_starts_only_after_the_agent_has_been_offline_long_enough(
     assert rig.driver.route == "agent"
 
     rig.follow_for(0.8)
-    assert [driver.names() for driver in rig.fallbacks] == [["connect"]]
+    # Connected, then stopped at once: see the next test.
+    assert [driver.names() for driver in rig.fallbacks] == [["connect", "stop"]]
     assert rig.driver.route == "fallback"
     assert rig.state["route"] == "fallback"
+
+
+def test_taking_over_directly_stops_the_camera_first(
+    fake_clock: FakeClock, supervisor: Supervisor
+) -> None:
+    # The laptop's zone program died while the PTZ was turning. A VISCA camera
+    # keeps going until told to stop (its time-out lived in the dead program),
+    # so the first thing the studio sends when it takes over is a stop.
+    rig = make_rig(fake_clock, supervisor)
+    rig.gateway.set_status("offline")
+
+    rig.follow_for(10.3)
+
+    assert rig.fallbacks[0].names()[:2] == ["connect", "stop"]
 
 
 def test_a_degraded_agent_does_not_trigger_the_fallback(
@@ -291,7 +306,8 @@ def test_in_fallback_every_command_goes_to_the_direct_driver(
     rig.driver.stop()
     rig.driver.store_preset(1)
 
-    assert rig.fallbacks[0].names() == ["connect", "move", "stop", "store_preset"]
+    # (The first stop is the takeover's own, before any command.)
+    assert rig.fallbacks[0].names() == ["connect", "stop", "move", "stop", "store_preset"]
     assert rig.gateway.submitted == []
 
 
@@ -324,7 +340,8 @@ def test_when_the_agent_returns_the_direct_driver_is_stopped_closed_and_the_agen
     rig.follow_for(0.2)
 
     assert rig.driver.route == "agent"
-    assert rig.fallbacks[0].names() == ["connect", "stop", "disconnect"]
+    # Stopped when taken over, stopped again when handed back, then closed.
+    assert rig.fallbacks[0].names() == ["connect", "stop", "stop", "disconnect"]
     assert len(rig.gateway.submitted) == 1  # the resync
 
 
