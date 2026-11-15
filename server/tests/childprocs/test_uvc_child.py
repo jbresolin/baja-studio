@@ -82,8 +82,8 @@ def test_one_refused_control_does_not_stop_the_next() -> None:
         },
     )
 
-    # Pan 400 is beyond ±150: refused with the device's reason; tilt still goes.
-    assert answer["pan"] is not None and "out of range" in answer["pan"]
+    # Pan 400 is beyond ±150: refused (in the library's generic words); tilt still goes.
+    assert answer["pan"] == "Failed to set camera property"
     assert answer["tilt"] is None
     assert (
         child.handle("read_controls", {"path": PIXY_PATH, "names": ["tilt"]})["controls"]["tilt"][

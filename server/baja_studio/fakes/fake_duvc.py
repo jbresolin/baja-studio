@@ -26,10 +26,20 @@ What it models, and where each behaviour comes from:
   studio reads every range from the device, so wrong numbers here change
   no code path.
 - **DirectShow refuses** a manual value outside the range and an automatic
-  mode on a control that has none (E_INVALIDARG; the descriptions are ours).
+  mode on a control that has none. The library's messages say nothing about
+  which value or why ("Failed to set camera property"), so the fake's don't
+  either; the studio adds the control and the value itself.
+- **Whether a control has an automatic mode** is in DirectShow's range
+  capability flags, which duvc reports as `PropRange.default_mode`
+  (duvc-ctl 2.1 source).
 - **Several devices can share a name** (two S600s); the device path differs
   per USB port. An unplugged device leaves `list_devices`, and a camera
-  object opened before the unplug answers every call with an error.
+  object opened before an unplug answers every call with an error, *even
+  after the device is plugged back in* (a DirectShow handle dies with its
+  device): it must be opened again. `Camera` has no `close()`.
+- **Every call costs something on the real library** (a capability scan
+  lists the devices and opens the filter). The fake counts calls by name in
+  `calls`, so tests can hold the line on how many a read or write makes.
 - **Automatic controls drift**: while a control is on auto, its value follows
   the scene (`fake_scene {light}`), as exposure does when a cloud passes.
 
@@ -42,6 +52,7 @@ import json
 import os
 import subprocess
 import sys
+from collections import Counter
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
@@ -227,6 +238,13 @@ class FakeDevice:
     real_pan: float = 0.0
     real_tilt: float = 0.0
     capture_height: int = 1080
+    # Bumped on every replug: handles opened before it are dead.
+    generation: int = 0
+
+    def replug(self) -> None:
+        """Plug the cable back in; every handle opened before is dead."""
+        self.plugged = True
+        self.generation += 1
 
 
 class FakeCapabilities:
@@ -250,40 +268,44 @@ class FakeCamera:
     def __init__(self, library: "FakeDuvcLibrary", device: FakeDevice) -> None:
         self._library = library
         self._device = device
+        self._generation = device.generation
 
     def is_valid(self) -> bool:
-        """False once the device has been unplugged."""
-        return self._device.plugged
+        """False once the device has been unplugged (or replugged since this was opened)."""
+        return self._device.plugged and self._generation == self._device.generation
 
     def get(self, prop: Enum) -> ReadResult:
         """The control's current setting."""
+        self._library.calls["get"] += 1
         control = self._control(prop)
-        if isinstance(control, str):
-            return ReadResult(error=control)
+        if control is None:
+            return ReadResult(error="Failed to get camera property")
         return ReadResult(control.read())
 
     def get_range(self, prop: Enum) -> ReadResult:
         """The control's range, step and defaults."""
+        self._library.calls["get_range"] += 1
         control = self._control(prop)
-        if isinstance(control, str):
-            return ReadResult(error=control)
+        if control is None:
+            return ReadResult(error="Failed to get property range")
         return ReadResult(control.range)
 
     def set(self, prop: Enum, setting: PropSetting) -> WriteResult:
         """Change a control; refused out of range, or auto where there is none."""
+        self._library.calls["set"] += 1
         control = self._control(prop)
-        if isinstance(control, str):
-            return WriteResult(control)
+        if control is None:
+            return WriteResult("Failed to set camera property")
         self._library.writes.append(
             (self._device.path, prop.name, setting.value, setting.mode.name)
         )
         if setting.mode == CamMode.Auto:
             if not control.has_auto:
-                return WriteResult("Invalid argument: the property has no automatic mode")
+                return WriteResult("Failed to set camera property")
             control.mode = CamMode.Auto
             return WriteResult()
         if not control.range.min <= setting.value <= control.range.max:
-            return WriteResult("Invalid argument: value out of range")
+            return WriteResult("Failed to set camera property")
         control.mode, control.value = CamMode.Manual, int(setting.value)
         if prop == CamProp.Pan:
             self._device.real_pan = setting.value
@@ -291,14 +313,10 @@ class FakeCamera:
             self._device.real_tilt = setting.value
         return WriteResult()
 
-    def close(self) -> None:
-        """Nothing to release in the fake."""
-
-    def _control(self, prop: Enum) -> FakeControl | str:
-        if not self._device.plugged:
-            return "Device not connected"
-        control = self._device.controls.get(prop)
-        return control if control is not None else "Property not supported"
+    def _control(self, prop: Enum) -> FakeControl | None:
+        if not self.is_valid():
+            return None
+        return self._device.controls.get(prop)
 
 
 class FakeDuvcLibrary:
@@ -314,19 +332,24 @@ class FakeDuvcLibrary:
         self.devices = devices if devices is not None else []
         # Every write that reached a device: (path, property, value, mode), in order.
         self.writes: list[tuple[str, str, int, str]] = []
+        # How often each library call was made (see the module docstring).
+        self.calls: Counter[str] = Counter()
 
     def list_devices(self) -> list[FakeDevice]:
         """The plugged-in devices, in the order DirectShow lists them."""
+        self.calls["list_devices"] += 1
         return [device for device in self.devices if device.plugged]
 
     def open_camera(self, device: FakeDevice) -> ReadResult:
         """A camera handle, or an error if the device is gone."""
+        self.calls["open_camera"] += 1
         if not device.plugged:
             return ReadResult(error="Device not found")
         return ReadResult(FakeCamera(self, device))
 
     def get_device_capabilities(self, device: FakeDevice) -> ReadResult:
-        """Which properties the device supports."""
+        """Which properties the device supports (a full scan on the real library)."""
+        self.calls["get_device_capabilities"] += 1
         if not device.plugged:
             return ReadResult(error="Device not found")
         return ReadResult(FakeCapabilities(device))
@@ -337,8 +360,11 @@ class FakeDuvcLibrary:
 
     def handle_fake(self, method: str, params: dict[str, Any]) -> Any:
         """The `fake_*` requests the UVC child forwards (tests, the rig, the demo)."""
-        if method in ("fake_unplug", "fake_replug"):
-            self.device(str(params["path"])).plugged = method == "fake_replug"
+        if method == "fake_unplug":
+            self.device(str(params["path"])).plugged = False
+            return None
+        if method == "fake_replug":
+            self.device(str(params["path"])).replug()
             return None
         if method == "fake_scene":
             self.set_scene(float(params.get("light", 0.5)))

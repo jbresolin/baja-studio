@@ -65,9 +65,8 @@ def test_a_control_is_read_with_its_range_and_defaults_from_the_device() -> None
         "max": -1,
         "step": 1,
         "default": -6,
-        "default_auto": True,
     }
-    assert gain["auto"] is None and gain["default_auto"] is None
+    assert gain["auto"] is None
 
 
 def test_supported_lists_studio_names_and_only_the_pixy_has_pan_tilt_zoom() -> None:
@@ -88,13 +87,18 @@ def test_a_write_reaches_the_device_and_is_read_back() -> None:
 
 
 def test_out_of_range_values_and_auto_where_there_is_none_are_refused() -> None:
-    # DirectShow says "invalid argument"; the backend passes the description on.
-    backend, _ = backend_with_studio_devices()
+    # The library says only "Failed to set camera property"; the service adds
+    # which value. A refusal is not a dead handle: nothing is reopened.
+    backend, library = backend_with_studio_devices()
+    backend.read(S600_A_PATH, "exposure")
+    opened = library.calls["open_camera"]
 
-    with pytest.raises(UvcError, match="out of range"):
+    with pytest.raises(UvcError, match="Failed to set camera property"):
         backend.write(S600_A_PATH, "exposure", -20, auto=False)
-    with pytest.raises(UvcError, match="no automatic mode"):
+    with pytest.raises(UvcError, match="Failed to set camera property"):
         backend.write(S600_A_PATH, "gain", 0, auto=True)
+    assert library.calls["open_camera"] == opened
+    assert backend.take_reopened() == []
 
 
 def test_the_pixy_reads_back_the_last_value_written_not_where_it_really_points() -> None:
@@ -119,7 +123,7 @@ def test_an_unplugged_device_is_missing_and_works_again_once_replugged() -> None
     assert S600_B_PATH not in [device.path for device in backend.list_devices()]
 
     # The old handle is stale after a replug; the backend opens a new one.
-    library.device(S600_B_PATH).plugged = True
+    library.device(S600_B_PATH).replug()
     assert backend.read(S600_B_PATH, "gain")["value"] == 0
 
 
@@ -137,7 +141,7 @@ def test_unknown_devices_and_controls_are_errors() -> None:
         backend.read(r"\\?\usb#nothing", "gain")
     with pytest.raises(UvcError, match="unknown control"):
         backend.read(S600_A_PATH, "smell")
-    with pytest.raises(UvcError, match="not supported"):
+    with pytest.raises(UvcError, match="Failed to get camera property"):
         backend.read(S600_A_PATH, "pan")  # an S600 cannot pan
 
 
@@ -155,3 +159,52 @@ def test_auto_follows_the_scene_while_on_and_stops_when_set_manual() -> None:
     library.set_scene(1.0)
     assert backend.read(S600_A_PATH, "exposure")["value"] == -7
     assert library.device(S600_A_PATH).controls[CamProp.Exposure].mode == CamMode.Manual
+
+
+def test_what_never_changes_is_asked_once_not_on_every_read() -> None:
+    # A capability scan lists the devices and opens the filter on the real
+    # library: far too slow for every read. After the first read of a device,
+    # reads cost only the control's own get and get_range.
+    backend, library = backend_with_studio_devices()
+    backend.list_devices()
+    backend.supported(PIXY_PATH)
+    backend.read(PIXY_PATH, "pan")
+    library.calls.clear()
+
+    backend.supported(PIXY_PATH)
+    backend.read(PIXY_PATH, "tilt")
+    backend.write(PIXY_PATH, "tilt", 5, auto=False)
+
+    assert dict(library.calls) == {"get": 1, "get_range": 1, "set": 1}
+
+
+def test_a_quick_replug_kills_the_handle_and_the_backend_opens_it_again() -> None:
+    # Unplugged and plugged back in between two device looks: the device
+    # list never changed, but DirectShow's old handle is dead. The write is
+    # tried again on a fresh handle, and the path is reported as reopened so
+    # the service puts the camera's settings back.
+    backend, library = backend_with_studio_devices()
+    backend.read(S600_A_PATH, "gain")
+    device = library.device(S600_A_PATH)
+    device.plugged = False
+    device.replug()
+
+    backend.write(S600_A_PATH, "gain", 30, auto=False)
+
+    assert backend.read(S600_A_PATH, "gain")["value"] == 30
+    assert backend.take_reopened() == [S600_A_PATH]
+    assert backend.take_reopened() == []  # reported once
+
+
+def test_the_probe_notices_a_quick_replug_with_no_write_at_all() -> None:
+    # The service's 2 s check touches every open handle with one read.
+    backend, library = backend_with_studio_devices()
+    backend.supported(S600_B_PATH)
+    backend.read(S600_B_PATH, "gain")
+    device = library.device(S600_B_PATH)
+    device.plugged = False
+    device.replug()
+
+    backend.probe()
+
+    assert [path.lower() for path in backend.take_reopened()] == [S600_B_PATH.lower()]

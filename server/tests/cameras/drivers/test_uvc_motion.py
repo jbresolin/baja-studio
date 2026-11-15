@@ -118,3 +118,15 @@ def test_a_ttl_made_of_small_steps_still_ends_on_time() -> None:
         now += 0.05
 
     assert not integrator.moving(now)
+
+
+def test_reversing_at_the_end_of_the_range_moves_away_at_once() -> None:
+    # Held against the end for a long time, the target stays at the end
+    # (it does not pile up beyond it), so reversing moves the camera at once.
+    integrator = connected(pan=145)
+    integrator.move(Velocity(pan=1.0), ttl_seconds=2.0, now=0.0)
+    integrator.wrote(integrator.due_writes(now=2.0))
+
+    integrator.move(Velocity(pan=-1.0), ttl_seconds=1.0, now=2.0)
+
+    assert integrator.due_writes(now=2.1) == {"pan": 144}

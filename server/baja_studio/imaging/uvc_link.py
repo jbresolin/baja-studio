@@ -6,11 +6,14 @@ DirectShow code takes only it down. This worker:
 - starts the child, asks whether UVC is available here and lists the devices,
   then tells the imaging service (`on_started`) so it reapplies every USB
   camera's saved settings;
-- takes the child's `devices` events (it lists the devices every 2 s) and
-  tells the imaging service which devices appeared or left (`on_devices`),
-  so a replugged camera gets its settings back;
-- pings the child every 2 s; a dead or hung child raises `DeviceOfflineError`,
-  and the supervisor starts a new one (which reapplies again).
+- asks the child to `check` every 2 s (list the devices, touch every open
+  handle): that is also its keep-alive. A dead or hung child raises
+  `DeviceOfflineError`, and the supervisor starts a new one (which reapplies
+  again). The answer, and the child's `devices` events, tell the imaging
+  service which devices appeared or left (`on_devices`);
+- passes on the child's `reopened` events (`on_reopened`): a device whose
+  handle died in a replug too quick for the 2 s look, so its settings go
+  back too.
 
 Requests from other threads (the imaging service, the Pixy driver) go
 through `request`, which the child answers one at a time, in order.
@@ -27,7 +30,7 @@ from baja_studio.core.worker import DeviceOfflineError, HealthState, WorkerConte
 from baja_studio.imaging.usb_devices import UsbDevice
 
 UVC_WORKER = "uvc"
-PING_INTERVAL_SECONDS = 2.0
+CHECK_INTERVAL_SECONDS = 2.0
 
 
 class ChildHost(Protocol):
@@ -66,6 +69,7 @@ class UvcChildLink:
         logger: logging.Logger | logging.LoggerAdapter[logging.Logger],
         on_started: Callable[[], None],
         on_devices: DevicesCallback,
+        on_reopened: Callable[[str], None] = lambda path: None,
     ) -> None:
         """`new_child(on_event)` creates (not starts) a host.
 
@@ -77,6 +81,7 @@ class UvcChildLink:
         self._logger = logger
         self._on_started = on_started
         self._on_devices = on_devices
+        self._on_reopened = on_reopened
         self._lock = threading.Lock()
         self._inbox: collections.deque[tuple[str, Any]] = collections.deque()
         self._host: ChildHost | None = None
@@ -142,16 +147,16 @@ class UvcChildLink:
         self._report(worker)
         self._on_started()
         clock = worker.clock
-        next_ping = clock.monotonic() + PING_INTERVAL_SECONDS
+        next_check = clock.monotonic() + CHECK_INTERVAL_SECONDS
         while not worker.should_stop:
             if not host.is_running:
                 raise DeviceOfflineError("the UVC child process exited")
+            if clock.monotonic() >= next_check:
+                next_check = clock.monotonic() + CHECK_INTERVAL_SECONDS
+                self._take_devices(host.request("check"), announce=True)
             self._handle_inbox()
             self._report(worker)
-            if clock.monotonic() >= next_ping:
-                next_ping = clock.monotonic() + PING_INTERVAL_SECONDS
-                host.ping()
-            worker.sleep(max(0.0, next_ping - clock.monotonic()))
+            worker.sleep(max(0.0, next_check - clock.monotonic()))
 
     def _report(self, worker: WorkerContext) -> None:
         state, message = self.status()
@@ -168,6 +173,9 @@ class UvcChildLink:
         for kind, data in items:
             if kind == "devices":
                 self._take_devices(data.get("devices", []), announce=True)
+            elif kind == "reopened":
+                self._logger.info("USB camera reopened after a replug: %s", data.get("path"))
+                self._on_reopened(str(data.get("path", "")).lower())
 
     def _take_devices(self, listed: list[dict[str, Any]], announce: bool) -> None:
         devices = [UsbDevice.from_json(item) for item in listed]

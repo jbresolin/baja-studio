@@ -13,23 +13,28 @@ runs apart from the service (goals §7.1), like the MIDI child. Requests (see
   the device has among `names` (all when left out).
 - `write_controls {path, controls: {name: {value, auto}}}`: `{name: null |
   "error"}`; each control is written and judged on its own, in order.
-- `check`: look at the device list now (a thread does it every 2 s).
+- `check`: list the devices and touch every open handle with one read (the
+  service sends it every 2 s; it is also the child's keep-alive).
 
-Event: `devices {devices: [...]}` whenever the list changes. The backend is
-duvc-ctl, or the fake library (`fakes/fake_duvc.py`) when
+Events: `devices {devices: [...]}` when a look finds the list changed;
+`reopened {path}` when a device's handle had died (a quick unplug and
+replug) and was opened again, so the service reapplies that camera.
+
+Everything runs on the one thread that answers requests: DirectShow handles
+are COM objects and must not be used or released from another thread, so
+there is no watcher thread; the service's `check` drives the 2 s look.
+
+The backend is duvc-ctl, or the fake library (`fakes/fake_duvc.py`) when
 `BAJA_STUDIO_UVC_BACKEND=fake`; the fake also answers `fake_*` requests.
 """
 
 import os
-import sys
 import threading
-import time
 from typing import Any, Protocol
 
 from baja_studio.core.childproc_child import ChildChannel, run_child
 
 BACKEND_ENVIRONMENT_VARIABLE = "BAJA_STUDIO_UVC_BACKEND"
-CHECK_INTERVAL_SECONDS = 2.0
 
 
 class UvcBackend(Protocol):
@@ -47,6 +52,12 @@ class UvcBackend(Protocol):
     def write(self, path: str, name: str, value: int, auto: bool) -> None:
         """Set one control; raises if refused."""
 
+    def probe(self) -> None:
+        """Touch every open handle; reopen the dead ones."""
+
+    def take_reopened(self) -> list[str]:
+        """Paths reopened since the last call."""
+
 
 class UvcChild:
     """The request handler and device watcher, independent of the real stdin/stdout."""
@@ -60,13 +71,23 @@ class UvcChild:
         self._last_listed: list[dict[str, Any]] | None = None
 
     def handle(self, method: str, params: dict[str, Any]) -> Any:
-        """Called by `run_child` for each request."""
+        """Called by `run_child` for each request; then tells about reopened devices."""
+        try:
+            return self._handle(method, params)
+        finally:
+            for path in self._backend.take_reopened():
+                self._channel.send_event("reopened", {"path": path})
+
+    def _handle(self, method: str, params: dict[str, Any]) -> Any:
         if method == "status":
             return {"available": not self._unavailable, "message": self._unavailable}
         if method == "list_devices":
             return self.check_devices()
         if method == "check":
-            return self.check_devices()
+            listed = self.check_devices()
+            with self._lock:
+                self._backend.probe()
+            return listed
         if method == "read_controls":
             return self._read(str(params["path"]), params.get("names"))
         if method == "write_controls":
@@ -134,6 +155,13 @@ class UnavailableBackend:
         """Never succeeds."""
         raise OSError("USB camera control is not available on this computer")
 
+    def probe(self) -> None:
+        """No handles."""
+
+    def take_reopened(self) -> list[str]:
+        """Nothing is ever reopened."""
+        return []
+
 
 def make_backend() -> tuple[UvcBackend, str]:
     """duvc-ctl, or the fake library (`BAJA_STUDIO_UVC_BACKEND=fake`); and why not, if neither."""
@@ -152,22 +180,11 @@ def make_backend() -> tuple[UvcBackend, str]:
         return UnavailableBackend(), f"USB camera control is not available here: {error}"
 
 
-def watch_devices(child: UvcChild, interval_seconds: float = CHECK_INTERVAL_SECONDS) -> None:
-    """Thread body: look at the device list every 2 s, for the life of the process."""
-    while True:
-        time.sleep(interval_seconds)
-        try:
-            child.check_devices()
-        except Exception as error:  # a driver error must not kill the watcher
-            print(f"device check failed: {type(error).__name__}: {error}", file=sys.stderr)
-
-
 def main() -> None:
     """Entry point when run as `python -m baja_studio.childprocs.uvc_child`."""
     channel = ChildChannel()
     backend, unavailable = make_backend()
     child = UvcChild(backend, channel, unavailable)
-    threading.Thread(target=watch_devices, args=(child,), name="uvc-watch", daemon=True).start()
     run_child(child.handle, channel=channel)
 
 
