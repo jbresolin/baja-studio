@@ -11,7 +11,8 @@ stopped the camera, and a backlog would only replay old motion later.
 
 Direct fallback (contract §8): if the agent has been `offline` for
 `direct_fallback_after_s` and the camera has a `direct_fallback`, the driver
-starts that direct driver and routes every command to it. When the agent is
+starts that direct driver, stops the camera (it may have been left moving),
+and routes every command to it. When the agent is
 back, it stops the direct driver (after a stop, if it was moving), routes to
 the agent again and asks it to `/resync`.
 """
@@ -260,6 +261,10 @@ class AgentProxyDriver(ModeCapableDriver):
         )
         driver = self._make_fallback(self._fallback_config)
         driver.connect()
+        # The agent may have died mid-move, and a VISCA camera has no dead-man
+        # of its own (its ttl lived in the agent): stop it first, so taking
+        # over never leaves it running (zone agent end-to-end run, 2026-11-15).
+        driver.stop()
         self._commands.clear()
         with self._lock:
             self._fallback, self._route = driver, ROUTE_FALLBACK

@@ -97,8 +97,13 @@ def test_manual_and_hold_never_resume_auto_by_themselves(
             agent.http.put(f"/cameras/{camera_id}/mode", json={"mode": mode})
             reply = agent.http.post(f"/cameras/{camera_id}/move", json={"pan": 0.1, "ttl_ms": 100})
             assert reply.json()["mode"] == mode
+            # Pushes the agent sent before it saw our PUT can still be on their
+            # way (the previous loop's mode, or auto): skip up to the first push
+            # in the new mode (the zone agent's bench, 2026-11-15: 2-4 % of runs
+            # failed on such a stale push).
+            socket.wait_for_camera(camera_id, mode_is(mode), ONE_PUSH, f"{mode} pushed")
 
-            # Well past resume_after_ms: still the same mode in every push.
+            # Well past resume_after_ms: still the same mode in every push from then on.
             for _, message in socket.collect(seconds=0.1 + 0.1 + ONE_PUSH):
                 if message.get("type") == "state":
                     assert message["cameras"][camera_id]["mode"] == mode
