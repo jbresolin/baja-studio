@@ -167,6 +167,11 @@ export async function saveSettings(
   }
 }
 
+/** Audio setup → D200: the macros the D200 profile's buttons call that the saved settings lack. */
+export function getD200MissingMacros(): Promise<{ missing: string[] }> {
+  return request("/api/audio/d200-profile/missing-macros");
+}
+
 export function getRecentLogs(limit = 200): Promise<LogEntry[]> {
   return request(`/api/logs?limit=${limit}`);
 }

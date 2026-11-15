@@ -8,8 +8,11 @@ it reads like the file it came from. What changed on the way:
 - 2026 macros with `store-mute`/`restore` became `store_levels` /
   `restore_levels` steps. Their ids are kept, odd ones included
   ("macro-1774581643177"), because the D200 profile calls them by id.
-- PROD 3 got the same three macros as PROD 1 and 2 (the D200 images for
-  PROD 3 existed in 2026, the macros did not).
+- PROD 3 got the same macros as PROD 1 and 2 (the D200 images for PROD 3
+  existed in 2026, the macros did not).
+- 2026's "Prod N → Hosts" opens HOST 1's in-ears only ("→ Host 1", as its
+  D200 image said), and "Prod N → Host 2" is new (2026-11-14, a D200 button
+  per host).
 - "Host N → Prod" takes the host off LR with the LR assign instead of
   closing the fader, and the guests got one each (WP9b, ADR 0013).
 - The link matrix is not a setting any more; it seeds the `audio_links`
@@ -24,7 +27,7 @@ it reads like the file it came from. What changed on the way:
 """
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, NamedTuple
 
 COLOURS = {
     "1": ("HOST 1", "#e74c3c"),
@@ -103,10 +106,6 @@ class Patch:
         """Every seat's in-ear bus, seat order."""
         return tuple(bus for _seat, _channel, bus in self.seats)
 
-    def host_buses(self) -> tuple[str, ...]:
-        """The in-ear buses of the hosts (seats 1-2): "Prod N → Hosts" opens these."""
-        return tuple(bus for seat, _channel, bus in self.seats if seat in self.hosts)
-
 
 # The 2026 event's patch: HOST 1-2 and GUEST 1-2 on 1-4, PROD 1-4 on 5-8,
 # the shotgun on 9, PC AUDIO on the stereo return.
@@ -178,12 +177,39 @@ TALK_TO_PRODUCTION = {
     3: ("guest1-talk-prod", "Guest 1 → Prod", "#f1c40f"),
     4: ("guest2-talk-prod", "Guest 2 → Prod", "#2ecc71"),
 }
-# PROD N (1-3) → the ids of its "→ Hosts", "Go Live" and "→ Cam" macros, and its
-# colour. The odd ids are 2026's: the D200 profile calls them.
+
+
+class ProductionMacros(NamedTuple):
+    """The ids of one production microphone's macros, and their colour."""
+
+    to_host1: str
+    to_host2: str
+    go_live: str
+    to_cam: str
+    colour: str
+
+
+# PROD 1-3. The odd ids are 2026's. "→ Host 1" keeps 2026's "→ Hosts" id (the
+# D200 drew it as TALK HOST 1); "→ Host 2" is new (2026-11-14, João: a D200
+# button per host).
 PRODUCTION_MACROS = (
-    ("prod1-talk-hosts", "macro-1774582227201", "macro-1774582749617", "#3498db"),
-    ("macro-1774581643177", "macro-1774582340101", "macro-1774582877605", "#9b59b6"),
-    ("prod3-talk-hosts", "prod3-go-live", "prod3-talk-cam", "#1abc9c"),
+    ProductionMacros(
+        "prod1-talk-hosts",
+        "prod1-talk-host2",
+        "macro-1774582227201",
+        "macro-1774582749617",
+        "#3498db",
+    ),
+    ProductionMacros(
+        "macro-1774581643177",
+        "prod2-talk-host2",
+        "macro-1774582340101",
+        "macro-1774582877605",
+        "#9b59b6",
+    ),
+    ProductionMacros(
+        "prod3-talk-hosts", "prod3-talk-host2", "prod3-go-live", "prod3-talk-cam", "#1abc9c"
+    ),
 )
 
 
@@ -191,8 +217,8 @@ def macros(patch: Patch = PATCH_2026) -> list[dict[str, Any]]:
     """The default macros for `patch` (ids kept for the D200 profile).
 
     Every seat with a microphone gets "talk to production"; PROD 1-3 get
-    "→ Hosts" (into the hosts' in-ears), "Go Live" (onto the main mix) and
-    "→ Cam" (into the camera operator's bus).
+    "→ Host 1" and "→ Host 2" (into that host's in-ears), "Go Live" (onto the
+    main mix) and "→ Cam" (into the camera operator's bus).
     """
     talk = []
     for seat, channel, own_bus in patch.seats:
@@ -200,19 +226,31 @@ def macros(patch: Patch = PATCH_2026) -> list[dict[str, Any]]:
         others = [bus for bus in patch.in_ear_buses() if bus != own_bus]
         talk.append(_talk_to_production(macro_id, label, colour, channel, others))
     producers = list(zip(PRODUCTION_MACROS, patch.production, strict=False))
-    to_hosts = [
-        _route(
-            ids[0], f"Prod {n} → Hosts", ids[3], channel, *patch.host_buses(), closed_when_on=False
-        )
-        for n, (ids, channel) in enumerate(producers, start=1)
-        if patch.host_buses()
-    ]
+    # "→ Host 1" and "→ Host 2": each opens one host's in-ears.
+    in_ears = {seat: bus for seat, _channel, bus in patch.seats}
+    to_hosts = []
+    for host, seat in enumerate(patch.hosts, start=1):
+        if seat not in in_ears:
+            continue  # no microphone on that seat
+        for n, (ids, channel) in enumerate(producers, start=1):
+            macro_id = ids.to_host1 if host == 1 else ids.to_host2
+            label = f"Prod {n} → Host {host}"
+            to_hosts.append(
+                _route(macro_id, label, ids.colour, channel, in_ears[seat], closed_when_on=False)
+            )
     go_live = [
-        _route(ids[1], f"Prod {n} Go Live", ids[3], channel, "main", closed_when_on=False)
+        _route(ids.go_live, f"Prod {n} Go Live", ids.colour, channel, "main", closed_when_on=False)
         for n, (ids, channel) in enumerate(producers, start=1)
     ]
     to_cam = [
-        _route(ids[2], f"Prod {n} → Cam", ids[3], channel, patch.talkback_bus, closed_when_on=False)
+        _route(
+            ids.to_cam,
+            f"Prod {n} → Cam",
+            ids.colour,
+            channel,
+            patch.talkback_bus,
+            closed_when_on=False,
+        )
         for n, (ids, channel) in enumerate(producers, start=1)
     ]
     return [*talk, *to_hosts, *go_live, *to_cam]

@@ -125,7 +125,10 @@ def test_talk_to_production_acts_on_each_seats_own_microphone() -> None:
 def test_the_producers_macros_act_on_the_production_microphones() -> None:
     macros = defaults.macros(patch_of(studio_pc_settings()))
 
-    assert points(macro(macros, "prod1-talk-hosts")["on_steps"]) == {"9:bus1", "9:bus2"}
+    # Prod 1 → Host 1 and → Host 2: one host's in-ears each.
+    assert points(macro(macros, "prod1-talk-hosts")["on_steps"]) == {"9:bus1"}
+    assert points(macro(macros, "prod1-talk-host2")["on_steps"]) == {"9:bus2"}
+    assert macro(macros, "prod1-talk-host2")["label"] == "Prod 1 → Host 2"
     assert points(macro(macros, "macro-1774582749617")["on_steps"]) == {"9:bus6"}  # Prod 1 → Cam
     assert points(macro(macros, "macro-1774582340101")["on_steps"]) == {"10:main"}  # Prod 2 live
     # Two production microphones: no PROD 3 macros.
@@ -143,7 +146,8 @@ def test_no_macro_holds_a_hosts_sends_to_the_hosts_in_ears_or_the_camera_op() ->
 
 
 def test_the_2026_patch_gives_the_2026_macros_with_their_ids() -> None:
-    # The D200 profile calls these ids: same ids, same order, as before.
+    # 2026's ids kept (2026's "→ Hosts" is now "→ Host 1"), plus "→ Host 2"
+    # for each producer (2026-11-14).
     assert [m["id"] for m in defaults.macros()] == [
         "host1-talk-prod",
         "host2-talk-prod",
@@ -152,6 +156,9 @@ def test_the_2026_patch_gives_the_2026_macros_with_their_ids() -> None:
         "prod1-talk-hosts",
         "macro-1774581643177",
         "prod3-talk-hosts",
+        "prod1-talk-host2",
+        "prod2-talk-host2",
+        "prod3-talk-host2",
         "macro-1774582227201",
         "macro-1774582340101",
         "prod3-go-live",

@@ -27,13 +27,14 @@ the command log; state polls (once a second per button) are not commands.
 """
 
 import json
+import logging
 import math
 import re
 from collections.abc import Callable
 from decimal import Decimal
 from typing import Any
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from fastapi.responses import Response
 
 from baja_studio.adapters.xr18_addresses import normalise_channel
@@ -48,6 +49,11 @@ D200_SOURCE = device_source("d200")
 # Worded with an en dash, exactly as the 2026 tool answered.
 BAD_BUS_MESSAGE = "bus must be bus1\u2013bus6"
 MODULE = "audio"
+
+# Every D200 request, at DEBUG: turn on with the environment variable
+# BAJA_STUDIO_DEBUG_LOGGERS=baja_studio.modules.audio.d200_routes (2026-11-14:
+# to see whether Ulanzi Studio's requests reach the studio at all).
+logger = logging.getLogger(__name__)
 
 StateReader = Callable[[], Any]
 
@@ -125,6 +131,14 @@ def parse_int(text: str) -> int | None:
     """JavaScript's `parseInt(text)` (base 10), or None for NaN."""
     match = re.match(r"\s*[+-]?\d+", text)
     return int(match.group(0)) if match else None
+
+
+def log_request(request: Request) -> None:
+    """Log one D200 request: what, from where, and by what (a browser or Ulanzi's plugin)."""
+    if logger.isEnabledFor(logging.DEBUG):
+        client = request.client.host if request.client else "?"
+        agent = request.headers.get("user-agent", "-")
+        logger.debug("%s %s from %s (%s)", request.method, request.url.path, client, agent)
 
 
 def d200_routes() -> APIRouter:
@@ -271,7 +285,13 @@ def d200_routes() -> APIRouter:
         ("/action/macro-state/{name}", macro_state),
         ("/action/state/{channel}", state),
     ):
-        router.add_api_route(path, handler, methods=["GET", "POST"], include_in_schema=False)
+        router.add_api_route(
+            path,
+            handler,
+            methods=["GET", "POST"],
+            include_in_schema=False,
+            dependencies=[Depends(log_request)],
+        )
     return router
 
 

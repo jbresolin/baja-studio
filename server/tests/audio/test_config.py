@@ -198,3 +198,26 @@ def test_the_personal_mix_step_is_more_than_0_and_at_most_6_db(step: float) -> N
     assert settings(personal_mix_step_db=6.0).personal_mix_step_db == 6.0
     with pytest.raises(ValidationError, match="personal_mix_step_db"):
         settings(personal_mix_step_db=step)
+
+
+def test_a_production_microphone_reopens_sends_at_its_production_bus_level_by_default() -> None:
+    # Automatic reference bus: production microphones' faders are down while
+    # they are off air, so their level in the production bus is the guide;
+    # every other input's guide is its fader.
+    settings = AudioSettings.model_validate({"production_channels": ["9", "10"]})
+
+    assert settings.reference_bus("9") == "bus5"
+    assert settings.reference_bus("5") == "main"
+
+
+def test_a_channels_own_reference_bus_wins() -> None:
+    settings = AudioSettings.model_validate(
+        {"production_channels": ["9"], "channels": {"9": {"reference_bus": "bus6"}}}
+    )
+
+    assert settings.reference_bus("9") == "bus6"
+
+
+def test_a_reference_bus_that_is_not_a_bus_is_refused() -> None:
+    with pytest.raises(ValidationError, match="reference bus must be main or bus1-bus6"):
+        AudioSettings.model_validate({"channels": {"9": {"reference_bus": "bus9"}}})

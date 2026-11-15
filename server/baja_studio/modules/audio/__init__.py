@@ -20,7 +20,12 @@ from pydantic import BaseModel
 from baja_studio.adapters.xr18_transport import TransportFactory, open_udp_transport
 from baja_studio.audio import defaults
 from baja_studio.audio.config import AudioSettings
-from baja_studio.audio.d200_profile import FILE_NAME, build_profile, d200_base_url
+from baja_studio.audio.d200_profile import (
+    FILE_NAME,
+    build_profile,
+    d200_base_url,
+    missing_macros,
+)
 from baja_studio.audio.stores import LinkStore, OffsetStore, StoredLevels, create_audio_tables
 from baja_studio.core.childproc import EventCallback
 from baja_studio.core.hosts_cards import HostsCard
@@ -39,8 +44,10 @@ from baja_studio.modules.audio.surface import MvaveSurface
 
 MIDI_CHILD_MODULE = "baja_studio.childprocs.midi_child"
 D200_SEEN_PUBLISH_SECONDS = 5.0
-# Ulanzi Studio on the studio PC itself calls the service there.
-DEFAULT_D200_BASE = "http://localhost:8888"
+# Ulanzi Studio on the studio PC itself calls the service there. 127.0.0.1, not
+# "localhost": the API Request plugin runs on Node.js, which tries localhost as
+# IPv6 (::1) first, and the service listens on IPv4 only (2026-11-14 bench).
+DEFAULT_D200_BASE = "http://127.0.0.1:8888"
 
 MidiChildFactory = Callable[[ModuleContext, EventCallback], MidiChildHost]
 
@@ -230,7 +237,7 @@ class AudioModule(Module):
         return d200_routes()
 
     def routes(self) -> APIRouter:
-        """`GET /d200-profile?base=http://localhost:8888`: a Ulanzi Studio profile for the
+        """`GET /d200-profile?base=http://127.0.0.1:8888`: a Ulanzi Studio profile for the
         saved settings, whose buttons call `base` (see `audio/d200_profile.py`)."""
         router = APIRouter()
 
@@ -245,6 +252,11 @@ class AudioModule(Module):
                 media_type="application/octet-stream",
                 headers={"Content-Disposition": f'attachment; filename="{FILE_NAME}"'},
             )
+
+        @router.get("/d200-profile/missing-macros")
+        def d200_missing_macros() -> dict[str, list[str]]:
+            """The macros the profile's buttons call that the saved settings lack."""
+            return {"missing": missing_macros(self.settings())}
 
         return router
 

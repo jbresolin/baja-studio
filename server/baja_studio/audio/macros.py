@@ -11,7 +11,11 @@ silences it ("closes the route"); `restore_levels` opens it again:
   IEM send is in step with the fader it follows), plus the pair's offset
   (a seat's personal mix, WP9b),
 - else to the stored level,
-- else to unity (0 dB), as in 2026.
+- else (nothing stored, or -inf stored) to the input's level on its
+  *reference bus* (Audio setup → Channels; automatic: the production bus for
+  a production microphone, else its fader), so "Prod 1 → Host 1" works the
+  first time without setting that send by hand first (João, 2026-11-14),
+- else, when that is off too, to unity (0 dB), as in 2026.
 
 Storing a point that is already silent keeps what was stored before, so a
 double press can never store "off" and make the route impossible to reopen
@@ -74,6 +78,9 @@ class MixerView(Protocol):
 
     def lr_assign(self, channel: str) -> bool | None:
         """Whether a strip is assigned to the main mix (LR), None if unknown."""
+
+    def reference_bus(self, channel: str) -> str:
+        """Where to take `channel`'s level to open a send with nothing stored ("main", "busN")."""
 
 
 @dataclass(frozen=True)
@@ -190,7 +197,9 @@ def plan_open(view: MixerView | _Overlay, channel: str, bus: str) -> list[Planne
     overlay = view if isinstance(view, _Overlay) else _Overlay(view)
     point = f"{channel}:{bus}"
     stored = overlay.stored_level(point)
-    target = stored if stored is not None else UNITY_LEVEL
+    target = (
+        stored if stored is not None and stored > 0.0 else _reference_level(overlay, channel, bus)
+    )
     if bus != MAIN_POINT and overlay.link_state(channel, bus) == "linked":
         main = overlay.level(channel, MAIN_POINT)
         if main is not None:
@@ -201,6 +210,13 @@ def plan_open(view: MixerView | _Overlay, channel: str, bus: str) -> list[Planne
         changes.append(PlannedChange("forget", channel, bus, None, stored))
     changes.append(_level(overlay, channel, bus, target))
     return changes
+
+
+def _reference_level(overlay: _Overlay, channel: str, bus: str) -> float:
+    """Where `channel` → `bus` opens when nothing is stored: its reference bus's level, or unity."""
+    reference = overlay.view.reference_bus(channel)
+    level = overlay.level(channel, reference) if reference != bus else None
+    return level if level is not None and level > 0.0 else UNITY_LEVEL
 
 
 def _plan_link(overlay: _Overlay, channel: str, bus: str, state: str) -> list[PlannedChange]:

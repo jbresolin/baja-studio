@@ -8,6 +8,7 @@ read more.
 """
 
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -157,3 +158,14 @@ def test_parse_float_reads_like_javascripts(text: str, number: float | None) -> 
 def test_parse_int_reads_like_javascripts() -> None:
     assert parse_int("12abc") == 12
     assert parse_int("x") is None
+
+
+def test_each_d200_request_is_logged_at_debug_with_its_caller(
+    audio: AudioStudio, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Turned on with BAJA_STUDIO_DEBUG_LOGGERS, to see whether Ulanzi Studio's
+    # requests arrive, and that they are not a browser's.
+    with caplog.at_level(logging.DEBUG, logger="baja_studio.modules.audio.d200_routes"):
+        audio.http.get("/action/state/5", headers={"user-agent": "axios/1.7.2"})
+
+    assert "GET /action/state/5 from testclient (axios/1.7.2)" in caplog.text

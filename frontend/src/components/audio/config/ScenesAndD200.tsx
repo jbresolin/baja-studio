@@ -4,7 +4,9 @@
  * URLs behind its buttons for this host.
  */
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
+
+import { getD200MissingMacros } from "../../../lib/api";
 
 import {
   D200_DEFAULT_ADDRESS,
@@ -130,6 +132,18 @@ export function D200Card({
   dirty: boolean;
 }) {
   const [address, setAddress] = useState(D200_DEFAULT_ADDRESS);
+  // Macros the profile's buttons call that the saved settings lack (asked again after a save).
+  const [missing, setMissing] = useState<string[]>([]);
+  useEffect(() => {
+    if (dirty) return;
+    let current = true;
+    getD200MissingMacros()
+      .then((answer) => current && setMissing(answer.missing))
+      .catch(() => current && setMissing([]));
+    return () => {
+      current = false;
+    };
+  }, [dirty]);
   return (
     <section className="config-form" data-testid="d200-card">
       <h3>Profile for Ulanzi Studio</h3>
@@ -154,6 +168,12 @@ export function D200Card({
           Use {origin}
         </button>
       </p>
+      {missing.length > 0 && (
+        <p className="status-message" data-testid="d200-missing-macros">
+          Buttons whose macro is missing (they answer an error until it exists):{" "}
+          {missing.join(", ")}. Macros → Restore defaults… adds them; save, then download.
+        </p>
+      )}
       {dirty && (
         <p className="status-message">
           Unsaved changes: save first, the profile is built from the saved settings.

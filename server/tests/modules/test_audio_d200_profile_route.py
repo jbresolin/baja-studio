@@ -35,7 +35,8 @@ def test_the_profile_downloads_as_a_file_built_from_the_saved_settings(audio: Au
 def test_without_an_address_the_buttons_call_the_studio_pc_itself(audio: AudioStudio) -> None:
     response = audio.http.get("/api/audio/d200-profile")
 
-    hosts = Profile(response.content).buttons("http://localhost:8888")[1]
+    # 127.0.0.1: Ulanzi's plugin tries "localhost" as IPv6, where nothing listens.
+    hosts = Profile(response.content).buttons("http://127.0.0.1:8888")[1]
     assert hosts["0_0"]["request"] == "/action/mute/1"
 
 
@@ -69,3 +70,17 @@ def test_every_button_of_the_profile_is_answered_by_the_service(audio: AudioStud
             assert response.status_code == 200, f"{path}: {response.text}"
             assert response.headers["content-type"].startswith("application/json"), path
             assert "error" not in response.json(), path
+
+
+def test_the_d200_tab_is_told_which_macros_the_buttons_lack(audio: AudioStudio) -> None:
+    # Settings saved before "→ Host 2" existed: those buttons' macros are missing.
+    old_macros = [
+        m
+        for m in audio.module.settings().model_dump(mode="json")["macros"]
+        if not m["id"].endswith("-talk-host2")
+    ]
+    audio.configure(macros=old_macros)
+
+    response = audio.http.get("/api/audio/d200-profile/missing-macros")
+
+    assert response.json() == {"missing": ["prod1-talk-host2", "prod2-talk-host2"]}
