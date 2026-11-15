@@ -5,7 +5,8 @@ other file (`POST /api/home/settings-import`, dry run, apply), or by hand on
 Settings → Export / import when the rig runs with `--no-studio`. What it sets:
 
 - agents: both fake agents with their token; cameras: each agent's two
-  cameras, cam1 with a fake VISCA camera as its direct fallback;
+  cameras, cam1 with a fake VISCA camera as its direct fallback, and the
+  fake USB cameras (two fixed S600s and the Pixy as a `uvc` PTZ);
 - playout: the fake OBS, the fake orchestrator, the delivery folder as the
   receiver root and the "Patrocinadores" folder;
 - audio: the fake XR18, every channel visible that the default link matrix
@@ -32,6 +33,7 @@ from baja_studio import __version__
 from baja_studio.audio import defaults as audio_defaults
 from baja_studio.core.settings import ModuleSettings, nested_model_fields, settings_version_of
 from baja_studio.core.settings_export import FILE_FORMAT, FILE_FORMAT_VERSION
+from baja_studio.fakes import fake_duvc
 from baja_studio.modules.agents import AgentsModule
 from baja_studio.modules.audio import AudioModule
 from baja_studio.modules.cameras import CamerasModule
@@ -82,6 +84,28 @@ def camera_id(agent_number: int, camera_number: int) -> str:
     return f"rig-{'ab'[agent_number - 1]}-cam{camera_number}"
 
 
+def usb_cameras() -> list[dict[str, Any]]:
+    """The fake UVC library's cameras (fakes/fake_duvc.py), as Camera setup saves them."""
+    return [
+        {
+            "id": f"rig-s600-{letter}",
+            "label": f"S600 {letter.upper()}",
+            "driver": "none",
+            "usb_device": {"path": path, "name": fake_duvc.S600_NAME, "index": index},
+        }
+        for index, (letter, path) in enumerate(
+            (("a", fake_duvc.S600_A_PATH), ("b", fake_duvc.S600_B_PATH))
+        )
+    ] + [
+        {
+            "id": "rig-pixy",
+            "label": "Pixy",
+            "driver": "uvc",
+            "usb_device": {"path": fake_duvc.PIXY_PATH, "name": fake_duvc.PIXY_NAME},
+        }
+    ]
+
+
 def section_values(ports: fakes.FakePorts, clips_folder: Path) -> dict[str, dict[str, Any]]:
     """Every section's values as the rig wants them, before any check."""
     agents = [
@@ -105,6 +129,7 @@ def section_values(ports: fakes.FakePorts, clips_folder: Path) -> dict[str, dict
                     "address": {"host": LOOPBACK, "port": fallback_port},
                 }
             cameras.append(camera)
+    cameras.extend(usb_cameras())
     channels = audio_defaults.channels()
     for channel in PRODUCTION_CHANNELS:
         channels[channel]["visible"] = True

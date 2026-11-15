@@ -3,7 +3,10 @@
 Every fake is launched through its existing command line (`python -m
 baja_studio.fakes.<fake> ...`), bound to 127.0.0.1 on a free port. The
 M-VAVE is not a process: the studio's MIDI child uses its fake backend when
-`BAJA_STUDIO_MIDI_BACKEND=fake` (`STUDIO_ENVIRONMENT`).
+`BAJA_STUDIO_MIDI_BACKEND=fake` (`STUDIO_ENVIRONMENT`). Nor are the USB cameras
+(two S600s and a Pixy, WP6a): the UVC child uses the fake duvc library when
+`BAJA_STUDIO_UVC_BACKEND=fake`, and scenarios reach its switches through the
+cameras module's `simulate_usb` command.
 
 The passwords and tokens below protect nothing but these local fakes, so they
 are plain constants (and travel in the settings bundle; ADR 0016).
@@ -19,6 +22,9 @@ from baja_studio.adapters.osc import OscMessage, encode_message
 from baja_studio.adapters.xr18_addresses import INFO
 from baja_studio.cameras.drivers import visca_packets
 from baja_studio.childprocs.midi_child import BACKEND_ENVIRONMENT_VARIABLE
+from baja_studio.childprocs.uvc_child import (
+    BACKEND_ENVIRONMENT_VARIABLE as UVC_BACKEND_ENVIRONMENT_VARIABLE,
+)
 from baja_studio.rig.layout import LOOPBACK, free_tcp_port, free_udp_port
 from baja_studio.rig.processes import ProcessStartError, RigProcess
 
@@ -29,8 +35,11 @@ XR18_NAME = "XR18-RIG"
 # Agent ids as the studio's registry knows them; the fakes report the same.
 AGENT_IDS = ("rig-laptop-a", "rig-laptop-b")
 CAMERAS_PER_AGENT = 2
-# What the studio needs in its environment to drive the fake M-VAVE.
-STUDIO_ENVIRONMENT = {BACKEND_ENVIRONMENT_VARIABLE: "fake"}
+# What the studio needs in its environment to drive the fake M-VAVE and USB cameras.
+STUDIO_ENVIRONMENT = {
+    BACKEND_ENVIRONMENT_VARIABLE: "fake",
+    UVC_BACKEND_ENVIRONMENT_VARIABLE: "fake",
+}
 READY_TIMEOUT_SECONDS = 20.0
 PROBE_INTERVAL_SECONDS = 0.2
 

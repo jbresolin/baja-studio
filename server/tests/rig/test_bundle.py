@@ -10,10 +10,12 @@ change, update `section_values` in rig/bundle.py.
 
 from pathlib import Path
 
+from baja_studio.cameras.config import CamerasSettings
 from baja_studio.core.settings_export import FILE_FORMAT
 from baja_studio.core.settings_import import parse_settings_file
+from baja_studio.fakes import fake_duvc
 from baja_studio.playout.config import PlayoutSettings
-from baja_studio.rig import fakes
+from baja_studio.rig import bundle, fakes
 from baja_studio.rig.bundle import (
     SECTION_MODELS,
     build_bundle,
@@ -116,3 +118,14 @@ def test_unknown_keys_are_found_at_any_depth_and_left_out() -> None:
 
     # Leaving them out keeps everything else.
     assert without_keys(values, unknown, "playout") == {"obs": {"host": "127.0.0.1"}}
+
+
+def test_the_fake_usb_cameras_are_in_the_bundle_as_camera_setup_saves_them() -> None:
+    # WP6a: the UVC child's fake library (two S600s and a Pixy) is in the
+    # rig, so its cameras are in the bundle, each on its fake device path.
+    cameras = {camera["id"]: camera for camera in bundle.usb_cameras()}
+
+    assert cameras["rig-s600-a"]["usb_device"]["path"] == fake_duvc.S600_A_PATH
+    assert cameras["rig-s600-b"]["usb_device"]["index"] == 1
+    assert cameras["rig-pixy"]["driver"] == "uvc"
+    CamerasSettings.model_validate({"cameras": list(cameras.values())})

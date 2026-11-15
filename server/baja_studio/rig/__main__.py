@@ -140,6 +140,7 @@ def print_summary(session: RigSession, options: argparse.Namespace, description:
     for name, fake in session.fakes.items():
         say(f"  {name:<13} {fake.describe}")
     say("  m-vave        the MIDI child's fake backend (in the studio's environment)")
+    say("  usb cameras   the UVC child's fake library: two S600s and a Pixy (same)")
     say(f"  logs          {session.log_directory}")
     say(f"  bundle        {session.layout.bundle}")
     if session.fakes["obs"].process.running and not options.fast_obs:
@@ -152,7 +153,7 @@ def print_summary(session: RigSession, options: argparse.Namespace, description:
     else:
         variables = " ".join(f"{key}={value}" for key, value in STUDIO_ENVIRONMENT.items())
         say("no studio started: import the bundle above on Settings → Export / import,")
-        say(f"and start the studio with {variables} for the fake M-VAVE.")
+        say(f"and start the studio with {variables} for the fake M-VAVE and USB cameras.")
     say("Ctrl-C stops everything.")
 
 
