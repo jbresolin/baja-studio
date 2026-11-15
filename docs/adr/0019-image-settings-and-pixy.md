@@ -25,11 +25,20 @@ component and touches the shared files only additively.
    The commands are `modules/cameras/image_commands.py`. The cameras module
    now runs three workers of its own: `motion`, `uvc`, `imaging`.
 2. **The UVC child** (`childprocs/uvc_child.py`) speaks `status`,
-   `list_devices`, `read_controls`, `write_controls`, `check`, and sends a
-   `devices` event when its 2 s look finds the list changed. It runs on every
+   `list_devices`, `read_controls`, `write_controls`, `check`. It has **one
+   thread**: DirectShow handles are COM objects, so they are opened, used and
+   dropped only on the thread answering requests. The service's `uvc` worker
+   sends `check` every 2 s (list the devices, touch every open handle with one
+   read); it is also the keep-alive. Events: `devices` when the list changed,
+   `reopened {path}` when a dead handle was opened again. It runs on every
    start, also with no USB camera configured, because Camera setup needs the
    device list to pick one. Off Windows, or without duvc-ctl, it stays up and
    says why (`status.available` false), like the MIDI child.
+   **What never changes while a device stays plugged in is asked once**: the
+   device object and which controls it has (a capability scan lists the
+   devices and opens the filter; on every read it made the Pixy's writes
+   queue behind it). After a write only the written controls are read back.
+   The fake counts library calls, and tests hold the line on them.
 3. **The backend takes the library as an argument** (`childprocs/uvc_duvc.py`):
    the real `duvc_ctl` module, or `fakes/fake_duvc.py`, a fake *library*
    with the same calls and result types. The quirks are the library's, so
@@ -41,10 +50,14 @@ component and touches the shared files only additively.
 4. **Control names are the studio's** (`exposure`, `white_balance`, …),
    mapped to `CamProp`/`VidProp` in the backend. Pan, tilt and zoom are
    motion: they never appear on an image card.
-5. **Which controls have an automatic mode.** DirectShow's range does not say.
-   A control has `auto` when UVC defines one for it (exposure, focus, iris,
-   white balance, hue) or the device reports it on auto, now or by default.
-   The bench sheet checks the S600 and the Pixy.
+5. **Which controls have an automatic mode** comes from DirectShow's range
+   capability flags, which duvc 2.1 reports as `PropRange.default_mode`
+   (checked in its source). That is a capability, not the device's default
+   mode, so **Reset** writes the default value and puts every control that has
+   an automatic mode back on auto, as a webcam starts. The library's error
+   messages are generic ("Failed to set camera property"), so the studio says
+   what it asked for ("the camera refused 50: …"); the card shows which control.
+   A refused write is told from a dead handle by reading the control again.
 
 ### Finding a USB camera
 
@@ -61,15 +74,27 @@ component and touches the shared files only additively.
 
 7. **Stored per camera** in `cameras[].image` (control → `{value, auto}`):
    what the device *took*, read back after the write (`auto: true` saves no
-   value). A value outside the range is refused before it is sent and shown
+   value). A run of writes is saved once, a second after the last one (Lock,
+   Reset and Copy save at once; the module saves what is left when it stops),
+   so a dragged slider bumps the settings version once, not every step.
+   Saving happens under the camera's lock, so an older value is never saved
+   after a newer one; a reapply meanwhile uses the unsaved values.
+   **Every writer of the cameras list inside the service** (image settings, a
+   preset rename, a uvc preset, and WP6b's crop presets) goes through
+   `CamerasModule.edit_camera(camera id, edit)`, built on the new
+   `SettingsStore.edit(section, change)`: read-modify-write under the store's
+   lock, so two writers never undo each other, and a page save from an older
+   version is still a conflict. A value outside the range is refused before it is sent and shown
    on its control ("500 is outside 0..100"); a refusal by the device is shown
    with the device's words. Neither is saved. An error stays on its control
    until that control is written successfully or the settings are reapplied.
 8. **Reapplied by the `imaging` worker**, twice a second looking at every
    camera with image settings: a USB camera is reapplied when its device is
-   present and has not had its settings since the child (re)started or the
-   device (re)appeared; an agent camera when its link turns `ok`. A camera
-   away keeps its card, offline with the reason and its last controls.
+   present and has not had its settings since the child (re)started, the
+   device (re)appeared, or its handle was reopened (a replug quicker than the
+   2 s look: real DirectShow handles die with the device, and the fake's do
+   too); an agent camera when its link turns `ok`. A camera away keeps its
+   card, offline with the reason and its last controls.
 9. **Lock** reads afresh and saves every control on auto as manual at the
    value the camera chose. **All auto** is a `set_image` from the page.
    **Reset** writes the device defaults (value and mode) and clears the saved
@@ -87,8 +112,10 @@ component and touches the shared files only additively.
 12. **The command log** keeps the start of a run of `set_image` writes per
     (source, camera): a write to other controls, or after a pause of more
     than 1 s, starts a new run. `get_image` and `list_usb_devices` are reads
-    and are not logged. The page sends a dragged slider at most every 150 ms,
-    and always its last value.
+    and are not logged. The page keeps one `set_image` in flight per control
+    while a slider is dragged and then sends only the latest value, so a slow
+    camera (a real UVC write can take most of a second) never builds a backlog
+    in the server's thread pool, and values never land out of order.
 13. **Health**: the `uvc` worker counts as the device `usb` on the home card
     only while an enabled camera uses a USB device, so a PC without USB
     cameras (or a dev box without duvc-ctl) stays green.
@@ -143,10 +170,13 @@ component and touches the shared files only additively.
 - **Bench** ([docs/bench/wp6.md](../bench/wp6.md)) not run: the S600's real
   ranges and automatic controls, whether the Pixy moves while OBS has it open,
   the Pixy's top speeds and pan/tilt directions, zoom only at 1080p.
-- **Settings version churn.** Every image change saves the cameras settings,
-  so a Camera setup form opened before an Image-page change gets the usual
-  conflict notice on Save ("Load latest"). Image settings could move to the
-  module's own table if that bites at the event.
+- **Settings version churn.** Each run of image changes still saves the
+  cameras settings once, so a Camera setup form opened before it gets the
+  usual conflict notice on Save ("Load latest"). Image settings could move to
+  the module's own table if that bites at the event.
+- **Lock on real cameras**: many UVC cameras do not update the exposure or
+  white balance readback while on auto; Lock would then freeze a stale value
+  and the picture jump. The bench sheet checks it.
 - `duvc-ctl>=2.1,<3` is a range, as the brief asked; every other dependency is
   pinned exactly. The installer's wheelhouse manifest records the version
   that shipped (2.1.0 today).

@@ -11,8 +11,9 @@ import pytest
 
 from baja_studio.core.module import CommandError
 from baja_studio.fakes.fake_duvc import PIXY_PATH, S600_A_PATH, S600_B_PATH
+from tests.conftest import step_fake_time
 from tests.imaging.uvc_harness import image_card, pixy_camera, s600_camera, saved_image
-from tests.modules.camera_studio import Studio, smtav
+from tests.modules.camera_studio import CAMERA_CLOCK_WORKERS, Studio, smtav
 
 
 def two_s600s(studio: Studio) -> None:
@@ -87,7 +88,10 @@ def test_a_refusal_by_the_device_itself_is_shown_on_the_control(studio: Studio) 
 
     result = studio.command("set_image", camera="s600-a", controls={"gain": {"value": 50}})
 
-    assert "out of range" in result["controls"]["gain"]["error"]
+    # The library's words are generic; the studio says what was refused.
+    assert result["controls"]["gain"]["error"] == (
+        "the camera refused 50: Failed to set camera property"
+    )
     assert saved_image(studio, "s600-a") == {}
 
 
@@ -207,3 +211,43 @@ def test_an_unplugged_camera_is_refused_and_its_card_says_why(studio: Studio) ->
     assert "not plugged in" in card["status_reason"]
     # The last known controls stay on the card, so the page can still show them.
     assert "gain" in card["controls"]
+
+
+def test_a_dragged_slider_is_saved_once_when_the_drag_is_over(studio: Studio) -> None:
+    # Ten writes a tenth of a second apart: the camera follows each, but the
+    # settings (and their version, which Camera setup watches) change once.
+    two_s600s(studio)
+    version_before = studio.services.settings.record("cameras").version
+
+    for value in range(40, 50):
+        studio.command("set_image", camera="s600-a", controls={"gain": {"value": value}})
+        step_fake_time(studio.clock, 0.1, CAMERA_CLOCK_WORKERS)
+    assert studio.usb.control(S600_A_PATH, "Gain").value == 49
+
+    assert saved_image(studio, "s600-a") == {"gain": {"value": 49, "auto": None}}
+    assert studio.services.settings.record("cameras").version == version_before + 1
+
+
+def test_a_preset_rename_during_a_drag_and_the_drag_s_save_keep_each_other(
+    studio: Studio,
+) -> None:
+    # Two writers of the same camera list: neither may undo the other.
+    studio.configure(cameras=[s600_camera(), pixy_camera()])
+    studio.soon(lambda: image_card(studio, "pixy").get("status") == "ok")
+    studio.command("set_image", camera="pixy", controls={"gain": {"value": 12}})
+
+    studio.command("rename_preset", camera="pixy", n=0, label="Start gate")
+
+    assert saved_image(studio, "pixy") == {"gain": {"value": 12, "auto": None}}
+    pixy = studio.services.settings.get("cameras").cameras[1]  # type: ignore[attr-defined]
+    assert [(preset.n, preset.label) for preset in pixy.presets] == [(0, "Start gate")]
+
+
+def test_reading_back_after_a_write_reads_only_what_was_written(studio: Studio) -> None:
+    # Each read is a round trip to the device; the others did not change.
+    two_s600s(studio)
+    studio.usb.library.calls.clear()
+
+    studio.command("set_image", camera="s600-a", controls={"contrast": {"value": 60}})
+
+    assert dict(studio.usb.library.calls) == {"set": 1, "get": 1, "get_range": 1}

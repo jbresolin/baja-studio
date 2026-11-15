@@ -4,7 +4,8 @@ Twice a second it looks at every camera that has image settings:
 
 - **USB cameras**: when the camera's device is present and has not had its
   settings since it appeared (or since the UVC child last started, or since
-  its device changed), the saved settings are reapplied and the controls read.
+  its device changed, or since its handle was reopened after a quick
+  replug), the saved settings are reapplied and the controls read.
   When it is absent, its card says why and keeps its last controls.
 - **Agent cameras**: when the agent link turns `ok` and the agent lists image
   controls for the camera, the saved settings are reapplied and read. While
@@ -38,6 +39,7 @@ class ImagingWatch:
         self._generation = 0
         self._usb_applied: dict[str, tuple[int, str]] = {}
         self._agent_applied: set[str] = set()
+        self._reopened: set[str] = set()
         self._worker: WorkerContext | None = None
         self._last_usb_state: dict[str, Any] | None = None
 
@@ -57,6 +59,12 @@ class ImagingWatch:
         """The device list changed (a camera plugged in or out): look now."""
         self.wake()
 
+    def device_reopened(self, path: str) -> None:
+        """The child had to open this device again (it was replugged): reapply its camera."""
+        with self._lock:
+            self._reopened.add(path.lower())
+        self.wake()
+
     def wake(self) -> None:
         """Look now rather than at the next tick."""
         worker = self._worker
@@ -71,6 +79,9 @@ class ImagingWatch:
                 self.tick()
                 worker.sleep(TICK_SECONDS)
         finally:
+            # Unsaved writes are saved by the module's `stop`, once every worker
+            # has stopped: saving here would notify the module while the
+            # supervisor is still stopping it.
             self._worker = None
 
     def tick(self) -> None:
@@ -89,6 +100,7 @@ class ImagingWatch:
                 self._usb_applied.pop(camera_id, None)
                 self._agent_applied.discard(camera_id)
         self._publish_usb(cameras)
+        self._service.flush_due()
 
     def _watch_usb(self, camera: CameraConfig) -> None:
         located = self._service.locate_camera(camera.id)
@@ -96,8 +108,12 @@ class ImagingWatch:
             self._usb_applied.pop(camera.id, None)
             self._service.mark_unavailable(camera, located.problem)
             return
+        path = located.device.path.lower()
         with self._lock:
-            key = (self._generation, located.device.path.lower())
+            key = (self._generation, path)
+            if path in self._reopened:
+                self._reopened.discard(path)
+                self._usb_applied.pop(camera.id, None)
         if self._usb_applied.get(camera.id) == key:
             return
         try:

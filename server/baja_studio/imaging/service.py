@@ -6,8 +6,12 @@ child) or is an agent camera whose agent lists `image_controls`. For each,
 default, the error of the last write), its status and where it lives.
 
 Operator actions (`set`, `lock`, `reset`, `copy`) run on the command thread.
-A write is applied at once and what the device took is saved in the
-camera's `image` settings; a refused value is shown on its control and not
+A write is applied at once and only the controls written are read back.
+What the device took is saved in the camera's `image` settings once the run
+of writes is over (a second without one, `flush_due`), so a dragged slider
+does not bump the settings version on every step; Lock, Reset and Copy save
+at once. Saving happens under the camera's lock, so an older value can never
+be saved after a newer one. A refused value is shown on its control and not
 saved. The `imaging` worker (`watch.py`) reapplies the saved settings by
 itself: when the UVC child (re)starts, when a USB camera reappears, and when
 an agent link comes back `ok`.
@@ -42,6 +46,8 @@ from baja_studio.imaging.usb_devices import Located, locate
 from baja_studio.imaging.uvc_link import UvcChildLink
 
 CameraEdit = Callable[[dict[str, Any]], dict[str, Any]]
+# A run of writes to a camera is over (and saved) after this long without one.
+SAVE_AFTER_QUIET_SECONDS = 1.0
 
 
 class ImageRequestError(Exception):
@@ -58,6 +64,7 @@ class ImagingHost:
     # Saves an edited copy of one camera's settings entry (JSON form).
     edit_camera: Callable[[str, CameraEdit], None]
     logger: ModuleLogger
+    monotonic: Callable[[], float]
 
 
 class ImagingService:
@@ -74,6 +81,8 @@ class ImagingService:
         self._errors: dict[str, dict[str, str]] = {}
         self._status: dict[str, tuple[str, str]] = {}
         self._published: dict[str, dict[str, Any]] = {}
+        # Taken by the device, not saved yet: camera -> (changes, replace?, last write).
+        self._unsaved: dict[str, tuple[dict[str, ImageSetting], bool, float]] = {}
 
     # --- which cameras ------------------------------------------------------------------
 
@@ -145,11 +154,16 @@ class ImagingService:
         return self.entry(camera_id)
 
     def set(
-        self, camera_id: str, changes: dict[str, ImageSetting], replace_saved: bool = False
+        self,
+        camera_id: str,
+        changes: dict[str, ImageSetting],
+        replace_saved: bool = False,
+        save_now: bool = False,
     ) -> dict[str, Any]:
         """Write some controls now, save what the device took, show what it refused.
 
         `replace_saved`: the saved settings become exactly these (Reset).
+        `save_now`: save at once rather than at the end of the run of writes.
         """
         camera = self.camera(camera_id)
         with self._camera_lock(camera_id):
@@ -164,7 +178,10 @@ class ImagingService:
             problems = {n: p for n, c in changes.items() if (p := change_problem(current[n], c))}
             writable = {name: c for name, c in changes.items() if name not in problems}
             outcome = self._write(camera, source, writable, current)
-            readback = outcome.readback or (self._read(camera, source) if writable else current)
+            readback = outcome.readback or {
+                **current,
+                **(self._read(camera, source, list(writable)) if writable else {}),
+            }
             errors = self._errors.setdefault(camera_id, {})
             for name in changes:
                 errors.pop(name, None)
@@ -176,8 +193,11 @@ class ImagingService:
                 if name not in outcome.errors and name in readback
             }
             self._store(camera, source, readback)
-        if taken or replace_saved:
-            self._save(camera_id, {} if replace_saved else taken, replace_saved)
+            if taken or replace_saved:
+                # Reset: the device's own defaults are not saved; nothing is.
+                self._remember_unsaved(camera_id, {} if replace_saved else taken, replace_saved)
+            if save_now:
+                self._flush(camera_id)
         return self.entry(camera_id)
 
     def lock(self, camera_id: str) -> dict[str, Any]:
@@ -185,7 +205,7 @@ class ImagingService:
         camera = self.camera(camera_id)
         with self._camera_lock(camera_id):
             fresh = self._read(camera, self._reachable(camera))
-        result = self.set(camera_id, lock_changes(fresh))
+        result = self.set(camera_id, lock_changes(fresh), save_now=True)
         return {**result, "locked": sorted(lock_changes(fresh))}
 
     def reset(self, camera_id: str) -> dict[str, Any]:
@@ -197,7 +217,7 @@ class ImagingService:
             )
         with self._camera_lock(camera_id):
             fresh = self._read(camera, self._reachable(camera))
-        return self.set(camera_id, default_changes(fresh), replace_saved=True)
+        return self.set(camera_id, default_changes(fresh), replace_saved=True, save_now=True)
 
     def copy(self, from_id: str, to_id: str) -> dict[str, Any]:
         """Copy the controls both cameras have, clamped to the target's ranges."""
@@ -209,7 +229,7 @@ class ImagingService:
         with self._camera_lock(to_id):
             ours = self._read(target_camera, self._reachable(target_camera))
         changes, skipped = copy_changes(theirs, ours)
-        result = self.set(to_id, changes)
+        result = self.set(to_id, changes, save_now=True)
         return {**result, "copied": ordered(list(changes)), "skipped": ordered(skipped)}
 
     # --- reapplying (the worker) -------------------------------------------------------------
@@ -219,15 +239,31 @@ class ImagingService:
         with self._camera_lock(camera.id):
             source = self._reachable(camera)
             current = self._read(camera, source)
-            saved = {name: s for name, s in camera.image.items() if name in current}
+            saved = {name: s for name, s in self._saved_now(camera).items() if name in current}
             problems = {n: p for n, s in saved.items() if (p := change_problem(current[n], s))}
             writable = {name: s for name, s in saved.items() if name not in problems}
             outcome = self._write(camera, source, writable, current)
-            readback = outcome.readback or (self._read(camera, source) if writable else current)
+            readback = outcome.readback or {
+                **current,
+                **(self._read(camera, source, list(writable)) if writable else {}),
+            }
             self._errors[camera.id] = {**problems, **outcome.errors}
             self._store(camera, source, readback)
         if writable:
             self.host.logger.info("camera %s: image settings reapplied", camera.id)
+
+    def flush_due(self, everything: bool = False) -> None:
+        """Save the runs of writes that are over (a second quiet), or all of them (stopping)."""
+        now = self.host.monotonic()
+        with self._lock:
+            due = [
+                camera_id
+                for camera_id, (_, _, last) in self._unsaved.items()
+                if everything or now - last >= SAVE_AFTER_QUIET_SECONDS - 1e-6
+            ]
+        for camera_id in due:
+            with self._camera_lock(camera_id):
+                self._flush(camera_id)
 
     def mark_unavailable(self, camera: CameraConfig, reason: str) -> None:
         """Show the camera's card offline with `reason`, keeping its last known controls."""
@@ -269,9 +305,11 @@ class ImagingService:
             self.mark_unavailable(camera, str(error))
             raise
 
-    def _read(self, camera: CameraConfig, source: ImageSource) -> dict[str, ControlState]:
+    def _read(
+        self, camera: CameraConfig, source: ImageSource, names: list[str] | None = None
+    ) -> dict[str, ControlState]:
         try:
-            return source.read()
+            return source.read(names)
         except ImageUnavailableError as error:
             self.mark_unavailable(camera, str(error))
             raise
@@ -320,7 +358,29 @@ class ImagingService:
             self._published[camera.id] = entry
         self.host.publish(f"image.{camera.id}", entry)
 
-    def _save(self, camera_id: str, updates: dict[str, ImageSetting], replace: bool) -> None:
+    def _remember_unsaved(
+        self, camera_id: str, taken: dict[str, ImageSetting], replace: bool
+    ) -> None:
+        """Called under the camera's lock: add to what the next save writes."""
+        with self._lock:
+            pending, was_replace, _ = self._unsaved.get(camera_id, ({}, False, 0.0))
+            merged = dict(taken) if replace else {**pending, **taken}
+            self._unsaved[camera_id] = (merged, replace or was_replace, self.host.monotonic())
+
+    def _saved_now(self, camera: CameraConfig) -> dict[str, ImageSetting]:
+        """The saved settings with the writes not saved yet on top (for reapplying)."""
+        with self._lock:
+            pending, replace, _ = self._unsaved.get(camera.id, ({}, False, 0.0))
+        return dict(pending) if replace else {**camera.image, **pending}
+
+    def _flush(self, camera_id: str) -> None:
+        """Save what is pending for a camera; called under the camera's lock."""
+        with self._lock:
+            pending = self._unsaved.pop(camera_id, None)
+        if pending is None:
+            return
+        updates, replace, _ = pending
+
         def edit(entry: dict[str, Any]) -> dict[str, Any]:
             image = {} if replace else dict(entry.get("image") or {})
             image.update({name: setting.model_dump() for name, setting in updates.items()})

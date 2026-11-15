@@ -3,9 +3,10 @@
  * box where the control has an automatic mode, and the error of the last
  * write under it.
  *
- * While the slider is dragged the page shows the dragged value and sends it
- * at most every 150 ms (and always the last one), so the camera follows
- * without flooding the server. The slider is greyed out while Auto is on:
+ * While the slider is dragged the page shows the dragged value and keeps one
+ * write in flight for this control: the next goes when the reply to the last
+ * comes, with the latest value (and the last one always goes). So the camera
+ * follows as fast as it answers, without flooding the server. The slider is greyed out while Auto is on:
  * the camera chooses the value then, and a manual value would be ignored.
  */
 
@@ -13,12 +14,10 @@ import { useEffect, useRef, useState } from "react";
 
 import {
   controlLabel,
-  createThrottle,
+  createLatestSender,
   type ImageChange,
   type ImageControlView,
 } from "../../lib/imaging";
-
-const DRAG_SEND_INTERVAL_MS = 150;
 
 interface ControlSliderProps {
   cameraId: string;
@@ -26,25 +25,25 @@ interface ControlSliderProps {
   control: ImageControlView;
   /** The card is offline: show the last known values, change nothing. */
   disabled: boolean;
-  onChange: (name: string, change: ImageChange) => void;
+  /** Resolves when the server has answered (refusals included). */
+  onChange: (name: string, change: ImageChange) => Promise<void>;
 }
 
 export function ControlSlider({ cameraId, name, control, disabled, onChange }: ControlSliderProps) {
   const [dragged, setDragged] = useState<number | null>(null);
-  // The latest `onChange`, for a throttle created once per slider.
+  // The latest `onChange`, for a sender created once per slider.
   const changeRef = useRef(onChange);
   useEffect(() => {
     changeRef.current = onChange;
   }, [onChange]);
-  const throttleRef = useRef<{ push: (value: number) => void; cancel: () => void } | null>(null);
-  useEffect(() => () => throttleRef.current?.cancel(), []);
+  const senderRef = useRef<{ push: (value: number) => void; cancel: () => void } | null>(null);
+  useEffect(() => () => senderRef.current?.cancel(), []);
 
   function sendWhileDragging(value: number) {
-    throttleRef.current ??= createThrottle<number>(
-      (dragValue) => changeRef.current(name, { value: dragValue }),
-      DRAG_SEND_INTERVAL_MS,
+    senderRef.current ??= createLatestSender<number>((dragValue) =>
+      changeRef.current(name, { value: dragValue }),
     );
-    throttleRef.current.push(value);
+    senderRef.current.push(value);
   }
 
   const label = controlLabel(name);
@@ -69,7 +68,7 @@ export function ControlSlider({ cameraId, name, control, disabled, onChange }: C
               aria-label={`${label} auto`}
               // Turning auto off keeps the value the camera chose, so nothing jumps.
               onChange={(event) =>
-                onChange(
+                void onChange(
                   name,
                   event.target.checked ? { auto: true } : { auto: false, value: control.value },
                 )

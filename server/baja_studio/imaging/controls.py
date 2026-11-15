@@ -43,7 +43,6 @@ class ControlState:
     max: float
     step: float
     default: float | None = None
-    default_auto: bool | None = None
     error: str = ""
 
     @classmethod
@@ -56,7 +55,6 @@ class ControlState:
             max=float(data["max"]),
             step=float(data.get("step") or 1),
             default=None if data.get("default") is None else float(data["default"]),
-            default_auto=data.get("default_auto"),
         )
 
     @classmethod
@@ -122,12 +120,17 @@ def all_auto_changes(controls: dict[str, ControlState]) -> dict[str, ImageSettin
 
 
 def default_changes(controls: dict[str, ControlState]) -> dict[str, ImageSetting]:
-    """Reset: every control to the device's own default value and mode (USB devices know them)."""
+    """Reset: every control to the device's default value; automatic where it has a mode.
+
+    UVC reports a default value but not a default *mode* (duvc's
+    `default_mode` is the range's capability flag: "has auto"), so Reset puts
+    every control that has an automatic mode back on it, as a webcam starts.
+    """
     changes = {}
     for name, control in controls.items():
         if control.default is None:
             continue
-        auto = control.default_auto if control.auto is not None else None
+        auto = True if control.auto is not None else None
         changes[name] = ImageSetting(value=control.default, auto=auto)
     return changes
 

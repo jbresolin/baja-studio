@@ -22,12 +22,12 @@ from baja_studio.imaging.controls import (
 
 def exposure(value: float = -6, auto: bool | None = True) -> ControlState:
     """A webcam's exposure: -13..-1 in steps of 1, default -6 on auto."""
-    return ControlState(value, auto, -13, -1, 1, default=-6, default_auto=True)
+    return ControlState(value, auto, -13, -1, 1, default=-6)
 
 
 def white_balance(value: float = 4600, auto: bool | None = True) -> ControlState:
     """White balance in kelvin, steps of 10."""
-    return ControlState(value, auto, 2800, 6500, 10, default=4600, default_auto=True)
+    return ControlState(value, auto, 2800, 6500, 10, default=4600)
 
 
 def gain(value: float = 0) -> ControlState:

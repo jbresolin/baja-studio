@@ -135,6 +135,24 @@ describe("Image page", () => {
     expect(within(card("S600 A")).getByText("35")).toBeInTheDocument();
   });
 
+  it("while a write is unanswered, a drag waits and then sends only the latest value", async () => {
+    // A real UVC write can take most of a second: the page never stacks
+    // writes up behind it, and never lets an old value land after a new one.
+    showPage();
+    const gain = within(card("S600 A")).getByLabelText("Gain");
+
+    fireEvent.change(gain, { target: { value: "30" } });
+    fireEvent.change(gain, { target: { value: "31" } });
+    fireEvent.change(gain, { target: { value: "32" } });
+    const setImages = () =>
+      (server.sent as SentCommand[]).filter((sent) => sent.command === "set_image");
+    expect(setImages().map((sent) => sent.args.controls)).toEqual([{ gain: { value: 30 } }]);
+
+    answer({});
+    await waitFor(() => expect(setImages()).toHaveLength(2));
+    expect(setImages()[1]!.args.controls).toEqual({ gain: { value: 32 } });
+  });
+
   it("a control on auto has its slider greyed out; Auto toggles both ways", () => {
     showPage();
     const theCard = card("S600 A");

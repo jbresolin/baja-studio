@@ -71,7 +71,6 @@ class CamerasModule(Module):
         a fake list of serial ports, and an in-process UVC child."""
         super().__init__()
         self._uvc_child_factory = uvc_child_factory
-        self._edit_lock = threading.Lock()
         self._imaging: ImagingService | None = None
         self._image_commands: ImageCommands | None = None
         self._imaging_watch: ImagingWatch | None = None
@@ -84,7 +83,7 @@ class CamerasModule(Module):
         self._running = False
         self._subscribed = False
         self._commands = CameraCommands(
-            self._current_registry, self._settings, self._save_cameras, list_ports
+            self._current_registry, self._settings, self.edit_camera, list_ports
         )
 
     def initial_state(self) -> dict[str, Any]:
@@ -121,6 +120,8 @@ class CamerasModule(Module):
         """Workers are already stopped; forget the drivers so a restart builds fresh ones."""
         with self._lock:
             self._running, self._registry = False, None
+        if self._imaging is not None:
+            self._imaging.flush_due(everything=True)  # the last slider drag, not saved yet
 
     def workers(self) -> list[WorkerSpec]:
         """The motion loop (it also connects the configured devices when it starts),
@@ -193,8 +194,20 @@ class CamerasModule(Module):
         with self._lock:
             return self._registry
 
-    def _save_cameras(self, cameras: list[dict[str, Any]]) -> None:
-        self.context.settings.update(self.name, {"cameras": cameras})
+    def edit_camera(self, camera_id: str, edit: CameraEdit) -> None:
+        """Save an edited copy of one camera's settings entry, atomically.
+
+        `edit(entry) -> entry` gets the camera's entry (JSON form) as it is
+        *now*, under the settings store's lock, so two writers (a preset
+        rename, image settings, a stored position, a crop preset) never undo
+        each other. Every writer inside the service goes through here.
+        """
+
+        def change(values: dict[str, Any]) -> dict[str, Any]:
+            cameras = values["cameras"]
+            return {"cameras": [edit(c) if c["id"] == camera_id else c for c in cameras]}
+
+        self.context.settings.edit(self.name, change)
 
     # --- image settings and USB cameras (WP6a) ------------------------------------------
 
@@ -204,8 +217,9 @@ class CamerasModule(Module):
             publish=context.update_state,
             read_state=lambda path: context.state.get(self.name, path),
             settings=self._settings,
-            edit_camera=self._edit_camera,
+            edit_camera=self.edit_camera,
             logger=context.logger,
+            monotonic=context.clock.monotonic,
         )
         watch_holder: list[ImagingWatch] = []
         uvc = UvcChildLink(
@@ -213,6 +227,7 @@ class CamerasModule(Module):
             context.logger,
             on_started=lambda: watch_holder[0].uvc_started(),
             on_devices=lambda *changes: watch_holder[0].usb_devices_changed(*changes),
+            on_reopened=lambda path: watch_holder[0].device_reopened(path),
         )
         imaging = ImagingService(host, uvc, self._agents)
         watch = ImagingWatch(imaging)
@@ -228,13 +243,6 @@ class CamerasModule(Module):
         )
         return health.summarise(healths, usb_in_use=usb_in_use)
 
-    def _edit_camera(self, camera_id: str, edit: CameraEdit) -> None:
-        """Save an edited copy of one camera's entry; edits never interleave."""
-        with self._edit_lock:
-            cameras = [camera.model_dump(mode="json") for camera in self._settings().cameras]
-            edited = [edit(entry) if entry["id"] == camera_id else entry for entry in cameras]
-            self._save_cameras(edited)
-
     def _save_position(self, camera_id: str, position: StoredPosition) -> None:
         """A `uvc` camera's preset, kept in its settings (the Pixy's own slots lose zoom)."""
 
@@ -243,4 +251,4 @@ class CamerasModule(Module):
             stored = sorted([*kept, position.model_dump()], key=lambda p: p["n"])
             return {**entry, "stored_positions": stored}
 
-        self._edit_camera(camera_id, edit)
+        self.edit_camera(camera_id, edit)

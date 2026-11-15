@@ -94,47 +94,39 @@ export function shortPath(path: string): string {
 }
 
 /**
- * Throttle for a slider being dragged: the first value goes at once, then at
- * most one every `intervalMs`, and the last value is always sent (so the
- * camera ends where the slider stopped). `now` and `schedule` are injectable
- * so tests need no real time.
+ * Sender for a slider being dragged: one write in flight per control. The
+ * first value goes at once; values that come while it is in flight replace
+ * each other, and when its reply comes only the latest is sent. So the
+ * camera follows as fast as it can answer (a real UVC write can take most
+ * of a second), the server never queues a backlog of old values, and they
+ * can never be applied out of order. The last value is always sent.
  */
-export function createThrottle<T>(
-  send: (value: T) => void,
-  intervalMs: number,
-  now: () => number = () => Date.now(),
-  schedule: (callback: () => void, ms: number) => () => void = (callback, ms) => {
-    const timer = setTimeout(callback, ms);
-    return () => clearTimeout(timer);
-  },
-): { push: (value: T) => void; cancel: () => void } {
-  let lastSentAt = -Infinity;
+export function createLatestSender<T>(send: (value: T) => Promise<unknown>): {
+  push: (value: T) => void;
+  cancel: () => void;
+} {
+  let inFlight = false;
+  let stopped = false;
   let pending: { value: T } | null = null;
-  let cancelTimer: (() => void) | null = null;
 
-  const flush = () => {
-    cancelTimer = null;
-    if (pending === null) return;
+  const next = () => {
+    if (stopped || pending === null) {
+      inFlight = false;
+      return;
+    }
     const { value } = pending;
     pending = null;
-    lastSentAt = now();
-    send(value);
+    inFlight = true;
+    send(value).then(next, next);
   };
 
   return {
     push(value: T) {
       pending = { value };
-      const wait = lastSentAt + intervalMs - now();
-      if (wait <= 0) {
-        cancelTimer?.();
-        flush();
-      } else if (cancelTimer === null) {
-        cancelTimer = schedule(flush, wait);
-      }
+      if (!inFlight) next();
     },
     cancel() {
-      cancelTimer?.();
-      cancelTimer = null;
+      stopped = true;
       pending = null;
     },
   };

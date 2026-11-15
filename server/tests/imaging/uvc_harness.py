@@ -23,6 +23,7 @@ from baja_studio.fakes.fake_duvc import (
     FakeDuvcLibrary,
     studio_devices,
 )
+from tests.conftest import module_worker_threads, step_fake_time
 
 
 class _EventsToHost:
@@ -115,7 +116,7 @@ class FakeUsb:
 
     def replug(self, path: str) -> None:
         """Plug it back in."""
-        self.library.device(path).plugged = True
+        self.library.device(path).replug()
         self._look()
 
     def _look(self) -> None:
@@ -160,7 +161,12 @@ def image_card(studio: Any, camera_id: str) -> dict[str, Any]:
 
 
 def saved_image(studio: Any, camera_id: str) -> dict[str, Any]:
-    """The camera's saved image settings, as plain JSON."""
+    """The camera's saved image settings, as plain JSON, once a run of writes is over.
+
+    Writes are saved a second after the last one (so a dragged slider does
+    not save every step): fake time moves on 1.5 s first.
+    """
+    step_fake_time(studio.clock, 1.5, module_worker_threads("cameras", skip=("controller:",)))
     for camera in studio.services.settings.get("cameras").cameras:
         if camera.id == camera_id:
             return {name: setting.model_dump() for name, setting in camera.image.items()}

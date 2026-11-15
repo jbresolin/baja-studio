@@ -45,8 +45,8 @@ class ImageSource(Protocol):
 
     kind: str
 
-    def read(self) -> dict[str, ControlState]:
-        """Every image control now; raises `ImageUnavailableError`."""
+    def read(self, names: list[str] | None = None) -> dict[str, ControlState]:
+        """The image controls now (only `names` when given); raises `ImageUnavailableError`."""
 
     def write(
         self, changes: dict[str, ImageSetting], current: dict[str, ControlState]
@@ -64,9 +64,14 @@ class UsbImageSource:
         self._request = request
         self.path = path
 
-    def read(self) -> dict[str, ControlState]:
-        """The image controls the device has (pan, tilt and zoom are the driver's)."""
-        answer = self._ask("read_controls", {"path": self.path, "names": IMAGE_CONTROL_NAMES})
+    def read(self, names: list[str] | None = None) -> dict[str, ControlState]:
+        """The image controls the device has (pan, tilt and zoom are the driver's).
+
+        After a write only the controls written are read back (`names`): each
+        read is a round trip to the device.
+        """
+        wanted = IMAGE_CONTROL_NAMES if names is None else names
+        answer = self._ask("read_controls", {"path": self.path, "names": wanted})
         return {name: ControlState.from_usb(data) for name, data in answer["controls"].items()}
 
     def write(
@@ -80,7 +85,15 @@ class UsbImageSource:
             value = change.value if change.value is not None and not auto else control.value
             body[name] = {"value": round(value), "auto": auto}
         answer = self._ask("write_controls", {"path": self.path, "controls": body})
-        return WriteOutcome({name: error for name, error in answer.items() if error})
+        # The library's messages are generic ("Failed to set camera property"):
+        # say what was refused. The card shows which control.
+        return WriteOutcome(
+            {
+                name: f"the camera refused {_asked(body[name])}: {error}"
+                for name, error in answer.items()
+                if error
+            }
+        )
 
     def _ask(self, method: str, params: dict[str, Any]) -> Any:
         try:
@@ -102,8 +115,8 @@ class AgentImageSource:
         self._agent_id = agent_id
         self._remote = remote_camera_id
 
-    def read(self) -> dict[str, ControlState]:
-        """`GET /cameras/{id}/image`."""
+    def read(self, names: list[str] | None = None) -> dict[str, ControlState]:
+        """`GET /cameras/{id}/image` (the agent answers with every control)."""
         remote = self._remote
         try:
             answer = self._wait(self._gateway.submit(self._agent_id, lambda c: c.image(remote)))
@@ -139,3 +152,8 @@ class AgentImageSource:
             raise ImageUnavailableError(f"agent {self._agent_id} did not answer in time") from None
         except Exception as error:
             raise ImageUnavailableError(f"agent {self._agent_id}: {error}") from None
+
+
+def _asked(sent: dict[str, Any]) -> str:
+    """What a UVC write asked for, in words: "auto" or the value."""
+    return "auto" if sent["auto"] else str(sent["value"])

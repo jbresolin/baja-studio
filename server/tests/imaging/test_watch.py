@@ -145,3 +145,30 @@ def test_an_agent_camera_gets_its_settings_back_when_its_agent_returns(
 
     studio.soon(lambda: agent_gain() == 40, within_seconds=5)
     assert image_card(studio, "trackside")["status"] == "ok"
+
+
+def test_a_new_uvc_child_alone_is_enough_to_reapply(studio: Studio) -> None:
+    # Nothing was unplugged: the only news is "a new child started" (the
+    # generation goes up). Meanwhile the EMEET app changed the exposure.
+    studio.configure(cameras=[s600_camera(image={"exposure": {"value": -9, "auto": False}})])
+    studio.soon(lambda: exposure_is(studio, S600_A_PATH, -9))
+    studio.usb.control(S600_A_PATH, "Exposure").value = -2
+
+    watch = studio.services.registry._modules["cameras"]._imaging_watch  # type: ignore[attr-defined]
+    watch.uvc_started()
+
+    studio.soon(lambda: exposure_is(studio, S600_A_PATH, -9))
+
+
+def test_a_replug_quicker_than_the_device_look_is_still_reapplied(studio: Studio) -> None:
+    # Out and back in within the 2 s between two looks: the device list never
+    # changes, but the old handle is dead. The child's next check finds that,
+    # opens the camera again and says so, and the settings go back.
+    studio.configure(cameras=[s600_camera(image={"exposure": {"value": -9, "auto": False}})])
+    studio.soon(lambda: exposure_is(studio, S600_A_PATH, -9))
+    device = studio.usb.library.device(S600_A_PATH)
+    device.plugged = False
+    power_loss(studio, S600_A_PATH)
+    device.replug()
+
+    studio.soon(lambda: exposure_is(studio, S600_A_PATH, -9), within_seconds=4)

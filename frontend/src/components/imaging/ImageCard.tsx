@@ -58,7 +58,7 @@ export function ImageCard({ cameraId, label, card, others, run }: ImageCardProps
   }
 
   const change = (name: string, value: ImageChange) =>
-    void act("set_image", { camera: cameraId, controls: { [name]: value } });
+    act("set_image", { camera: cameraId, controls: { [name]: value } });
 
   return (
     <section className="card image-card" aria-label={`Image ${label}`} id={`image-${cameraId}`}>

@@ -210,7 +210,9 @@ class UvcPtzDriver(CameraDriver):
         with self._lock:
             self._motion.wrote({axis: value for axis, value in due.items() if axis not in refused})
         if refused:
-            self._last_error = "; ".join(f"{axis}: {error}" for axis, error in refused.items())
+            self._last_error = "; ".join(
+                f"{axis} {due[axis]}: {error}" for axis, error in refused.items()
+            )
             self._health = (Status.DEGRADED, f"the camera refused {', '.join(refused)}")
         else:
             self._health = (Status.OK, "")

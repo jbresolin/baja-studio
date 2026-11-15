@@ -8,7 +8,7 @@ import { describe, expect, it } from "vitest";
 import {
   allAutoChanges,
   controlLabel,
-  createThrottle,
+  createLatestSender,
   shortPath,
   usbDeviceLabel,
   type ImageControlView,
@@ -18,24 +18,21 @@ function control(auto: boolean | null): ImageControlView {
   return { value: 0, auto, min: 0, max: 10, step: 1, default: 0, error: "" };
 }
 
-/** A pretend clock and timer list, so the throttle runs without real time. */
-function fakeTime() {
-  let now = 0;
-  const timers: { at: number; callback: () => void }[] = [];
+/** A send whose replies the test gives by hand, in order. */
+function manualSend() {
+  const sent: number[] = [];
+  const replies: (() => void)[] = [];
   return {
-    now: () => now,
-    schedule: (callback: () => void, ms: number) => {
-      const timer = { at: now + ms, callback };
-      timers.push(timer);
-      return () => timers.splice(timers.indexOf(timer), 1);
+    sent,
+    send: (value: number) => {
+      sent.push(value);
+      return new Promise<void>((resolve) => replies.push(resolve));
     },
-    /** Let `ms` pass, running the timers that come due. */
-    pass(ms: number) {
-      now += ms;
-      for (const timer of timers.filter((t) => t.at <= now)) {
-        timers.splice(timers.indexOf(timer), 1);
-        timer.callback();
-      }
+    /** The server answers the oldest write still waiting. */
+    async reply() {
+      replies.shift()?.();
+      await Promise.resolve();
+      await Promise.resolve();
     },
   };
 }
@@ -62,46 +59,45 @@ describe("image helpers", () => {
     );
   });
 
-  it("a dragged slider sends its first value at once, then at most every interval, and always the last", () => {
-    const time = fakeTime();
-    const sent: number[] = [];
-    const throttle = createThrottle<number>(
-      (value) => sent.push(value),
-      150,
-      time.now,
-      time.schedule,
-    );
+  it("a dragged slider keeps one write in flight and then sends only the latest", async () => {
+    const server = manualSend();
+    const sender = createLatestSender<number>(server.send);
 
-    // A quick drag: ten positions within 90 ms.
-    for (let value = 1; value <= 10; value++) {
-      throttle.push(value);
-      time.pass(10);
-    }
-    expect(sent).toEqual([1]); // the first went at once; the rest wait
+    // A quick drag: ten positions before the first write is answered.
+    for (let value = 1; value <= 10; value++) sender.push(value);
+    expect(server.sent).toEqual([1]); // the first went at once; the rest wait
 
-    time.pass(100);
-    // At 150 ms the latest position (10) goes; the ones in between never do.
-    expect(sent).toEqual([1, 10]);
+    await server.reply();
+    // Only the latest position (10) goes next; the ones in between never do.
+    expect(server.sent).toEqual([1, 10]);
 
-    time.pass(1000);
-    expect(sent).toEqual([1, 10]); // nothing more to send
+    await server.reply();
+    expect(server.sent).toEqual([1, 10]); // nothing more to send
   });
 
-  it("a cancelled throttle (the slider went away) sends nothing more", () => {
-    const time = fakeTime();
+  it("a refused write still lets the next one go", async () => {
     const sent: number[] = [];
-    const throttle = createThrottle<number>(
-      (value) => sent.push(value),
-      150,
-      time.now,
-      time.schedule,
-    );
-    throttle.push(1);
-    throttle.push(2);
+    const sender = createLatestSender<number>((value) => {
+      sent.push(value);
+      return Promise.reject(new Error("refused"));
+    });
 
-    throttle.cancel();
-    time.pass(500);
+    sender.push(1);
+    sender.push(2);
+    await new Promise((resolve) => setTimeout(resolve, 0));
 
-    expect(sent).toEqual([1]);
+    expect(sent).toEqual([1, 2]);
+  });
+
+  it("a cancelled sender (the slider went away) sends nothing more", async () => {
+    const server = manualSend();
+    const sender = createLatestSender<number>(server.send);
+    sender.push(1);
+    sender.push(2);
+
+    sender.cancel();
+    await server.reply();
+
+    expect(server.sent).toEqual([1]);
   });
 });
