@@ -11,12 +11,18 @@
  * command, so they also show inversion and scaling at work.
  */
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 
 import type { AgentsState } from "../../lib/agents";
-import { emptyAddress, type CameraConfig, type DriverKind } from "../../lib/cameras";
+import {
+  emptyAddress,
+  type CameraConfig,
+  type DriverKind,
+  type ObsConnection,
+} from "../../lib/cameras";
 import type { UsbState } from "../../lib/imaging";
 import { CheckField, NumberField, SelectField, TextField } from "./fields";
+import type { ObsTestResult } from "./ObsConnectionFields";
 import { ObsCropFields, type ObsSourceList } from "./ObsCropFields";
 import { UsbDevicePicker } from "./UsbDevicePicker";
 
@@ -40,8 +46,12 @@ interface CameraFormProps {
   run: (command: string, args: Record<string, unknown>) => void;
   /** The UVC child's USB camera list, for the USB device picker. */
   listUsbDevices: () => Promise<UsbState>;
-  /** OBS's inputs, for an OBS crop camera's source (the `list_obs_sources` command). */
-  listObsSources: () => Promise<ObsSourceList>;
+  /** An OBS's inputs, for an OBS crop camera's source (`list_obs_sources {obs, camera}`). */
+  listObsSources: (obs: ObsConnection, camera: string) => Promise<ObsSourceList>;
+  /** `test_obs_connection {obs, camera}`: can the studio reach that OBS? (WP13) */
+  testObsConnection: (obs: ObsConnection, camera: string) => Promise<ObsTestResult>;
+  /** What the studio says about the saved camera's OBS connection (its state), if anything. */
+  obsConnectionNote?: string;
 }
 
 export function CameraForm(props: CameraFormProps) {
@@ -55,6 +65,19 @@ export function CameraForm(props: CameraFormProps) {
     set({ address: { ...draft.address, ...change } });
   const setLimits = (change: Partial<CameraConfig["limits"]>) =>
     set({ limits: { ...draft.limits, ...change } });
+
+  // A masked password ("********") means the one saved with this camera: the
+  // server looks it up by the camera's saved id, so that id goes along.
+  const savedId = props.isNew ? "" : props.initial.id;
+  const { listObsSources, testObsConnection } = props;
+  const listSources = useCallback(
+    (obs: ObsConnection) => listObsSources(obs, savedId),
+    [listObsSources, savedId],
+  );
+  const testConnection = useCallback(
+    (obs: ObsConnection) => testObsConnection(obs, savedId),
+    [testObsConnection, savedId],
+  );
 
   const agentIds = Object.keys(agents?.agents ?? {});
   const agentCameras = agents?.agents[draft.address.agent_id]?.info?.cameras ?? [];
@@ -222,7 +245,9 @@ export function CameraForm(props: CameraFormProps) {
           onChange={set}
           errors={errors}
           saved={props.canTest}
-          listSources={props.listObsSources}
+          listSources={listSources}
+          testConnection={testConnection}
+          connectionNote={props.obsConnectionNote}
           run={props.run}
         />
       )}
