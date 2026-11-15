@@ -110,6 +110,9 @@ def test_put_settings_with_an_invalid_value_returns_422(light_client: TestClient
 
     assert response.status_code == 422
     assert response.json()["detail"][0]["loc"] == ["interval_s"]
+    # The refused value is not sent back: for a secret (a feed password with a
+    # character it may not have) that would put the secret in an API response.
+    assert "input" not in response.json()["detail"][0]
 
 
 def test_settings_of_an_unknown_section_return_404(light_client: TestClient) -> None:

@@ -204,3 +204,16 @@ def test_a_mediamtx_that_does_not_answer_is_not_verified(bench: Bench) -> None:
     bench.mediamtx.start()
     assert bench.verify() == ""
     assert bench.controller.waiting_for_reload is False
+
+
+def test_a_file_that_cannot_be_written_is_a_config_error_not_a_crash(
+    bench: Bench, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The data folder became read-only, or Windows kept refusing the replace:
+    # the operator sees why on the Feeds page, and the worker keeps running.
+    def refuse(*arguments: object, **options: object) -> bool:
+        raise PermissionError("access denied")
+
+    monkeypatch.setattr("baja_studio.modules.feeds.controller.write_config", refuse)
+    with pytest.raises(FeedsConfigError, match=r"could not write .*access denied"):
+        bench.controller.apply_if_needed(DRONE, mediamtx_on_api_port=False)

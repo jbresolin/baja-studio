@@ -35,6 +35,7 @@ import argparse
 import hashlib
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +54,8 @@ RECORD_SEGMENT_DURATION = "10m"
 RECORD_DELETE_AFTER = "0s"
 # The name MediaMTX gives the path that matches every name not listed.
 CATCH_ALL_PATH = "all_others"
+REPLACE_ATTEMPTS = 5
+REPLACE_RETRY_SECONDS = 0.1
 FINGERPRINT_FIELD = "sysLogPrefix"
 FINGERPRINT_PREFIX = "baja-studio-"
 FINGERPRINT_LENGTH = 16
@@ -217,7 +220,16 @@ def write_config(path: Path, text: str, force: bool = False) -> bool:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(".tmp")
     temporary.write_text(text, encoding="utf-8", newline="\n")
-    os.replace(temporary, path)
+    for attempt in range(REPLACE_ATTEMPTS):
+        try:
+            os.replace(temporary, path)
+            return True
+        except PermissionError:
+            # Windows refuses to replace a file another program has open; MediaMTX
+            # holds it for the milliseconds a reload reads it. Try again shortly.
+            if attempt == REPLACE_ATTEMPTS - 1:
+                raise
+            time.sleep(REPLACE_RETRY_SECONDS)
     return True
 
 

@@ -14,6 +14,7 @@ and read the diff before committing it.
 """
 
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -243,3 +244,27 @@ def test_the_command_line_writes_the_default_config(
     main()
     assert capsys.readouterr().out.strip() == str(config_path(tmp_path))
     assert config_path(tmp_path).is_file()
+
+
+def test_a_file_windows_will_not_replace_yet_is_tried_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # On Windows, replacing a file that another program has open fails
+    # ("being used by another process"). MediaMTX opens mediamtx.yml for the
+    # moment of a reload, so the writer tries a few times before giving up.
+    real_replace = os.replace
+    refusals = [PermissionError("in use"), PermissionError("in use")]
+
+    def replace_after_two_refusals(source: Path, target: Path) -> None:
+        if refusals:
+            raise refusals.pop()
+        real_replace(source, target)
+
+    monkeypatch.setattr(
+        "baja_studio.modules.feeds.mediamtx_config.os.replace", replace_after_two_refusals
+    )
+    monkeypatch.setattr(
+        "baja_studio.modules.feeds.mediamtx_config.time.sleep", lambda seconds: None
+    )
+    assert write_config(tmp_path / "mediamtx.yml", "text") is True
+    assert (tmp_path / "mediamtx.yml").read_text(encoding="utf-8") == "text"

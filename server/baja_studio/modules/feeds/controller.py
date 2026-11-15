@@ -48,7 +48,7 @@ MAX_REWRITES = 2
 
 
 class FeedsConfigError(Exception):
-    """The config cannot be applied as it is (a port is taken); the message says what to do."""
+    """The config cannot be applied (a port is taken, the file cannot be written)."""
 
 
 @dataclass
@@ -125,7 +125,10 @@ class FeedsConfigController:
                 "MediaMTX did not reload its config after %.0f s; writing it again", waited
             )
             rewrites = self._pending.rewrites + 1
-            self._write(self.path.read_text(encoding="utf-8"), force=True)
+            try:
+                self._write(self.path.read_text(encoding="utf-8"), force=True)
+            except (OSError, FeedsConfigError) as error:
+                return f"MediaMTX did not reload its config, and writing it again failed: {error}"
             assert self._pending is not None
             self._pending.rewrites = rewrites
             return ""
@@ -172,7 +175,10 @@ class FeedsConfigController:
 
     def _write(self, text: str, force: bool = False) -> None:
         # `force`: the same content again, but a new file, which MediaMTX's watcher sees.
-        write_config(self.path, text, force=force)
+        try:
+            write_config(self.path, text, force=force)
+        except OSError as error:
+            raise FeedsConfigError(f"could not write {self.path}: {error}") from error
         now = self._clock.monotonic()
         self._last_write_at = now
         fingerprint = str(parse_config(text).get(FINGERPRINT_FIELD, ""))

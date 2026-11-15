@@ -6,6 +6,7 @@ read. Nothing here talks to MediaMTX itself.
 """
 
 from pathlib import Path
+from typing import Any
 
 from baja_studio.core.module import ModuleContext
 from baja_studio.core.system_services import FEEDS_SERVICE, NOT_INSTALLED, ServiceControl
@@ -18,6 +19,7 @@ from baja_studio.modules.feeds.service_log import TAIL_LINES, log_path, refused_
 from baja_studio.modules.feeds.system import FeedsSystem
 from baja_studio.modules.feeds.urls import sender_addresses
 
+_NOTHING = object()
 # `netstat` and `tasklist` take a moment each: while MediaMTX is down, ask again only this often.
 PORT_RECHECK_SECONDS = 30.0
 
@@ -35,6 +37,15 @@ class FeedsStatePublisher:
         self._tracker = FeedTracker()
         self._holders: list[FeedPortHolder] = []
         self._holders_checked_at: float | None = None
+        self._published: dict[str, Any] = {}
+
+    def _publish(self, path: str, value: Any) -> None:
+        """Update `state.feeds.<path>` only when it changed: the poll runs every two
+        seconds, and every update goes to every open page."""
+        if self._published.get(path, _NOTHING) == value:
+            return
+        self._published[path] = value
+        self._context.update_state(path, value)
 
     def publish_down(self, settings: FeedsSettings, error: str) -> str:
         """MediaMTX is not answering: say why (a port, the service, its log); returns the reason."""
@@ -64,12 +75,12 @@ class FeedsStatePublisher:
         self._holders_checked_at = None
         status = self._service_control.status(FEEDS_SERVICE)
         self._publish_service(settings, status, info.version, "", [], [])
-        self._context.update_state("config.waiting_for_reload", waiting_for_reload)
+        self._publish("config.waiting_for_reload", waiting_for_reload)
         self._publish_feeds(settings, snapshots, info.started)
         lines = self._system.read_log(log_path(self._context.data_directory))
         known = {feed.name for feed in settings.feeds}
         refused = [{"name": item.name, "at": item.at} for item in refused_senders(lines, known)]
-        self._context.update_state("refused", refused)
+        self._publish("refused", refused)
 
     def _publish_service(
         self,
@@ -80,7 +91,7 @@ class FeedsStatePublisher:
         holders: list[FeedPortHolder],
         log_tail: list[str],
     ) -> None:
-        self._context.update_state(
+        self._publish(
             "service",
             {
                 "name": FEEDS_SERVICE,
@@ -112,17 +123,17 @@ class FeedsStatePublisher:
         cards = self._tracker.feed_cards(
             settings, snapshots, addresses, clock.monotonic(), clock.now_utc().isoformat(), started
         )
-        self._context.update_state("addresses", addresses)
-        self._context.update_state("feeds", cards)
+        self._publish("addresses", addresses)
+        self._publish("feeds", cards)
         others = self._tracker.other_live_paths(settings, snapshots or [], clock.monotonic())
-        self._context.update_state("other_paths", others)
+        self._publish("other_paths", others)
         self._publish_recordings(settings)
 
     def _publish_recordings(self, settings: FeedsSettings) -> None:
         folder = recordings_root(settings, self._context.data_directory)
         recording = any(feed.record for feed in settings.feeds)
         free = self._free_bytes(folder) if recording else None
-        self._context.update_state(
+        self._publish(
             "recordings", {"folder": str(folder), "free_bytes": free, "any_feed_records": recording}
         )
 

@@ -111,7 +111,10 @@ def save_settings(section: str, body: SettingsSaveRequest, request: Request) -> 
             409, {"message": str(conflict), "current_version": conflict.current_version}
         ) from None
     except ValidationError as invalid:
-        raise HTTPException(422, json.loads(invalid.json(include_url=False))) from None
+        # Without the rejected input: it can hold secrets (a model-level error's
+        # input is the whole section, every password restored in it).
+        problems = invalid.json(include_url=False, include_input=False)
+        raise HTTPException(422, json.loads(problems)) from None
     return get_settings(section, request)
 
 

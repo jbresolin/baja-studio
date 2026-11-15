@@ -354,3 +354,25 @@ def test_add_to_obs_creates_the_feeds_media_source_in_the_chosen_scene(
             assert len(obs.requests_of("CreateInput")) == 1
     finally:
         client.close()
+
+
+def test_a_refused_password_is_not_echoed_in_the_error(
+    make_app: AppFactory, feeds_fakes: FeedsFakes
+) -> None:
+    # "pass:word" has a ':' (it would end the SRT stream id early), so the save
+    # is refused. The error says why, without repeating the password; and a
+    # refusal of the whole section (accept-any with a password) does not
+    # repeat any password either.
+    app = make_app(lambda registry: [FeedsModule(feeds_fakes.services, feeds_fakes.system())])
+    with TestClient(app) as http:
+        version = http.get("/api/settings/feeds").json()["version"]
+        bad = {"feeds": [{**DRONE, "password": "pass:word"}]}
+        refused = http.put("/api/settings/feeds", json={"version": version, "values": bad})
+        assert refused.status_code == 422
+        assert "pass:word" not in refused.text
+        assert "4 to 64" in refused.text
+
+        both = {"feeds": [{**DRONE, "password": PASSWORD}], "accept_any_name": True}
+        refused = http.put("/api/settings/feeds", json={"version": version, "values": both})
+        assert refused.status_code == 422
+        assert PASSWORD not in refused.text

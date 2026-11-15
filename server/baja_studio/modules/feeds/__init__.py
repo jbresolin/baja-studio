@@ -212,7 +212,6 @@ class FeedsModule(Module):
         if written:
             self.context.logger.info("MediaMTX config written")
             self.context.update_state("config.written_at", self.context.clock.now_utc().isoformat())
-        self.context.update_state("config.waiting_for_reload", self._controller.waiting_for_reload)
         return 0.0
 
     def _answers(self, settings: FeedsSettings) -> bool:
