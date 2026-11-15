@@ -42,6 +42,16 @@ class FilterInfo:
 
 
 @dataclass(frozen=True)
+class NamedFilter:
+    """One entry of `GetSourceFilterList`: a filter with its name, in the source's order."""
+
+    name: str
+    kind: str
+    enabled: bool
+    settings: dict[str, Any]
+
+
+@dataclass(frozen=True)
 class SceneList:
     """The program scene and every scene name, top of the OBS list first."""
 
@@ -166,6 +176,19 @@ class ObsRequestsMixin:
             enabled=bool(data.get("filterEnabled", True)),
             settings=settings if isinstance(settings, dict) else {},
         )
+
+    def get_source_filter_list(self, source_name: str) -> list[NamedFilter]:
+        """Every filter of a source, first applied first; "not found" if the source is missing."""
+        filters = self.request("GetSourceFilterList", {"sourceName": source_name}).get("filters")
+        return [
+            NamedFilter(
+                name=str(item.get("filterName", "")),
+                kind=str(item.get("filterKind", "")),
+                enabled=bool(item.get("filterEnabled", True)),
+                settings=dict(item.get("filterSettings") or {}),
+            )
+            for item in filters or []
+        ]
 
     def set_source_filter_settings(
         self, source_name: str, filter_name: str, settings: dict[str, Any]

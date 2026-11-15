@@ -75,6 +75,7 @@ def test_it_is_a_crop_camera_with_presets_and_no_auto_mode(bench: ObsBench) -> N
 
 def test_a_held_pan_moves_the_filter_at_the_configured_speed(bench: ObsBench) -> None:
     bench.add_filter(**CENTRE_1080P)
+    bench.config = crop_camera(speed_follows_zoom=False)  # speeds in frame fractions, as set
     running(bench)
 
     # Full pan right for 0.4 s at 0.3 frame widths per second: 0.12 of 3840 px.
@@ -91,6 +92,7 @@ def test_a_held_pan_moves_the_filter_at_the_configured_speed(bench: ObsBench) ->
 
 def test_a_velocity_nobody_renews_stops_by_itself_after_its_ttl(bench: ObsBench) -> None:
     bench.add_filter(**CENTRE_1080P)
+    bench.config = crop_camera(speed_follows_zoom=False)
     running(bench)
 
     # 300 ms of pan, then silence (a page that lost its Wi-Fi): it moves 300 ms only.
@@ -117,8 +119,8 @@ def test_zooming_in_stops_at_min_window_and_the_output_stays_16_by_9(bench: ObsB
     running(bench)
     assert bench.state["crop"]["magnification"] == 1.0
 
-    bench.driver.move(Velocity(zoom=1.0), ttl_ms=2000)
-    bench.step(2.0)  # 0.5 of the zoom range per second: the full range in 2 s and more
+    bench.driver.move(Velocity(zoom=1.0), ttl_ms=2500)
+    bench.step(2.6)  # 0.5 of the zoom range per second: the full range in 2 s and more
 
     assert bench.visible_size() == (1920, 1080)  # 1080p: never upscaled
     assert bench.state["crop"]["zoom"] == 1.0
@@ -255,16 +257,51 @@ def test_obs_quitting_makes_the_camera_offline_and_it_measures_again_when_back(
     assert bench.count("SetSourceFilterSettings") == 0
 
 
-def test_a_new_resolution_is_measured_again(bench: ObsBench) -> None:
+def test_a_new_resolution_is_trusted_at_once_and_confirmed_once_the_camera_reopened(
+    bench: ObsBench,
+) -> None:
     bench.obs.change_video_size(CAMERA, 1920, 1080)
+    bench.step(1.0)  # the camera has reopened at 1080p before the studio looks
     bench.add_filter()
     running(bench)
     assert bench.state["crop"]["source_width"] == 1920
+    measured_before = bench.full_size_screenshots()
 
-    # The operator switches the webcam to 4K in its OBS properties.
+    # The operator switches the webcam to 4K: its settings name the resolution,
+    # so the studio uses it at once, while the device takes 0.5 s to reopen.
     bench.obs.change_video_size(CAMERA, 3840, 2160)
+    bench.soon(lambda: bench.state["crop"]["source_width"] == 3840, within_seconds=0.2)
 
-    bench.soon(lambda: bench.state["crop"]["source_width"] == 3840)
+    # It keeps measuring until a screenshot agrees (the first ones are still 1080p).
+    bench.soon(lambda: bench.state.get("status") == "ok" and not bench.driver_waiting())
+    assert bench.full_size_screenshots() >= measured_before + 2
+    assert bench.state["crop"]["source_width"] == 3840
+
+
+def test_a_new_resolution_its_settings_do_not_name_is_measured_again_later(
+    bench: ObsBench,
+) -> None:
+    bench.add_filter()
+    running(bench)
+
+    # A camera left at "Device default": the event names no resolution, and the
+    # first measurement still sees the old 4K picture (the device is reopening).
+    bench.obs.change_video_size(CAMERA, 1920, 1080, named_in_settings=False)
+    bench.step(0.4)
+    assert bench.state["crop"]["source_width"] == 3840
+
+    # The checks a second and three seconds later find the new size.
+    bench.soon(lambda: bench.state["crop"]["source_width"] == 1920, within_seconds=4.0)
+
+
+def test_the_size_is_checked_again_now_and_then_at_rest(bench: ObsBench) -> None:
+    bench.add_filter()
+    running(bench)
+    measured = bench.full_size_screenshots()
+
+    bench.step(31.0)
+
+    assert bench.full_size_screenshots() == measured + 1
 
 
 def test_a_smaller_resolution_under_a_crop_that_no_longer_fits_is_put_right(
@@ -274,34 +311,120 @@ def test_a_smaller_resolution_under_a_crop_that_no_longer_fits_is_put_right(
     bench.add_filter(left=1920, right=0, top=540, bottom=540)
     running(bench)
 
-    # The camera drops to 1080p: cutting 1920 px from a 1920 px picture leaves
-    # nothing, so OBS shows black. The driver re-expresses the window for the
-    # resolution the source's settings name, then measures again.
+    # The camera drops to 1080p. Cutting 1920 px from a 1920 px picture would
+    # leave OBS's 1x1 minimum on air, so the driver re-expresses the window for
+    # the resolution the source's settings name at once, then confirms it.
     bench.obs.change_video_size(CAMERA, 1920, 1080)
+    bench.soon(lambda: bench.state["crop"]["source_width"] == 1920, within_seconds=0.2)
 
-    bench.soon(lambda: (bench.state.get("crop") or {}).get("source_width") == 1920)
-    bench.soon(lambda: bench.state.get("status") == "ok")
-    width, height = bench.visible_size()
-    assert width > 0 and height > 0
+    bench.soon(lambda: bench.state.get("status") == "ok" and not bench.driver_waiting())
+    bench.step(0.1)  # OBS renders the next frame
+    assert bench.state["crop"]["source_width"] == 1920
+    assert bench.visible_size() == (960, 540)  # the same half-width window, on 1080p
     assert bench.state["crop"]["x"] == pytest.approx(0.5, abs=0.01)  # still on the right half
+
+
+def test_a_shrunk_picture_whose_resolution_is_not_named_is_reported_and_reset_mends_it(
+    bench: ObsBench,
+) -> None:
+    bench.add_filter(**CENTRE_1080P)
+    running(bench)
+
+    # "Device default" drops to 1080p: no size to go by, and OBS shows one pixel.
+    bench.obs.change_video_size(CAMERA, 1920, 1080, named_in_settings=False)
+    bench.soon(lambda: bench.state.get("status") == "degraded", within_seconds=5.0)
+    assert "crop is larger than the picture" in bench.state["status_reason"]
+    assert "Reset crop" in bench.state["status_reason"]
+
+    # Camera setup's Reset crop: nothing cut, the size can be measured again.
+    bench.driver.place_window(WindowTarget(whole=True))
+    bench.soon(lambda: bench.state.get("status") == "ok", within_seconds=5.0)
+    bench.step(0.1)
+    assert bench.visible_size() == (1920, 1080)
+
+
+def test_another_filter_that_changes_the_size_makes_the_camera_degraded(
+    bench: ObsBench,
+) -> None:
+    bench.add_filter(**CENTRE_1080P)
+    running(bench)
+
+    bench.client.create_source_filter(CAMERA, "Scale", "scale_filter", {})
+
+    bench.soon(lambda: bench.state.get("status") == "degraded")
+    assert "another filter that changes its size ('Scale')" in bench.state["status_reason"]
+
+
+# --- edits made in OBS, and our own echoes ---------------------------------------------------
+
+
+def edit_in_obs(bench: ObsBench, **edges: int) -> None:
+    """The operator changes the filter's values in OBS's dialog."""
+    bench.obs.edit_filter_by_hand(CAMERA, FILTER, **edges)
 
 
 def test_a_crop_changed_by_hand_in_obs_is_adopted(bench: ObsBench) -> None:
     bench.add_filter(**CENTRE_1080P)
     running(bench)
 
-    # Someone drags the crop in OBS's filter dialog: OBS announces new settings.
-    bench.obs._request_SetSourceFilterSettings(
-        {"sourceName": CAMERA, "filterName": FILTER, "filterSettings": {"left": 0, "right": 1920}}
-    )
+    edit_in_obs(bench, left=0, right=1920)
 
-    bench.soon(lambda: bench.state["crop"]["x"] == 0.0)
+    bench.soon(lambda: bench.state["crop"]["x"] == 0.0, within_seconds=0.2)
+
+
+def test_an_edit_in_obs_right_after_a_move_is_checked_once_the_echo_window_passed(
+    bench: ObsBench,
+) -> None:
+    bench.add_filter(**CENTRE_1080P)
+    running(bench)
+    bench.driver.place_window(WindowTarget(0.4, 0.5))
+    bench.step(0.04)  # the studio has just written
+
+    # Within 0.5 s of that write an event may be a late echo: not trusted yet...
+    edit_in_obs(bench, left=0, right=1920)
+    bench.step(0.2)
+    assert bench.state["crop"]["centre_x"] == 0.4
+    # ...but the filter is read again once the window has passed, and the edit shows.
+    bench.soon(lambda: bench.state["crop"]["x"] == 0.0, within_seconds=0.6)
+
+
+def test_while_the_stick_moves_the_crop_an_edit_in_obs_is_overwritten(bench: ObsBench) -> None:
+    bench.add_filter(**CENTRE_1080P)
+    bench.config = crop_camera(speed_follows_zoom=False)
+    running(bench)
+
+    bench.driver.move(Velocity(pan=1.0), ttl_ms=1000)
+    bench.step(0.2)
+    edit_in_obs(bench, left=0, right=1920)  # someone drags the crop meanwhile
+    bench.step(0.2)
+    bench.driver.stop()
+    bench.step(1.0)
+
+    # The stick's path went on from where the stick had it: 0.4 s at 0.3 frames/s.
+    assert bench.crop_in_obs()["left"] == pytest.approx(960 + 0.12 * 3840, abs=2)
+
+
+def test_an_event_equal_to_what_was_written_never_reads_the_filter_again(
+    bench: ObsBench,
+) -> None:
+    bench.add_filter(**CENTRE_1080P)
+    running(bench)
+    bench.driver.place_window(WindowTarget(0.4, 0.5))
+    bench.step(1.0)
+    reads_before = bench.count("GetSourceFilterList")
+
+    # Long after the write, the operator opens the filter dialog and presses
+    # Cancel: OBS announces the values the studio wrote.
+    edit_in_obs(bench, **{key: bench.crop_in_obs()[key] for key in CENTRE_1080P})
+    bench.step(1.0)
+
+    assert bench.count("GetSourceFilterList") == reads_before
 
 
 def test_the_echo_of_our_own_writes_is_not_taken_for_an_edit(bench: ObsBench) -> None:
     bench.add_filter(**CENTRE_1080P)
     running(bench)
-    reads_before = bench.count("GetSourceFilter")
+    reads_before = bench.count("GetSourceFilterList")
 
     # Every write comes back as a SourceFilterSettingsChanged event.
     bench.driver.move(Velocity(pan=1.0, tilt=0.5), ttl_ms=1000)
@@ -309,4 +432,71 @@ def test_the_echo_of_our_own_writes_is_not_taken_for_an_edit(bench: ObsBench) ->
 
     # Had an echo looked like an edit, the driver would have read the filter again.
     assert bench.count("SetSourceFilterSettings") >= 5
-    assert bench.count("GetSourceFilter") == reads_before
+    assert bench.count("GetSourceFilterList") == reads_before
+
+
+# --- measuring at the right moment -------------------------------------------------------------
+
+
+def test_a_measurement_waits_until_obs_has_shown_the_last_write(bench: ObsBench) -> None:
+    bench.add_filter(**CENTRE_1080P)
+    running(bench)
+    bench.driver.place_window(WindowTarget(0.3, 0.5))
+    bench.step(0.04)  # written at this very moment; OBS shows it from its next frame
+
+    # At the same moment, something makes the driver measure again (the
+    # operator ticks the filter's eye, already ticked).
+    bench.obs.set_filter_enabled(CAMERA, FILTER, True)
+    bench.soon(lambda: not bench.driver_waiting())
+
+    # Measured too early, the old picture plus the new edges would be the wrong size.
+    assert bench.state["crop"]["source_width"] == 3840
+    assert bench.state["crop"]["source_height"] == 2160
+
+
+def test_motion_waiting_for_a_measurement_does_not_catch_up_afterwards(bench: ObsBench) -> None:
+    bench.add_filter(left=0, right=1920, top=540, bottom=540)  # room to pan right
+    bench.config = crop_camera(speed_follows_zoom=False)
+    running(bench)
+
+    bench.driver.move(Velocity(pan=1.0), ttl_ms=2000)
+    bench.step(0.2)
+    bench.obs.set_filter_enabled(CAMERA, FILTER, True)  # a measurement is needed
+    bench.step(0.8)
+    bench.driver.stop()
+    bench.step(0.2)
+
+    # Held for 1.0 s, but the window stood still while the size was measured:
+    # it moved less than 1.0 s worth (0.3 frames/s), and never jumped.
+    moved = bench.crop_in_obs()["left"]
+    assert 0.2 * 0.3 * 3840 < moved < 0.85 * 0.3 * 3840
+
+
+# --- speed and settings ------------------------------------------------------------------------
+
+
+def test_zoomed_in_the_window_moves_slower_so_the_picture_moves_as_fast(bench: ObsBench) -> None:
+    # At 2x the window is half as wide: by default it pans half as many frame
+    # fractions per second, which on air looks the same speed as at 1x.
+    bench.add_filter(**CENTRE_1080P)
+    running(bench)
+
+    bench.driver.move(Velocity(pan=1.0), ttl_ms=400)
+    bench.step(1.0)
+
+    assert bench.crop_in_obs()["left"] == pytest.approx(960 + 0.5 * 0.12 * 3840, abs=2)
+
+
+def test_a_settings_edit_does_not_move_the_picture_by_itself(bench: ObsBench) -> None:
+    bench.add_filter(**CENTRE_1080P)  # a 1920 px window
+    running(bench)
+
+    # The operator raises min_window above the current window on Camera setup.
+    bench.config = crop_camera(min_window=0.75)
+    bench.step(2.0)
+    assert bench.count("SetSourceFilterSettings") == 0
+
+    # The next move applies it.
+    bench.driver.move(Velocity(pan=0.1), ttl_ms=100)
+    bench.step(0.3)
+    assert bench.visible_size()[0] == 2880

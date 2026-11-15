@@ -76,8 +76,12 @@ class ObsBench:
     # --- OBS set-up -------------------------------------------------------------------------
 
     def add_filter(self, **settings: Any) -> None:
-        """The operator added the Crop/Pad filter in OBS (before the studio looks)."""
+        """The operator added the Crop/Pad filter in OBS (before the studio looks).
+
+        A bit of time passes, so OBS has rendered a frame with it.
+        """
         self.client.create_source_filter(CAMERA, FILTER, "crop_filter", settings)
+        self.step(0.12)
 
     def crop_in_obs(self) -> dict[str, Any]:
         """The filter's settings as OBS has them now."""
@@ -95,6 +99,10 @@ class ObsBench:
             for record in self.obs.requests_of(request_type)
             if all(record.data.get(key) == value for key, value in matching.items())
         )
+
+    def driver_waiting(self) -> bool:
+        """True while the driver still waits for a measurement to settle."""
+        return self.driver._session.sizes.needed
 
     def full_size_screenshots(self) -> int:
         """Screenshots taken to measure the source (no width asked for)."""

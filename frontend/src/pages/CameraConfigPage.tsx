@@ -46,8 +46,9 @@ export function CameraConfigPage() {
       setCommandError(null);
       try {
         const result = await sendCommand("cameras", command, args);
-        // A studio camera's preset name is saved in these settings: read them again.
-        if (command === "rename_preset") settings.reload();
+        // A studio camera's preset names (and an OBS crop camera's stored windows)
+        // are saved in these settings: read them again.
+        if (command === "rename_preset" || command === "store_preset") settings.reload();
         return result;
       } catch (error) {
         setCommandError(`${command}: ${(error as Error).message}`);

@@ -32,32 +32,50 @@ the Pixy driver). Bench: [docs/bench/wp6b.md](../bench/wp6b.md).
    **Create filter** (`create_crop_filter`: `CreateSourceFilter`, kind
    `crop_filter`, all edges 0). A missing filter is `degraded` ("use Create
    filter on Camera setup"); a missing source `offline`; a disabled filter
-   `degraded` but still moved.
+   `degraded` but still moved. The filter is read with `GetSourceFilterList`,
+   so another enabled filter that changes the size on the same source (a
+   second Crop/Pad, Scaling/Aspect Ratio `scale_filter`) is seen too: it
+   would make the size measurement wrong, so the camera is `degraded` saying
+   which filter.
 4. **The source's size.** obs-websocket has no request for a source's own
    size: `GetSourceScreenshot` (and a scene item's `sourceWidth`) are the
    size *after* filters (`obs_source_get_width`, read in obs-websocket's
    source). So the driver takes one full-size screenshot and adds the
    filter's edges back: `width = shot + left + right`. OBS applies new edges
-   at its next frame, so it measures only after 0.25 s without a write of
-   its own, and reads the filter again after the screenshot (a change
-   meanwhile throws the measurement away). It measures on connect, after
-   OBS comes back, when the filter appears, and on `InputSettingsChanged`
-   for the source (a new resolution). PNG and JPEG sizes are read from the
-   image header (`adapters/obs_images.py`), no image library.
-5. **A source that shrank under its crop** (4K → 1080p with 1920 px cut)
-   leaves OBS nothing to show, and nothing to measure. If the
-   `InputSettingsChanged` names a `resolution` ("1920x1080", what a video
-   capture device with a custom resolution reports), the driver writes the
-   window for that size and measures again. Otherwise the camera is
-   `degraded` ("no picture"), and **Reset crop** (`reset_crop`) shows the
-   whole picture again.
+   at its next video frame, so it measures only once the filter has not
+   changed (by the studio or anyone) for 0.25 s, and reads the filter again
+   after the screenshot (a change meanwhile throws the measurement away).
+   A screenshot of 1 px in either direction measures nothing: OBS's crop
+   filter clamps its output to at least 1x1 (`crop-filter.c`), which is what
+   is left when the crop is larger than the picture. It measures on connect,
+   after OBS comes back, when the filter appears, on `InputSettingsChanged`,
+   and every 30 s at rest in case a change came unannounced
+   (`obs_crop_size.py`); motion waits while the size is unknown, and does
+   not catch up the waited time afterwards. PNG and JPEG sizes are read
+   from the image header (`adapters/obs_images.py`), no image library.
+5. **A new resolution.** A capture device reopens on its own thread, so the
+   first screenshots after `InputSettingsChanged` can still have the old
+   size. If the event names a `resolution` ("1920x1080", a device with a
+   custom resolution), that size is trusted at once: the crop is
+   re-expressed for it straight away (so a crop larger than the new picture
+   does not leave one pixel on air), and measuring goes on until a
+   screenshot agrees, for up to 5 s. Without one ("Device default") it is
+   measured at once and again 1 s and 3 s later. A picture that shrank
+   under its crop with no resolution named is `degraded` ("its crop is
+   larger than the picture"), and **Reset crop** (`reset_crop`), which
+   needs no size, writes nothing-cut and measures again.
 6. **Connecting never moves the picture.** The driver adopts the crop OBS
-   has as its window (the nearest allowed one) and writes nothing until a
-   command moves it. An edit made in OBS's filter dialog (a
-   `SourceFilterSettingsChanged` that is not our echo) is adopted the same
-   way. Our own writes come back as that event too (obs-websocket 5.4+):
-   one equal to the last write, or within 0.5 s of a write, is an echo
-   (the write-protection rule).
+   has as its window (the nearest allowed one) whenever it differs from
+   what the studio last wrote, and writes nothing until a command moves it.
+   Our own writes come back as `SourceFilterSettingsChanged` too
+   (obs-websocket 5.4+; `obs_crop_edits.py`): an event equal to the last
+   write is ignored whenever it comes (an echo, or the filter dialog's
+   Cancel); another one within 0.5 s of a write is not trusted, but the
+   filter is read again once the 0.5 s have passed; after that it is an
+   edit made in OBS and is adopted at once. While the stick moves the
+   crop, the next step overwrites an edit made in OBS: the stick wins.
+   Settings edits (a larger `min_window`, another aspect) apply at the next
+   move, never by themselves.
 7. **Units are the contract's crop units** (`cameras/crop_window.py`): centre
    in source fractions from the top-left, positive tilt up, width as a
    fraction of the source's width with the height from the output aspect
@@ -67,8 +85,13 @@ the Pixy driver). Bench: [docs/bench/wp6b.md](../bench/wp6b.md).
    on 4K); never narrower. Zoom is linear in the width, around the centre;
    the window is clamped inside the frame after every step. Speeds are
    per camera (`crop.pan_speed`/`tilt_speed`: frames per second at full
-   deflection, default 0.3; `zoom_speed`: zoom range per second, 0.5). They
-   do not slow down when zoomed in, as the contract defines them.
+   deflection, default 0.3; `zoom_speed`: zoom range per second, 0.5).
+   **On purpose unlike the contract's crop units**, `crop.speed_follows_zoom`
+   (default on) scales pan and tilt by the window's width (relative to the
+   widest): at 2x the window moves half as many frame fractions per
+   second, so the picture on air moves at the same speed at any zoom (João's
+   request). Agent crop cameras keep the contract's units; their agent
+   decides.
 8. **Velocity integration in the worker** (`camera:<id>:obs`) at
    `crop.update_hz` (default 25) while moving, 1 s idle (commands and OBS
    events wake it). The held velocity has the arbiter's ttl as its
@@ -77,9 +100,12 @@ the Pixy driver). Bench: [docs/bench/wp6b.md](../bench/wp6b.md).
    new velocity applies from the last step, at most one update early.
 9. **Presets are stored windows** (`crop.windows`: `n`, `centre_x`,
    `centre_y`, `width`) in the camera's settings, `preset_max` 127.
-   `store_preset` is saved by the driver's worker through the registry
-   (never under the arbiter's lock); a recall jumps there, as `PUT /crop`
-   does on an agent. Preset *names* stay in `presets`, as for VISCA.
+   `store_preset` saves before the command answers (Camera setup reloads
+   its settings after a store, as after a rename), with the version check:
+   the registry reads, saves on that version and retries on a conflict, so
+   two stores (or a store and a Camera setup save) cannot lose each other.
+   A recall jumps there, as `PUT /crop` does on an agent. Preset *names*
+   stay in `presets`, as for VISCA.
 10. **Click-to-centre and reset** are `centre_window {camera, x, y}` and
     `reset_crop {camera}`, through the arbiter's new `place_window`, which
     ends any velocity and obeys the holder rule like a preset recall.
@@ -110,10 +136,13 @@ the Pixy driver). Bench: [docs/bench/wp6b.md](../bench/wp6b.md).
     it, at its own pace. The page fetches again only after the previous
     answer arrived, about once a second, so a slow OBS slows the page and
     is never flooded.
-15. **OBS is asked only on demand**: per (source, width) an answer (or
-    OBS's refusal) is reused for 1 s, and at most one request is in
-    flight; pages asking meanwhile wait for it. With no page showing
-    previews nothing is asked. The component stops fetching when
+15. **OBS is asked only on demand**: per (source, width) at most one
+    request is in flight, however long OBS takes (pages asking meanwhile
+    wait for it), and its answer (or OBS's refusal) is reused for 1 s
+    counted from the answer. With no page showing previews nothing is
+    asked. At most 8 previews are served at once (each waits in one of the
+    web server's threads); beyond that the page is told to try again, so a
+    hung OBS and many phones cannot use up the thread pool. The component stops fetching when
     unmounted, off screen (IntersectionObserver) or when the tab is hidden.
 16. **A crop camera's preview cannot show the unfiltered source**: a
     screenshot is rendered with the source's filters, and a capture device
@@ -139,16 +168,22 @@ the Pixy driver). Bench: [docs/bench/wp6b.md](../bench/wp6b.md).
 
 ### Fake OBS, rig, files
 
-18. The fake OBS (`fakes/fake_obs_sources.py`) models the Crop/Pad filter
-    from OBS's `crop-filter.c` and screenshot sizes from obs-websocket's
-    source (read, not measured: the bench confirms them), the filter and
-    input events, OBS's error codes, and draws a checkerboard so a crop
-    shows which part it holds. It answers every screenshot in PNG (no JPEG
+18. The fake OBS (`fakes/fake_obs_sources.py`, `fake_obs_video.py`) models
+    the Crop/Pad filter from OBS's `crop-filter.c` (output at least 1x1;
+    new edges in the picture from the next 30 fps frame) and screenshot
+    sizes from obs-websocket's source (read, not measured: the bench
+    confirms them), a capture device that takes 0.5 s to reopen at a new
+    resolution (assumed; the bench measures it), the filter and input
+    events, OBS's error codes, and draws a checkerboard so a crop shows
+    which part it holds. It answers every screenshot in PNG (no JPEG
     encoder), and says so in its data URI. New flags: `--video-source
     NAME=WxH`, `--crop-filter NAME`. The rig starts it with a 4K webcam and
     its filter, and the bundle has an `obs_crop` camera on it ("rig-crop").
 19. `cameras/config.py` stays at 300 lines: the crop settings are
-    `cameras/crop_config.py`. Over the ~300-line guideline:
+    `cameras/crop_config.py`. The driver is split: `obs_crop.py` (the
+    driver and its worker), `obs_crop_session.py` (each step's talk with
+    OBS), `obs_crop_size.py`, `obs_crop_edits.py`, `obs_crop_motion.py`,
+    `obs_crop_sync.py`, `obs_crop_state.py`. Over the ~300-line guideline:
     `cameras/registry.py` (340, was 320) and `cameras/drivers/agent_proxy.py`
     (368, was 351); the additions there are hooks into new files.
 
@@ -158,9 +193,9 @@ Checked against the 5.x protocol document; João's OBS is 33.0.1 with
 obs-websocket 5.7.6.
 
 - `GetInputList` → `inputs[].inputName`, `inputKind` (5.0).
-- `GetSourceFilter {sourceName, filterName}` → `filterEnabled`,
-  `filterKind`, `filterSettings` (5.0); 600 when the source or filter is
-  missing.
+- `GetSourceFilterList {sourceName}` → `filters[].filterName`,
+  `filterKind`, `filterEnabled`, `filterSettings` (5.0); 600 when the
+  source is missing.
 - `SetSourceFilterSettings {sourceName, filterName, filterSettings,
   overlay: true}` (5.0).
 - `CreateSourceFilter {sourceName, filterName, filterKind: "crop_filter",
@@ -179,11 +214,11 @@ obs-websocket 5.7.6.
 ## Left open
 
 - **Bench not run.** To confirm on OBS 33.0.1: that a screenshot is the
-  size after the crop (decision 4), that `SourceFilterSettingsChanged`
-  comes back for our own writes, the JPEG quality and cost of 320 px
+  size after the crop (decision 4), that a crop larger than the picture
+  leaves 1x1, that new edges show from the next frame, that
+  `SourceFilterSettingsChanged` comes back for our own writes, the JPEG quality and cost of 320 px
   previews, and moves looking smooth at 25 Hz on stream and in projectors.
-- Pan and tilt speeds do not scale with zoom (contract units); if the bench
-  finds moves too fast when zoomed in, a "slower when zoomed" option is a
-  small change in `CropFrame.drive`.
+- How long a capture device takes to reopen at a new resolution, and
+  whether its settings name it (`resolution` with a custom resolution).
 - WP6a's image page has `preview-slot` divs; wiring `CameraPreview` into
   them is left for after both merge.

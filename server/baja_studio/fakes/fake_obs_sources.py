@@ -1,27 +1,20 @@
 """Video sources, filters and screenshots in the fake OBS (a mixin of `FakeObs`), for WP6b.
 
-What is modelled, and where it comes from:
+The picture itself (filters applied at video frames, a camera reopening at a
+new resolution, the drawing) is `fake_obs_video.py`. Here are the requests
+and events, after the obs-websocket 5.x protocol document:
 
-- **Crop/Pad filter (`crop_filter`)**, from OBS's `plugins/obs-filters/crop-filter.c`
-  (read, not measured): settings `relative` (default true), `left`, `top`,
-  `right`, `bottom`, `cx`, `cy` (default 0). Relative: the output is the
-  source minus the four edges. Not relative: `left`/`top` are the corner and
-  `cx`/`cy` the size. An output of zero or less in either direction is 0x0.
-  A disabled filter passes the picture through.
 - **A source's size is the size after its filters**: `GetSourceScreenshot`
   without a width is that big (obs-websocket's `TakeSourceScreenshot` uses
   `obs_source_get_width`, read from its source). With `imageWidth` only, the
-  height follows the aspect ratio; widths outside 8..4096 are refused, and a
-  0x0 source cannot be rendered.
-- **Events** (obs-websocket 5.x protocol document): changing a filter's
-  settings sends `SourceFilterSettingsChanged` (5.4+, also for a client's own
-  change), creating one `SourceFilterCreated`, removing one
-  `SourceFilterRemoved`, enabling or disabling `SourceFilterEnableStateChanged`,
-  and an input whose settings changed (a camera switched to another
-  resolution) `InputSettingsChanged` (5.4+).
+  height follows the aspect ratio; widths outside 8..4096 are refused.
+- **Events**: changing a filter's settings sends `SourceFilterSettingsChanged`
+  (5.4+, also for a client's own change), creating one `SourceFilterCreated`,
+  removing one `SourceFilterRemoved`, enabling or disabling
+  `SourceFilterEnableStateChanged`, and an input whose settings changed (a
+  camera switched to another resolution) `InputSettingsChanged` (5.4+).
 - **Error codes and words** follow obs-websocket's `RequestStatus` (600
-  not found, 601 already exists, 607 bad filter kind, 402 out of range,
-  702 processing failed).
+  not found, 601 already exists, 607 bad filter kind, 402 out of range).
 
 Every screenshot is a grey checkerboard PNG drawn over the *whole* source
 (so a crop shows which part of the board it holds), whatever format was
@@ -31,26 +24,26 @@ scenes, which have no size here, are a 1x1 PNG.
 """
 
 import base64
-import struct
-import zlib
-from dataclasses import dataclass, field
 from typing import Any
 
 from baja_studio.adapters.obs_protocol import EventSubscription, RequestStatus
 from baja_studio.fakes.fake_obs_requests import FakeInput, FakeRequestRefusedError
+from baja_studio.fakes.fake_obs_video import (
+    CROP_DEFAULTS,
+    CROP_FILTER_KIND,
+    REOPEN_SECONDS,
+    FakeFilter,
+    Region,
+    VideoInput,
+    checkerboard_png,
+    cropped,
+)
 
-CROP_FILTER_KIND = "crop_filter"
 # Filter kinds this fake OBS has (a real one has many more; these are enough).
-KNOWN_FILTER_KINDS = frozenset({CROP_FILTER_KIND, "color_filter", "sharpness_filter"})
-CROP_DEFAULTS: dict[str, Any] = {
-    "relative": True,
-    "left": 0,
-    "top": 0,
-    "right": 0,
-    "bottom": 0,
-    "cx": 0,
-    "cy": 0,
-}
+# `scale_filter` is "Scaling/Aspect Ratio"; the fake does not draw it.
+KNOWN_FILTER_KINDS = frozenset(
+    {CROP_FILTER_KIND, "scale_filter", "color_filter", "sharpness_filter"}
+)
 SCREENSHOT_WIDTH_RANGE = (8, 4096)
 # The checkerboard has this many squares across the source's width.
 CHECKER_SQUARES = 16
@@ -61,39 +54,18 @@ TINY_PNG_BASE64 = (
 )
 
 
-@dataclass
-class FakeFilter:
-    """One filter on a source."""
-
-    name: str
-    kind: str
-    settings: dict[str, Any] = field(default_factory=dict)
-    enabled: bool = True
-
-    def full_settings(self) -> dict[str, Any]:
-        """The settings with the kind's defaults filled in (what OBS reports)."""
-        defaults = CROP_DEFAULTS if self.kind == CROP_FILTER_KIND else {}
-        return {**defaults, **self.settings}
-
-
-@dataclass(frozen=True)
-class Region:
-    """A part of a source in its own pixels: where the picture after the filters comes from."""
-
-    left: float
-    top: float
-    width: float
-    height: float
-
-
 class FakeObsSources:
     """Video inputs with a size, their filters, the input list and screenshots."""
 
     inputs: dict[str, FakeInput]
     scenes: dict[str, Any]
     lock: Any
-    video_sizes: dict[str, tuple[int, int]]
+    video_inputs: dict[str, VideoInput]
     filters: dict[str, list[FakeFilter]]
+
+    def now(self) -> float:
+        """Implemented by `FakeObs`."""
+        raise NotImplementedError
 
     def emit(self, event_type: str, event_data: dict[str, Any], category: int) -> None:
         """Implemented by `FakeObs`."""
@@ -107,7 +79,7 @@ class FakeObsSources:
         """A camera input (a video capture device) whose picture is `width` x `height`."""
         with self.lock:
             self.inputs[name] = FakeInput(kind, settings={"resolution": f"{width}x{height}"})
-            self.video_sizes[name] = (width, height)
+            self.video_inputs[name] = VideoInput(width, height)
             self.filters.setdefault(name, [])
 
     def add_crop_filter(self, source_name: str, filter_name: str) -> None:
@@ -117,11 +89,24 @@ class FakeObsSources:
                 FakeFilter(filter_name, CROP_FILTER_KIND)
             )
 
-    def change_video_size(self, name: str, width: int, height: int) -> None:
-        """The operator switched the camera to another resolution in its properties."""
+    def change_video_size(
+        self, name: str, width: int, height: int, named_in_settings: bool = True
+    ) -> None:
+        """The operator switched the camera to another resolution in its properties.
+
+        The event comes at once; the picture changes size once the device has
+        reopened. `named_in_settings` False is a device left at "Device
+        default": its settings name no resolution.
+        """
         with self.lock:
-            self.video_sizes[name] = (width, height)
-            settings = {**self.inputs[name].settings, "resolution": f"{width}x{height}"}
+            video = self.video_inputs[name]
+            video.reopening = (self.now() + REOPEN_SECONDS, width, height)
+            settings = dict(self.inputs[name].settings)
+            if named_in_settings:
+                settings["resolution"] = f"{width}x{height}"
+            else:
+                settings.pop("resolution", None)
+                settings["res_type"] = 0
             self.inputs[name].settings = settings
             self.emit(
                 "InputSettingsChanged",
@@ -156,14 +141,21 @@ class FakeObsSources:
         with self.lock:
             return self._filter(source_name, filter_name).full_settings()
 
-    def visible_region(self, source_name: str) -> Region:
-        """Which part of the source its filters let through (the whole source without any)."""
+    def edit_filter_by_hand(self, source_name: str, filter_name: str, **settings: Any) -> None:
+        """The operator changed a filter's values in OBS's filter dialog."""
         with self.lock:
-            width, height = self.video_sizes[source_name]
+            self._change_settings(source_name, self._filter(source_name, filter_name), settings)
+
+    def visible_region(self, source_name: str) -> Region:
+        """Which part of the source its filters let through now (the whole source without any)."""
+        with self.lock:
+            now = self.now()
+            width, height = self.video_inputs[source_name].size(now)
             region = Region(0.0, 0.0, float(width), float(height))
             for item in self.filters.get(source_name, []):
-                if item.enabled and item.kind == CROP_FILTER_KIND:
-                    region = _cropped(region, item.full_settings())
+                in_picture = item.picture_settings(now)
+                if item.enabled and item.kind == CROP_FILTER_KIND and in_picture is not None:
+                    region = cropped(region, in_picture)
             return region
 
     # --- requests -----------------------------------------------------------------------
@@ -218,10 +210,15 @@ class FakeObsSources:
             raise FakeRequestRefusedError(
                 RequestStatus.MISSING_REQUEST_FIELD, "Your request is missing filterSettings."
             )
-        if data.get("overlay", True):
-            item.settings = {**item.settings, **new_settings}
-        else:
-            item.settings = dict(new_settings)
+        if not data.get("overlay", True):
+            item.settings = {}
+        self._change_settings(source_name, item, new_settings)
+        return {}
+
+    def _change_settings(
+        self, source_name: str, item: FakeFilter, new_settings: dict[str, Any]
+    ) -> None:
+        item.change({**item.settings, **new_settings}, self.now())
         self.emit(
             "SourceFilterSettingsChanged",
             {
@@ -231,7 +228,6 @@ class FakeObsSources:
             },
             EventSubscription.FILTERS,
         )
-        return {}
 
     def _request_CreateSourceFilter(self, data: dict[str, Any]) -> dict[str, Any]:  # noqa: N802
         source_name = self._source_name(data)
@@ -248,6 +244,7 @@ class FakeObsSources:
             )
         settings = data.get("filterSettings")
         item = FakeFilter(name, kind, dict(settings) if isinstance(settings, dict) else {})
+        item.changed_at = self.now()  # in the picture from the next frame
         self.filters.setdefault(source_name, []).append(item)
         self.emit(
             "SourceFilterCreated",
@@ -272,7 +269,7 @@ class FakeObsSources:
                 RequestStatus.REQUEST_FIELD_OUT_OF_RANGE,
                 f"The field value of imageWidth is out of range ({low} to {high}).",
             )
-        if source_name in self.video_sizes:
+        if source_name in self.video_inputs:
             return {"imageData": self._screenshot(str(source_name), width)}
         if source_name not in self.inputs and source_name not in self.scenes:
             raise FakeRequestRefusedError(
@@ -286,15 +283,11 @@ class FakeObsSources:
     def _screenshot(self, source_name: str, requested_width: int | None) -> str:
         region = self.visible_region(source_name)
         out_width, out_height = int(region.width), int(region.height)
-        if out_width <= 0 or out_height <= 0:
-            raise FakeRequestRefusedError(
-                RequestStatus.REQUEST_PROCESSING_FAILED, "Failed to render screenshot."
-            )
         if requested_width is not None:
             out_height = max(1, int(requested_width * out_height / out_width))
             out_width = requested_width
-        source_width = self.video_sizes[source_name][0]
-        png = _checkerboard_png(region, out_width, out_height, source_width / CHECKER_SQUARES)
+        source_width = self.video_inputs[source_name].size(self.now())[0]
+        png = checkerboard_png(region, out_width, out_height, source_width / CHECKER_SQUARES)
         return "data:image/png;base64," + base64.b64encode(png).decode()
 
     def _source_name(self, data: dict[str, Any]) -> str:
@@ -313,44 +306,3 @@ class FakeObsSources:
             RequestStatus.RESOURCE_NOT_FOUND,
             f"No filter was found in the source `{source_name}` with the name `{filter_name}`.",
         )
-
-
-def _cropped(region: Region, settings: dict[str, Any]) -> Region:
-    """The part of `region` a Crop/Pad filter with `settings` lets through."""
-    if settings.get("relative", True):
-        left, top = float(settings.get("left", 0)), float(settings.get("top", 0))
-        width = region.width - left - float(settings.get("right", 0))
-        height = region.height - top - float(settings.get("bottom", 0))
-    else:
-        left, top = float(settings.get("left", 0)), float(settings.get("top", 0))
-        width, height = float(settings.get("cx", 0)), float(settings.get("cy", 0))
-    if width <= 0 or height <= 0:
-        return Region(region.left, region.top, 0.0, 0.0)
-    return Region(region.left + left, region.top + top, width, height)
-
-
-def _checkerboard_png(region: Region, width: int, height: int, square: float) -> bytes:
-    """A grayscale PNG of `region` of a checkerboard with `square`-pixel squares, scaled."""
-    columns = [
-        int((region.left + (x + 0.5) * region.width / width) // square) % 2 for x in range(width)
-    ]
-    rows = {
-        parity: b"\x00" + bytes(0xA0 if (column + parity) % 2 else 0x50 for column in columns)
-        for parity in (0, 1)
-    }
-    raw = b"".join(
-        rows[int((region.top + (y + 0.5) * region.height / height) // square) % 2]
-        for y in range(height)
-    )
-
-    def chunk(kind: bytes, payload: bytes) -> bytes:
-        checksum = zlib.crc32(kind + payload) & 0xFFFFFFFF
-        return struct.pack(">I", len(payload)) + kind + payload + struct.pack(">I", checksum)
-
-    header = struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0)  # 8-bit grayscale
-    return (
-        b"\x89PNG\r\n\x1a\n"
-        + chunk(b"IHDR", header)
-        + chunk(b"IDAT", zlib.compress(raw, 1))
-        + chunk(b"IEND", b"")
-    )

@@ -154,6 +154,8 @@ export interface CropSettings {
   update_hz: number;
   pan_speed: number;
   tilt_speed: number;
+  /** Pan and tilt scaled by the window's width, so the picture moves as fast at any zoom. */
+  speed_follows_zoom: boolean;
   zoom_speed: number;
   preview_source: string | null;
   windows: CropPresetWindow[];
@@ -214,6 +216,7 @@ export function defaultCropSettings(): CropSettings {
     update_hz: 25,
     pan_speed: 0.3,
     tilt_speed: 0.3,
+    speed_follows_zoom: true,
     zoom_speed: 0.5,
     preview_source: null,
     windows: [],

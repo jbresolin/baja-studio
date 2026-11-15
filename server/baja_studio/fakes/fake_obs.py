@@ -44,7 +44,8 @@ from baja_studio.fakes.fake_obs_requests import (
     FakeRequestRefusedError,
     FakeSceneItem,
 )
-from baja_studio.fakes.fake_obs_sources import FakeFilter, FakeObsSources
+from baja_studio.fakes.fake_obs_sources import FakeObsSources
+from baja_studio.fakes.fake_obs_video import FakeFilter, VideoInput
 from baja_studio.fakes.obs_timing import ObsTiming
 from baja_studio.fakes.simulated_media import SimulatedMedia
 
@@ -105,7 +106,7 @@ class FakeObs(FakeObsSources, FakeObsRequests):
         self.scenes: dict[str, list[FakeSceneItem]] = {}
         self.inputs: dict[str, FakeInput] = {}
         # Camera inputs' sizes and every source's filters (`fake_obs_sources.py`).
-        self.video_sizes: dict[str, tuple[int, int]] = {}
+        self.video_inputs: dict[str, VideoInput] = {}
         self.filters: dict[str, list[FakeFilter]] = {}
         self.program_scene = ""
         # OBS's two default transitions, with their English names.

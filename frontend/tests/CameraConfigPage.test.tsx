@@ -458,4 +458,20 @@ describe("Camera configuration page", () => {
     fireEvent.click(within(form).getByRole("button", { name: "Reset crop" }));
     expect(lastCommand()).toMatchObject({ command: "reset_crop", args: { camera: "smtav" } });
   });
+
+  it("reads the settings again after storing a preset (a crop camera keeps it there)", async () => {
+    await showConfigPage();
+    fireEvent.click(screen.getAllByRole("button", { name: "Edit" })[0]!);
+    const reads = () =>
+      vi
+        .mocked(fetch)
+        .mock.calls.filter(([path, init]) => path === "/api/settings/cameras" && !init?.method)
+        .length;
+    const before = reads();
+
+    fireEvent.click(screen.getAllByRole("button", { name: "Store here" })[1]!);
+    answer({ stored: 1 });
+
+    await waitFor(() => expect(reads()).toBe(before + 1));
+  });
 });

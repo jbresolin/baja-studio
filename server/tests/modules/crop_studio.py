@@ -54,11 +54,15 @@ class CropStudio:
     def camera(self, camera_id: str = "crop") -> Any:
         return self.services.state.get("cameras", f"cameras.{camera_id}") or {}
 
-    def saved_camera(self) -> CameraConfig:
-        """The first camera as saved in the cameras module's settings."""
+    def saved_cameras(self) -> list[CameraConfig]:
+        """The cameras as saved in the cameras module's settings."""
         settings = self.services.settings.get("cameras")
         assert isinstance(settings, CamerasSettings)
-        return settings.cameras[0]
+        return settings.cameras
+
+    def saved_camera(self) -> CameraConfig:
+        """The first camera as saved in the cameras module's settings."""
+        return self.saved_cameras()[0]
 
     def crop_settings(self) -> dict[str, Any]:
         """The Crop/Pad filter's settings inside the fake OBS."""

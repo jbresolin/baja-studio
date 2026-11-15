@@ -131,19 +131,27 @@ class CropFrame:
         return CropWindow(0.5, 0.5, self.widest)
 
     def drive(
-        self, window: CropWindow, velocity: Velocity, seconds: float, speeds: CropSpeeds
+        self,
+        window: CropWindow,
+        velocity: Velocity,
+        seconds: float,
+        speeds: CropSpeeds,
+        follow_zoom: bool = False,
     ) -> CropWindow:
         """The window after moving at `velocity` (-1..1 each) for `seconds`.
 
         Zoom grows or shrinks the window around its centre; pan and tilt move
         the centre. The result is clamped, so holding a direction at an edge
-        just stays there.
+        just stays there. With `follow_zoom`, pan and tilt are scaled by the
+        window's width (half as fast in frame fractions at 2x), so the picture
+        on air moves at the same speed whatever the zoom.
         """
+        scale = window.width / self.widest if follow_zoom else 1.0
         zoom = self.zoom_of(window) + velocity.zoom * speeds.zoom * seconds
         moved = CropWindow(
-            centre_x=window.centre_x + velocity.pan * speeds.pan * seconds,
+            centre_x=window.centre_x + velocity.pan * speeds.pan * scale * seconds,
             # Frame y grows downwards; a positive tilt looks up, as on a PTZ.
-            centre_y=window.centre_y - velocity.tilt * speeds.tilt * seconds,
+            centre_y=window.centre_y - velocity.tilt * speeds.tilt * scale * seconds,
             width=self.width_for_zoom(zoom) if velocity.zoom else window.width,
         )
         return self.clamp(moved)

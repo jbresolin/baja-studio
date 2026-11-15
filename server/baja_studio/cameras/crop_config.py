@@ -67,6 +67,13 @@ class ObsCropSettings(StrictModel):
     tilt_speed: float = Field(
         default=0.3, gt=0.0, le=2.0, description="Frame heights per second at full deflection."
     )
+    speed_follows_zoom: bool = Field(
+        default=True,
+        description=(
+            "Pan and tilt slow down as the window narrows, so the picture moves at the same "
+            "speed on air at any zoom (unlike the agent contract's crop units)."
+        ),
+    )
     zoom_speed: float = Field(
         default=0.5, gt=0.0, le=2.0, description="Zoom range (wide to tele) per second."
     )

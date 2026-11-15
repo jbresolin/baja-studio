@@ -8,6 +8,8 @@ Cameras page sends them, previews are fetched over HTTP the way the page's
 inside the fake OBS, the module's state and the command log.
 """
 
+from typing import Any
+
 import pytest
 
 from baja_studio.core.module import CommandError
@@ -24,6 +26,7 @@ def running(studio: CropStudio, **filter_settings: int) -> CropStudio:
     studio.playout.obs_client.create_source_filter(
         WEBCAM, CROP_FILTER, "crop_filter", filter_settings or CENTRE_1080P
     )
+    studio.pass_time(0.1)  # OBS shows the new filter from its next frame
     studio.add_crop_camera()
     studio.soon(lambda: studio.camera().get("status") == "ok")
     return studio
@@ -64,7 +67,7 @@ def test_the_web_page_moves_the_crop_through_the_arbiter(crop_studio: CropStudio
     crop_studio.command("stop", release=True)
 
     crop_studio.soon(lambda: crop_studio.camera()["moving"] is False)
-    assert crop_studio.crop_settings()["left"] > 960 + 300  # it moved right
+    assert crop_studio.crop_settings()["left"] > 960 + 150  # it moved right
     assert crop_studio.crop_settings()["left"] + crop_studio.crop_settings()["right"] == 1920
 
 
@@ -76,8 +79,8 @@ def test_click_to_centre_and_reset_go_through_the_arbiter_too(crop_studio: CropS
     assert crop_studio.camera()["control"]["last_command"] == "centre_window 0.25,0.25"
 
     crop_studio.command("reset_crop")
-    crop_studio.soon(lambda: crop_studio.crop_settings()["right"] == 0)
-    assert crop_studio.camera()["crop"]["magnification"] == 1.0
+    crop_studio.soon(lambda: (crop_studio.camera().get("crop") or {}).get("magnification") == 1.0)
+    assert crop_studio.crop_settings()["right"] == 0
 
     with pytest.raises(CommandError, match="x must be a fraction of the picture"):
         crop_studio.command("centre_window", x=1.5, y=0.5)
@@ -192,3 +195,32 @@ def test_a_camera_without_an_obs_source_has_no_preview(crop_studio: CropStudio) 
 
     assert answer.status_code == 404
     assert "no OBS source" in answer.json()["detail"]
+
+
+def test_a_preset_save_that_meets_another_save_is_retried_and_both_are_kept(
+    crop_studio: CropStudio, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    running(crop_studio)
+    store = crop_studio.services.settings
+    real_update = store.update
+    interfered: list[bool] = []
+
+    def update_with_someone_in_between(
+        section: str, patch: dict[str, Any], expected_version: int | None = None
+    ) -> Any:
+        # Just between the preset save's read and its write, someone else saves
+        # (Camera setup renames the camera): the preset save must not undo that.
+        if expected_version is not None and not interfered:
+            interfered.append(True)
+            cameras = [camera.model_dump(mode="json") for camera in crop_studio.saved_cameras()]
+            cameras[0]["label"] = "Renamed meanwhile"
+            real_update("cameras", {"cameras": cameras})
+        return real_update(section, patch, expected_version)
+
+    monkeypatch.setattr(store, "update", update_with_someone_in_between)
+    crop_studio.command("store_preset", n=4)
+
+    saved = crop_studio.saved_camera()
+    assert interfered == [True]
+    assert saved.label == "Renamed meanwhile"
+    assert [window.n for window in saved.crop.windows] == [4]

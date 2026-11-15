@@ -18,6 +18,7 @@ from baja_studio.adapters.obs_transport import ObsRequestFailedError
 from baja_studio.cameras.config import CamerasSettings
 from baja_studio.cameras.drivers.obs_gateway import NoObsGateway, ObsLinkView, ObsListener
 from baja_studio.cameras.previews import (
+    MAX_PREVIEWS_AT_ONCE,
     SHOWS_FULL,
     SHOWS_WINDOW,
     CameraPreviews,
@@ -97,6 +98,61 @@ def test_only_one_request_per_source_is_in_flight_and_the_others_wait_for_it(
 
     assert len(obs.calls) == 1  # four pages, one request
     assert answers == [JPEG] * 4
+
+
+def test_a_request_taking_longer_than_a_second_is_still_the_only_one(
+    fake_clock: FakeClock,
+) -> None:
+    # OBS takes 1.5 s to answer: a page asking after 1 s must wait for that
+    # answer, not send a second request while the first is still running.
+    obs = CountingObs()
+    obs.release.clear()
+    cache = PreviewCache(fake_clock, obs.fetch)
+    first = threading.Thread(target=cache.get, args=("Cam", 320, no_window))
+    first.start()
+    eventually(lambda: len(obs.calls) == 1)
+    fake_clock.advance(1.2)
+
+    second = threading.Thread(target=cache.get, args=("Cam", 320, no_window))
+    second.start()
+    # The second page is now waiting for the first page's answer (asleep on the clock).
+    eventually(lambda: fake_clock.sleeping_count == 1)
+    fake_clock.advance(0.3)
+    obs.release.set()
+    first.join(5)
+    second.join(5)
+
+    assert len(obs.calls) == 1
+    # The second counts from the answer: just after it, the picture is reused.
+    cache.get("Cam", 320, no_window)
+    assert len(obs.calls) == 1
+
+
+def test_only_a_few_previews_are_served_at_once(fake_clock: FakeClock) -> None:
+    # A hung OBS: every request waits. Beyond the cap, pages are told to try again
+    # at once instead of taking one more of the web server's threads.
+    obs = CountingObs()
+    obs.release.clear()
+    cameras = [
+        {"id": f"cam{n}", "address": {"host": "10.0.0.9"}, "obs_source": f"Source {n}"}
+        for n in range(MAX_PREVIEWS_AT_ONCE)
+    ]
+    service = previews(fake_clock, cameras, {}, StubGateway())
+    service._cache = PreviewCache(fake_clock, obs.fetch)
+    waiting = [
+        threading.Thread(target=service.preview, args=(f"cam{n}", 320))
+        for n in range(MAX_PREVIEWS_AT_ONCE)
+    ]
+    for thread in waiting:
+        thread.start()
+    eventually(lambda: len(obs.calls) == MAX_PREVIEWS_AT_ONCE)
+
+    with pytest.raises(PreviewUnavailableError, match="too many previews at once"):
+        service.preview("cam0", 320)
+
+    obs.release.set()
+    for thread in waiting:
+        thread.join(5)
 
 
 def test_a_refusal_is_remembered_for_a_second_too(fake_clock: FakeClock) -> None:

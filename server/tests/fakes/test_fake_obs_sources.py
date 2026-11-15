@@ -18,6 +18,7 @@ from baja_studio.adapters.obs_transport import ObsAddress, ObsRequestFailedError
 from baja_studio.adapters.obs_websocket import ObsWebsocketClient
 from baja_studio.fakes.fake_obs import FakeObs, parse_video_source
 from baja_studio.fakes.fake_obs_in_process import InProcessObsNetwork
+from baja_studio.fakes.fake_obs_video import FRAME_SECONDS, REOPEN_SECONDS
 from tests.conftest import FakeClock, eventually
 
 CAMERA = "Cam 4K"
@@ -51,6 +52,11 @@ def client(
     connected.close()
 
 
+def next_frame(fake_clock: FakeClock) -> None:
+    """Let OBS render its next video frame (30 a second): new filter edges show from then."""
+    fake_clock.advance(FRAME_SECONDS)
+
+
 def screenshot_size(client: ObsWebsocketClient, width: int | None = None) -> tuple[int, int]:
     """Ask for a screenshot of the camera and read its size in pixels."""
     return image_size(decode_data_uri(client.get_source_screenshot(CAMERA, "jpg", width)).content)
@@ -61,19 +67,23 @@ def test_a_screenshot_without_a_width_has_the_sources_full_size(client: ObsWebso
 
 
 def test_a_relative_crop_filter_cuts_its_edges_and_the_screenshot_shrinks(
-    client: ObsWebsocketClient,
+    client: ObsWebsocketClient, fake_clock: FakeClock
 ) -> None:
     # Cut 960 px from left and right and 540 from top and bottom: a 1920x1080 middle.
     edges = {"left": 960, "right": 960, "top": 540, "bottom": 540}
     client.create_source_filter(CAMERA, FILTER, "crop_filter", {"relative": True, **edges})
+    next_frame(fake_clock)
 
     # As in obs-websocket, the screenshot is the source *after* its filters.
     assert screenshot_size(client) == (1920, 1080)
 
 
-def test_an_absolute_crop_filter_uses_its_corner_and_size(client: ObsWebsocketClient) -> None:
+def test_an_absolute_crop_filter_uses_its_corner_and_size(
+    client: ObsWebsocketClient, fake_clock: FakeClock
+) -> None:
     settings = {"relative": False, "left": 10, "top": 10, "cx": 640, "cy": 360}
     client.create_source_filter(CAMERA, FILTER, "crop_filter", settings)
+    next_frame(fake_clock)
 
     assert screenshot_size(client) == (640, 360)
 
@@ -97,13 +107,40 @@ def test_a_width_outside_obs_limits_is_refused(client: ObsWebsocketClient) -> No
     assert refused.value.code == RequestStatus.REQUEST_FIELD_OUT_OF_RANGE
 
 
-def test_a_crop_that_leaves_nothing_cannot_be_rendered(client: ObsWebsocketClient) -> None:
-    # Edges wider than the picture: OBS shows nothing, and a screenshot fails.
+def test_a_crop_larger_than_the_picture_leaves_one_pixel(
+    client: ObsWebsocketClient, fake_clock: FakeClock
+) -> None:
+    # Edges wider than the picture: OBS's crop filter clamps its output to 1x1.
     client.create_source_filter(CAMERA, FILTER, "crop_filter", {"left": 2000, "right": 2000})
+    next_frame(fake_clock)
 
-    with pytest.raises(ObsRequestFailedError) as refused:
-        client.get_source_screenshot(CAMERA, "jpg")
-    assert refused.value.code == RequestStatus.REQUEST_PROCESSING_FAILED
+    assert screenshot_size(client)[0] == 1
+
+
+def test_new_edges_show_in_the_picture_only_from_the_next_video_frame(
+    client: ObsWebsocketClient, fake_clock: FakeClock
+) -> None:
+    client.create_source_filter(CAMERA, FILTER, "crop_filter", {})
+    next_frame(fake_clock)
+
+    # OBS stores the new edges at once (and reports them)...
+    client.set_source_filter_settings(CAMERA, FILTER, {"left": 1920})
+    assert client.get_source_filter(CAMERA, FILTER).settings["left"] == 1920
+    # ...but the picture still has the old size until it renders the next frame.
+    assert screenshot_size(client) == (3840, 2160)
+    next_frame(fake_clock)
+    assert screenshot_size(client) == (1920, 2160)
+
+
+def test_a_camera_switched_to_another_resolution_has_it_only_once_reopened(
+    client: ObsWebsocketClient, fake_obs: FakeObs, fake_clock: FakeClock
+) -> None:
+    fake_obs.change_video_size(CAMERA, 1920, 1080)
+
+    # The event came; the device is still reopening, so the picture is still 4K.
+    assert screenshot_size(client) == (3840, 2160)
+    fake_clock.advance(REOPEN_SECONDS)
+    assert screenshot_size(client) == (1920, 1080)
 
 
 def test_filter_requests_answer_with_obs_errors_for_missing_and_duplicate_things(

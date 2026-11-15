@@ -6,7 +6,10 @@ nothing is asked of OBS while no page looks. For each OBS source and width:
 
 - an image (or OBS's refusal) is reused for `MAX_AGE_SECONDS` (1 s), however
   many pages ask, so ten phones cost OBS one screenshot a second;
-- at most one request is in flight: a page asking meanwhile waits for it.
+- at most one request is in flight, however long OBS takes: a page asking
+  meanwhile waits for it, and the second counts from OBS's answer;
+- at most `MAX_PREVIEWS_AT_ONCE` previews are served at once (each waits in
+  one of the web server's threads), so a hung OBS cannot use them all up.
 
 `GetSourceScreenshot` renders a source *with* its filters, so an `obs_crop`
 camera's screenshot is its window, not the whole picture. Unless the camera
@@ -32,6 +35,9 @@ MAX_AGE_SECONDS = 1.0
 FORGET_AFTER_SECONDS = 30.0
 # How long a page waits for another page's request to OBS (OBS's own timeout is 2 s).
 WAIT_FOR_OTHER_SECONDS = 5.0
+# Preview requests served at once. Each waits on OBS in one of the web server's
+# worker threads; with OBS hung, many phones must not take them all.
+MAX_PREVIEWS_AT_ONCE = 8
 SHOWS_WINDOW, SHOWS_FULL = "window", "full"
 
 Fetch = Callable[[str, int], ImageData]
@@ -51,7 +57,8 @@ class PreviewUnavailableError(Exception):
 class _Entry:
     """One source's last screenshot (or refusal), and the camera's window when it was asked."""
 
-    taken_at: float
+    # When OBS answered (None while the request is in flight).
+    taken_at: float | None = None
     image: ImageData | None = None
     error: PreviewUnavailableError | None = None
     window: dict[str, Any] | None = None
@@ -88,10 +95,13 @@ class PreviewCache:
             now = self._clock.monotonic()
             self._forget_old(now)
             entry = self._entries.get(key)
-            fresh = entry is not None and now - entry.taken_at < MAX_AGE_SECONDS
-            leader = not fresh
+            # In flight (however long OBS takes), or answered less than a second ago.
+            usable = entry is not None and (
+                entry.taken_at is None or now - entry.taken_at < MAX_AGE_SECONDS
+            )
+            leader = not usable
             if leader:
-                entry = self._entries[key] = _Entry(taken_at=now)
+                entry = self._entries[key] = _Entry()
         assert entry is not None
         if leader:
             self._take(entry, source, width, window)
@@ -119,10 +129,17 @@ class PreviewCache:
         except ImageDataError as error:
             entry.error = PreviewUnavailableError(503, f"OBS sent no usable image: {error}")
         finally:
+            with self._lock:
+                entry.taken_at = self._clock.monotonic()
             entry.done.set()
 
     def _forget_old(self, now: float) -> None:
-        for key in [k for k, e in self._entries.items() if now - e.taken_at > FORGET_AFTER_SECONDS]:
+        old = [
+            key
+            for key, entry in self._entries.items()
+            if entry.taken_at is not None and now - entry.taken_at > FORGET_AFTER_SECONDS
+        ]
+        for key in old:
             del self._entries[key]
 
 
@@ -141,9 +158,22 @@ class CameraPreviews:
         self._settings = settings
         self._camera_state = camera_state
         self._cache = PreviewCache(clock, self._screenshot)
+        self._slots = threading.BoundedSemaphore(MAX_PREVIEWS_AT_ONCE)
 
     def preview(self, camera_id: str, width: int) -> Preview:
-        """The camera's preview, or `PreviewUnavailableError` saying why not."""
+        """The camera's preview, or `PreviewUnavailableError` saying why not.
+
+        At most `MAX_PREVIEWS_AT_ONCE` are served at a time; beyond that the
+        page is told to try again (it does, a second later).
+        """
+        if not self._slots.acquire(blocking=False):
+            raise PreviewUnavailableError(503, "too many previews at once; trying again")
+        try:
+            return self._preview(camera_id, width)
+        finally:
+            self._slots.release()
+
+    def _preview(self, camera_id: str, width: int) -> Preview:
         camera = next((c for c in self._settings().cameras if c.id == camera_id), None)
         if camera is None:
             raise PreviewUnavailableError(404, f"no camera called {camera_id!r}")

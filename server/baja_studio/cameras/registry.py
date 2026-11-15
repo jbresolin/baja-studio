@@ -36,6 +36,10 @@ from baja_studio.cameras.drivers.visca_ip import DatagramOpener, ViscaIpDriver
 from baja_studio.cameras.inputs.pelco_d_worker import PelcoDInput, SerialOpener
 from baja_studio.cameras.motion.arbiter import MotionArbiter
 from baja_studio.core.module import ModuleContext
+from baja_studio.core.settings import SettingsConflictError
+
+# Tries at saving a stored crop window when other saves keep coming in between.
+SAVE_ATTEMPTS = 5
 
 
 class CameraRegistry:
@@ -276,9 +280,22 @@ class CameraRegistry:
         return log
 
     def _save_crop_window(self, camera_id: str, n: int, window: CropWindow) -> None:
-        """An `obs_crop` camera stored preset `n`: keep its window in the camera's settings."""
-        cameras = cameras_with_crop_window(self._settings().cameras, camera_id, n, window)
-        self._context.settings.update(self._context.name, {"cameras": cameras})
+        """An `obs_crop` camera stored preset `n`: keep its window in the camera's settings.
+
+        Saved on top of the version just read, and read again if someone saved
+        meanwhile (another camera storing a preset), so no store is lost.
+        """
+        store = self._context.settings
+        for _ in range(SAVE_ATTEMPTS):
+            record = store.record(self._context.name)
+            assert isinstance(record.values, CamerasSettings)
+            cameras = cameras_with_crop_window(record.values.cameras, camera_id, n, window)
+            try:
+                store.update(self._context.name, {"cameras": cameras}, record.version)
+                return
+            except SettingsConflictError:
+                continue
+        raise SettingsConflictError(self._context.name, record.version, record.version + 1)
 
     def arbiter_for_address(self, address: int) -> MotionArbiter | None:
         with self._lock:

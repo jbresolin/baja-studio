@@ -12,7 +12,7 @@ import { useEffect, useState } from "react";
 
 import type { CameraConfig, CropSettings } from "../../lib/cameras";
 import { CameraPreview } from "../cameras/CameraPreview";
-import { NumberField, SelectField, TextField } from "./fields";
+import { CheckField, NumberField, SelectField, TextField } from "./fields";
 
 export interface ObsSourceList {
   connected: boolean;
@@ -128,6 +128,12 @@ export function ObsCropFields({
             onChange={(value) => setCrop({ [`${axis}_speed`]: value ?? 0.3 })}
           />
         ))}
+        <CheckField
+          label="Pan and tilt slow down as it zooms in (same speed on air at any zoom)"
+          checked={crop.speed_follows_zoom}
+          error={errors["crop.speed_follows_zoom"]}
+          onChange={(speed_follows_zoom) => setCrop({ speed_follows_zoom })}
+        />
         <TextField
           label="Preview source (optional)"
           value={crop.preview_source ?? ""}

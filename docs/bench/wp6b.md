@@ -27,10 +27,12 @@ cropped picture fills the frame. A source projector open for it (right-click
 | 11 | Close OBS | Within a few seconds the camera is **offline** "OBS offline: …"; the preview says "OBS offline: …"; nothing else on the page breaks | |
 | 12 | Start OBS again | The camera comes back **ok** by itself, at the window it had (nothing moves on connect) | |
 | 13 | In OBS, drag the filter's *Left* value by hand | The studio follows (outline moves on the preview) without fighting back | |
-| 14 | In the S600's properties, switch to 1920x1080 and back to 3840x2160 | After each switch the camera is ok again and the projector shows a sensible crop (at 1080p the narrowest window is still half the width, now upscaled); if it stays "no picture", **Reset crop** on Camera setup brings it back — note which happened | |
+| 14 | In the S600's properties, switch to 1920x1080 and back to 3840x2160 (note how long the picture takes to come back) | After each switch the camera is ok again and the projector shows a sensible crop (at 1080p the narrowest window is still half the width, now upscaled); if it stays "no picture", **Reset crop** on Camera setup brings it back — note which happened | |
 | 15 | Untick the filter's eye in OBS | Camera **degraded** "switched off in OBS"; tick it again: **ok** | |
-| 16 | Task Manager → Performance (GPU) and OBS's Stats dock, 4K source cropped, with and without the Cameras page open | Note CPU, GPU and "frames missed due to rendering lag" with the 4K source; and whether previews change them | |
+| 16 | Add a *Scaling/Aspect Ratio* filter to the S600 in OBS; then remove it | Camera **degraded** "another filter that changes its size ('…')"; back to **ok** once removed | |
+| 17 | Pan at full stick at 1.0× and at 2.0×, watching the stream | The picture moves at about the same speed at both zooms (*Pan and tilt slow down as it zooms in*, on by default); untick it on Camera setup and 2.0× moves twice as fast | |
+| 18 | Task Manager → Performance (GPU) and OBS's Stats dock, 4K source cropped, with and without the Cameras page open | Note CPU, GPU and "frames missed due to rendering lag" with the 4K source; and whether previews change them | |
 
 Notes for the record: OBS and obs-websocket versions; whether moves at 25 Hz
 look smooth on stream (try `crop.update_hz` 30 if not); whether the pan
-speed feels right zoomed in (0.3 frames/s by default).
+speed feels right (0.3 frames/s at 1.0× by default).
