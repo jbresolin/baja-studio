@@ -43,13 +43,13 @@ class CameraCommands:
         self,
         registry: Callable[[], CameraRegistry | None],
         settings: Callable[[], CamerasSettings],
-        save_cameras: Callable[[list[dict[str, Any]]], None],
+        edit_camera: Callable[[str, Callable[[dict[str, Any]], dict[str, Any]]], None],
         list_ports: SerialPortLister,
     ) -> None:
-        """`save_cameras(cameras)` saves an edited camera list through the settings store."""
+        """`edit_camera(camera id, edit)` saves one camera's edited entry atomically."""
         self._registry = registry
         self._settings = settings
-        self._save_cameras = save_cameras
+        self._edit_camera = edit_camera
         self._list_ports = list_ports
         self._lock = threading.Lock()
         self._move_outcomes: dict[tuple[str, str], str] = {}
@@ -152,19 +152,15 @@ class CameraCommands:
                 raise CommandError("a preset name cannot be empty")
             return _agent_answer(arbiter.label_preset(source, n, label)).model_dump(mode="json")
         arbiter.check_preset_number(n)
-        presets = [preset for preset in camera.presets if preset.n != n]
-        if label:
-            presets.append(PresetName(n=n, label=label))
-        cameras = [
-            c.model_dump(mode="json")
-            if c.id != camera.id
-            else {
-                **c.model_dump(mode="json"),
-                "presets": [p.model_dump() for p in sorted(presets, key=lambda p: p.n)],
-            }
-            for c in self._settings().cameras
-        ]
-        self._save_cameras(cameras)
+
+        def rename(entry: dict[str, Any]) -> dict[str, Any]:
+            # Edited from the entry as it is now (another writer may have just saved).
+            presets = [p for p in entry.get("presets", []) if p["n"] != n]
+            if label:
+                presets.append(PresetName(n=n, label=label).model_dump())
+            return {**entry, "presets": sorted(presets, key=lambda p: p["n"])}
+
+        self._edit_camera(camera.id, rename)
         return {"n": n, "label": label}
 
     # --- configuration helpers --------------------------------------------------------

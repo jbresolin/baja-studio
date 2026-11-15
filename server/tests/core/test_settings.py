@@ -267,3 +267,34 @@ def test_every_secret_value_can_be_listed_for_scrubbing(fleet_store: SettingsSto
     fleet_store.update("camera", {"password": "hunter2"})
 
     assert sorted(fleet_store.all_secret_values()) == ["hunter2", "token-a", "token-b"]
+
+
+def test_an_edit_reads_and_writes_under_one_lock_so_edits_never_undo_each_other(
+    store: SettingsStore,
+) -> None:
+    # Two writers inside the service each change the port by one, from what
+    # is there now. Run on many threads, no change may be lost: each edit
+    # sees the result of the one before.
+    import threading
+
+    def add_one(values: dict[str, object]) -> dict[str, object]:
+        return {"port": int(values["port"]) + 1}  # type: ignore[call-overload]
+
+    threads = [threading.Thread(target=store.edit, args=("camera", add_one)) for _ in range(20)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    record = store.record("camera")
+    assert record.values.port == 52381 + 20  # type: ignore[attr-defined]
+    assert record.version == 21
+
+
+def test_an_edit_bumps_the_version_so_a_stale_page_save_is_a_conflict(
+    store: SettingsStore,
+) -> None:
+    store.edit("camera", lambda values: {"address": "10.0.0.2"})
+
+    with pytest.raises(SettingsConflictError):
+        store.update("camera", {"port": 1}, expected_version=1)

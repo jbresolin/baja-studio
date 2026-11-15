@@ -287,6 +287,30 @@ class SettingsStore:
         self._notify(section, subscribers, values)
         return values
 
+    def edit(self, section: str, change: Callable[[dict[str, Any]], dict[str, Any]]) -> BaseModel:
+        """Read-modify-write a section atomically: `change(current values) -> patch`.
+
+        For writers inside the service (a preset rename, image settings, a
+        stored position) that change one part of a list several writers share.
+        `change` runs under the store's lock on the current values (JSON form),
+        so no other save can slip in between the read and the write, and two
+        edits never undo each other. A page's save with `expected_version`
+        still sees the bumped version as a conflict. Validated, saved and
+        announced like `update`.
+        """
+        with self._lock:
+            if section not in self._records:
+                raise UnknownSettingsSectionError(section)
+            current = self._records[section]
+            patch = change(current.values.model_dump(mode="json"))
+            model_class = self._models[section]
+            values = model_class.model_validate({**current.values.model_dump(), **patch})
+            record = self._save(section, values, version=current.version + 1)
+            self._records[section] = record
+            subscribers = list(self._subscribers[section])
+        self._notify(section, subscribers, values)
+        return values
+
     def subscribe(self, section: str, callback: SettingsCallback) -> None:
         """Call `callback(new_values)` after every successful update of `section`.
 
