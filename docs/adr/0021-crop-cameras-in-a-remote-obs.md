@@ -177,3 +177,14 @@ the same as stopping a driver).
   new here; a fix belongs in `core/api.py`.
 - The two cameras of one laptop show a new connection state at their own
   next step, up to a second apart.
+- "Saved last" is known only while the service runs. After a restart, two
+  cameras still holding different passwords for one laptop use the last one
+  in the camera list (and the note says so); a camera re-saved with the
+  password it already had does not count as saved. The note's advice (the
+  same password on both) removes the question.
+- With only playout's OBS, a ninth preview at once is now refused as "this
+  OBS is slow to answer; trying again" (its own 8 slots) instead of "too many
+  previews at once" (the page treats both the same: it tries again).
+- Camera setup's source list follows the OBS choice and a successful Test
+  connection, not each keystroke in the address: after typing another
+  address, press Test connection to see that OBS's sources.
