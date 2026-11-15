@@ -1,0 +1,7 @@
+{
+  "description": "The trackside laptop's OBS quits at 20 s and is back at 30 s: both laptop crop cameras go offline naming it, then come back with their windows kept.",
+  "steps": [
+    {"at_s": 20, "target": "laptop-obs", "action": "stop"},
+    {"at_s": 30, "target": "laptop-obs", "action": "start"}
+  ]
+}

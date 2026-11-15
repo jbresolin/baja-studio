@@ -28,6 +28,7 @@ BRIEF_SCENARIOS = {
     "flaky-agent",
     "mixer-drop",
     "obs-restart",
+    "laptop-obs-restart",
     "stale-state",
     "post-fader-tap",
     "lr-assign-silent",

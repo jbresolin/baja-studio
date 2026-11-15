@@ -6,8 +6,9 @@ Settings → Export / import when the rig runs with `--no-studio`. What it sets:
 
 - agents: both fake agents with their token; cameras: each agent's two
   cameras, cam1 with a fake VISCA camera as its direct fallback, the fake
-  USB cameras (two fixed S600s and the Pixy as a `uvc` PTZ), and an OBS crop
-  camera on the fake OBS's 4K webcam (which has its Crop/Pad filter);
+  USB cameras (two fixed S600s and the Pixy as a `uvc` PTZ), an OBS crop
+  camera on the fake OBS's 4K webcam (which has its Crop/Pad filter), and two
+  crop cameras on a trackside laptop's fake OBS (WP13);
 - playout: the fake OBS, the fake orchestrator, the delivery folder as the
   receiver root and the "Patrocinadores" folder;
 - audio: the fake XR18, every channel visible that the default link matrix
@@ -141,6 +142,23 @@ def section_values(ports: fakes.FakePorts, clips_folder: Path) -> dict[str, dict
             "crop": {"filter_name": fakes.OBS_CROP_FILTER},
         }
     )
+    # Two digital PTZs on a trackside laptop's OBS, sharing one connection (WP13).
+    laptop_obs = {
+        "remote": True,
+        "host": LOOPBACK,
+        "port": ports.laptop_obs,
+        "password": fakes.LAPTOP_OBS_PASSWORD,
+    }
+    for letter, webcam in zip("ab", fakes.LAPTOP_WEBCAMS, strict=True):
+        cameras.append(
+            {
+                "id": f"rig-laptop-crop-{letter}",
+                "label": f"Laptop webcam {letter.upper()} (crop)",
+                "driver": "obs_crop",
+                "obs_source": webcam,
+                "crop": {"filter_name": fakes.OBS_CROP_FILTER, "obs": laptop_obs},
+            }
+        )
     channels = audio_defaults.channels()
     for channel in PRODUCTION_CHANNELS:
         channels[channel]["visible"] = True
