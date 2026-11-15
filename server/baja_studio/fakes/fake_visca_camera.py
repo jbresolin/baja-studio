@@ -1,13 +1,21 @@
 """A fake VISCA-over-IP PTZ camera, for tests and for bench work without the SMTAV.
 
-    python -m baja_studio.fakes.fake_visca_camera --port 52381
+    python -m baja_studio.fakes.fake_visca_camera --port 52381 [--measured]
 
 `FakeViscaCamera` is pure code told the time on every call: it parses each
-datagram, answers ACK then completion (or the inquiry answer) with the
-command's sequence number, and integrates pan, tilt and zoom from the speed
-steps it was given. It can be told to drop replies, to play an unplugged
-cable. Tests reach it in-process through `InProcessDatagramTransport`; `main`
-serves it on a real UDP port.
+datagram and integrates pan, tilt and zoom from the speed steps it was given.
+It answers in one of two ways:
+
+- **well-behaved** (the default, the VISCA/IP spec as ptz_test.py saw the
+  SMTAV): ACK then completion (or the inquiry's answer) at once, each in its
+  own datagram, with the command's sequence number;
+- **measured** (`measured=MeasuredReplies()`, `--measured`): as the bench
+  PTZ was measured answering on 2026-11-15 (`fake_visca_measured.py`): its
+  own sequence numbers, late batched replies, inquiry data only sometimes.
+
+It can be told to drop replies, to play an unplugged cable. Tests reach it
+in-process through `InProcessDatagramTransport`; `main` serves it on a real
+UDP port.
 """
 
 import argparse
@@ -20,6 +28,8 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 
 from baja_studio.cameras.drivers import visca_packets as packets
+from baja_studio.fakes import fake_visca_measured
+from baja_studio.fakes.fake_visca_measured import MeasuredBehaviour, MeasuredReplies
 
 # How fast the fake moves at the top speed step, in raw position steps per second.
 PAN_TILT_STEPS_PER_SECOND_AT_TOP = 1200.0
@@ -50,6 +60,8 @@ class FakeViscaCamera:
     zoom: FakeAxis = field(default_factory=lambda: FakeAxis(low=0, high=packets.ZOOM_POSITION_TELE))
     presets: dict[int, tuple[float, float, float]] = field(default_factory=dict)
     dropping_replies: bool = False
+    # None: well-behaved; otherwise answer as the bench PTZ was measured doing.
+    measured: MeasuredReplies | None = None
     # Every VISCA payload received, newest last (tests read it to check bytes).
     received: deque[bytes] = field(default_factory=lambda: deque(maxlen=1000))
     _last_time: float | None = None
@@ -65,6 +77,8 @@ class FakeViscaCamera:
         answers = self._answer(payload, reply.payload_type)
         if self.dropping_replies:
             return []
+        if self.measured is not None:
+            return self.measured.release(answers, now)
         return [packets.wrap(answer, packets.PAYLOAD_REPLY, sequence) for answer in answers]
 
     def advance_to(self, now: float) -> None:
@@ -85,11 +99,17 @@ class FakeViscaCamera:
         syntax_error = bytes([packets.REPLY_HEADER, 0x60, 0x02, packets.TERMINATOR])
         if payload_type == packets.PAYLOAD_INQUIRY:
             if payload == packets.pan_tilt_position_inquiry():
-                return [self._pan_tilt_answer()]
-            if payload == packets.zoom_position_inquiry():
-                return [self._zoom_answer()]
-            return [syntax_error]
+                data = self._pan_tilt_answer()
+            elif payload == packets.zoom_position_inquiry():
+                data = self._zoom_answer()
+            else:
+                return [syntax_error]
+            if self.measured is not None:
+                return self.measured.inquiry_answers(self._pan_tilt_answer(), self.moving)
+            return [data]
         if self._apply_command(payload):
+            if self.measured is not None:
+                return [fake_visca_measured.ack(), fake_visca_measured.completion()]
             return [ack, done]
         return [syntax_error]
 
@@ -166,14 +186,18 @@ class InProcessDatagramTransport:
         self.unplugged = False
         self.closed = False
         self.sent: list[bytes] = []
+        # When each of `sent` was sent, on the `now` clock (tests count packets per second).
+        self.sent_at: list[float] = []
 
     def send(self, datagram: bytes) -> None:
         """Deliver to the fake; its answers wait in our inbox."""
         with self._lock:
+            now = self._now()
             self.sent.append(datagram)
+            self.sent_at.append(now)
             if self.unplugged or self.closed:
                 return
-            self._inbox.extend(self.camera.handle(datagram, self._now()))
+            self._inbox.extend(self.camera.handle(datagram, now))
 
     def receive(self) -> bytes | None:
         """The next answer, if any."""
@@ -200,12 +224,42 @@ def serve(camera: FakeViscaCamera, port: int, host: str = "0.0.0.0") -> None:
 
 def main(argv: list[str] | None = None) -> None:
     """Command-line entry point."""
+    arguments = parse_arguments(argv)
+    with contextlib.suppress(KeyboardInterrupt):
+        serve(camera_for(arguments), arguments.port, arguments.host)
+
+
+def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
+    """Read the command line (see the module docstring)."""
     parser = argparse.ArgumentParser(description="A fake VISCA-over-IP PTZ camera")
     parser.add_argument("--port", type=int, default=52381)
     parser.add_argument("--host", default="0.0.0.0")
-    arguments = parser.parse_args(argv)
-    with contextlib.suppress(KeyboardInterrupt):
-        serve(FakeViscaCamera(), arguments.port, arguments.host)
+    parser.add_argument(
+        "--measured",
+        action="store_true",
+        help="answer as the bench PTZ was measured doing (own sequence numbers, late batched "
+        "replies, inquiry data only sometimes)",
+    )
+    parser.add_argument(
+        "--data-answer-probability",
+        type=float,
+        default=MeasuredBehaviour.data_answer_probability,
+        help="with --measured: the share of inquiries answered with their data",
+    )
+    parser.add_argument("--seed", type=int, default=0, help="with --measured: the dice's seed")
+    return parser.parse_args(argv)
+
+
+def camera_for(arguments: argparse.Namespace) -> FakeViscaCamera:
+    """The fake the command line asks for: well-behaved, or `--measured`."""
+    camera = FakeViscaCamera()
+    if arguments.measured:
+        camera.measured = MeasuredReplies(
+            MeasuredBehaviour(
+                data_answer_probability=arguments.data_answer_probability, seed=arguments.seed
+            )
+        )
+    return camera
 
 
 if __name__ == "__main__":

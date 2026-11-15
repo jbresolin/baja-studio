@@ -154,6 +154,13 @@ reading its tests.
   where it has them; read once on connect only what something depends on;
   read more on demand; spend every packet (writes, reads, keep-alives) from
   one rate budget, latest value per address winning. Tests count packets.
+- **Do not rely on a device echoing what its protocol says it echoes.**
+  Detect it from what the device sends (VISCA sequence numbers: three
+  replies in a row with numbers we never sent mean "no echo") and fall back
+  to rules that need no echo: any message as a sign of life, resends
+  capped by count, and values only where the answer's shape and timing make
+  them safe; a value that cannot be trusted now is published as null, never
+  as a stale one. Read every message a datagram holds, not only the first.
 - The first reading after connecting is not a change: do not react to it
   (mirror, notify) as if someone had moved something.
 - State a module derives from a device (is this macro active, is this LED
@@ -192,7 +199,11 @@ reading its tests.
 - Velocity shaping (deadband, inversion, scale, curve) happens in the
   arbiter. Drivers map normalised values to device steps, and nothing else.
 - Never send a stop just because a connection opened (contract §7). A stop
-  the device did not confirm is repeated until it is.
+  is sent a few times (VISCA: three, `resend_interval` apart, fewer if the
+  camera answers it), never endlessly: endless resends froze a camera's
+  video. If nothing at all was heard from the device while it went out, it
+  is sent once more when the device is next heard from (ADR 0003, after the
+  bench).
 
 ## Browser input
 

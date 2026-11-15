@@ -176,7 +176,8 @@ class SequenceCounter:
     """VISCA/IP sequence numbers: start at 1, +1 per packet, wrap at 32 bits.
 
     ptz_test.py never sent the "reset sequence number" control command and the
-    SMTAV accepted that, so neither do we.
+    SMTAV accepted that, so neither do we. (The bench PTZ answers that command
+    but keeps replying with its own counter anyway: `visca_replies`.)
     """
 
     def __init__(self, first: int = 1) -> None:
@@ -234,7 +235,12 @@ class Reply:
 
 
 def parse_reply(datagram: bytes) -> Reply | None:
-    """Split a datagram into a `Reply`, or None if it is too short to be VISCA/IP."""
+    """The first VISCA/IP message of a datagram, or None if it is too short to be one.
+
+    Only for datagrams known to hold one message (the fake reading our
+    commands). A camera's datagrams can hold several: read them with
+    `parse_replies`.
+    """
     if len(datagram) < IP_HEADER_LENGTH + 3:
         return None
     payload_length = int.from_bytes(datagram[2:4], "big")
@@ -244,6 +250,33 @@ def parse_reply(datagram: bytes) -> Reply | None:
         sequence=int.from_bytes(datagram[4:8], "big"),
         payload=payload,
     )
+
+
+def parse_replies(datagram: bytes) -> list[Reply]:
+    """Every VISCA/IP message in a datagram from the camera, in order.
+
+    The bench PTZ (probe of 2026-11-15) packs up to four messages into one
+    datagram, each with its own 8-byte header and length, e.g. an ACK, a
+    completion and a position answer. A message cut short at the end of the
+    datagram is dropped; the ones before it are kept.
+    """
+    replies = []
+    offset = 0
+    while len(datagram) - offset >= IP_HEADER_LENGTH:
+        header = datagram[offset : offset + IP_HEADER_LENGTH]
+        payload_length = int.from_bytes(header[2:4], "big")
+        end = offset + IP_HEADER_LENGTH + payload_length
+        if payload_length == 0 or end > len(datagram):
+            break  # a broken header: what follows cannot be split reliably
+        replies.append(
+            Reply(
+                payload_type=int.from_bytes(header[0:2], "big"),
+                sequence=int.from_bytes(header[4:8], "big"),
+                payload=datagram[offset + IP_HEADER_LENGTH : end],
+            )
+        )
+        offset = end
+    return replies
 
 
 def _nibbles(data: bytes) -> int:

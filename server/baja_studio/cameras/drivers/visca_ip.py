@@ -15,7 +15,7 @@ from typing import Protocol
 from baja_studio.agents.contract import CameraKind, Position, Status
 from baja_studio.cameras.driver import CameraDriver, DriverCapabilities, DriverHost, Velocity
 from baja_studio.cameras.drivers import visca_packets as packets
-from baja_studio.cameras.drivers.visca_link import ViscaLink
+from baja_studio.cameras.drivers.visca_link import DEFAULT_POSITION_POLL_SECONDS, ViscaLink
 from baja_studio.core.supervisor import DeviceOfflineError, HealthState, WorkerContext, WorkerSpec
 
 RECEIVE_BUFFER_BYTES = 1024
@@ -91,19 +91,24 @@ class ViscaIpDriver(CameraDriver):
             packets.DEFAULT_PAN_SPEED_MAX_STEP,
             packets.DEFAULT_TILT_SPEED_MAX_STEP,
         ),
+        position_poll_seconds: Callable[[], float] = lambda: DEFAULT_POSITION_POLL_SECONDS,
     ) -> None:
-        """`resend_interval_seconds` and `top_speed_steps` (pan, tilt) are read live,
-        so a settings change applies at once."""
+        """`resend_interval_seconds`, `top_speed_steps` (pan, tilt) and
+        `position_poll_seconds` are read live, so a settings change applies at once."""
         self._host = host
         self._address = address
         self._port = port
         self._resend_interval = resend_interval_seconds
         self._top_speed_steps = top_speed_steps
+        self._position_poll_seconds = position_poll_seconds
         self._opener = opener
         self.worker_name = f"{host.worker_prefix}:{worker_suffix}"
         self._lock = threading.Lock()
-        self._link = ViscaLink(resend_interval_seconds(), host.clock.monotonic())
+        self._link = ViscaLink(
+            resend_interval_seconds(), host.clock.monotonic(), position_poll_seconds()
+        )
         self._worker: WorkerContext | None = None
+        self._logged_sequence_echo: bool | None = None
         self._published: dict[str, object] = {}
 
     # --- CameraDriver ---------------------------------------------------------------
@@ -124,7 +129,7 @@ class ViscaIpDriver(CameraDriver):
         self._wake()
 
     def stop(self) -> None:
-        """Stop pan/tilt and zoom, repeated until the camera confirms."""
+        """Stop pan/tilt and zoom, sent a few times (see visca_link)."""
         with self._lock:
             self._link.stop(self._host.clock.monotonic())
         self._wake()
@@ -142,7 +147,7 @@ class ViscaIpDriver(CameraDriver):
         self._wake()
 
     def position(self) -> Position | None:
-        """The last position read back (polled twice a second)."""
+        """The last position read back (polled every `position_poll_seconds`)."""
         with self._lock:
             return self._link.position()
 
@@ -162,7 +167,7 @@ class ViscaIpDriver(CameraDriver):
             return self._link.health
 
     def settled(self) -> bool:
-        """At rest, with the last stop confirmed by the camera."""
+        """At rest, with the last stop's sends done (see `ViscaLink.settled`)."""
         with self._lock:
             return self._link.settled
 
@@ -183,6 +188,7 @@ class ViscaIpDriver(CameraDriver):
                 with self._lock:
                     self._link.resend_interval = self._resend_interval()
                     self._link.top_speed_steps = self._top_speed_steps()
+                    self._link.position_poll_seconds = self._position_poll_seconds()
                     self._read_replies(transport, now)
                     self._link.expire_replies(now)
                     outgoing = self._link.due(now)
@@ -200,6 +206,7 @@ class ViscaIpDriver(CameraDriver):
                     )
                     transport.close()
                     transport = self._open()
+                self._log_sequence_echo()
                 self._report(worker)
                 worker.sleep(pause)
         finally:
@@ -219,6 +226,21 @@ class ViscaIpDriver(CameraDriver):
                 f"cannot open {self._address}:{self._port}: {error}"
             ) from error
 
+    def _log_sequence_echo(self) -> None:
+        """Say once in the log which kind of camera this is (it explains its health rule)."""
+        with self._lock:
+            echo = self._link.replies.sequence_echo
+        if echo is None or echo == self._logged_sequence_echo:
+            return
+        self._logged_sequence_echo = echo
+        if echo:
+            self._host.logger.info("camera %s echoes VISCA sequence numbers", self._host.camera_id)
+        else:
+            self._host.logger.info(
+                "camera %s does not echo VISCA sequence numbers; judging it by any reply",
+                self._host.camera_id,
+            )
+
     def _report(self, worker: WorkerContext) -> None:
         with self._lock:
             status, reason = self._link.health, self._link.health_reason
@@ -231,6 +253,7 @@ class ViscaIpDriver(CameraDriver):
             position = self._link.position()
             # Status last, so a page that sees "ok" also sees the position with it.
             fields: dict[str, object] = {
+                # None whenever the position is not known now (see visca_replies).
                 "position": position.model_dump() if position else None,
                 "moving": self._link.moving,
                 "last_error": self._link.last_error,

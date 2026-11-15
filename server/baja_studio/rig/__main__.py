@@ -67,6 +67,11 @@ def parse_arguments(argv: list[str] | None) -> argparse.Namespace:
     parser.add_argument(
         "--fast-obs", action="store_true", help="the fake OBS answers at once (no timing)"
     )
+    parser.add_argument(
+        "--measured-visca",
+        action="store_true",
+        help="the fake VISCA cameras answer like the bench PTZ (late, batched, own numbers)",
+    )
     parser.add_argument("--port", type=int, default=STUDIO_PORT, help="the studio's port")
     parser.add_argument(
         "--rig-dir",
@@ -86,7 +91,12 @@ def main(argv: list[str] | None = None) -> int:
         layout.reset()
     layout.create()
     scenario = load_scenario(options.scenario)
-    session = RigSession(layout, say, None if options.fast_obs else options.seed)
+    session = RigSession(
+        layout,
+        say,
+        None if options.fast_obs else options.seed,
+        measured_visca=options.measured_visca,
+    )
     try:
         session.make_clips()
         session.start_fakes()

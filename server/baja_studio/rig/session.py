@@ -30,6 +30,8 @@ class RigSession:
     layout: RigLayout
     report: Report
     obs_seed: int | None
+    # The VISCA cameras answer like the bench PTZ (`--measured-visca`).
+    measured_visca: bool = False
     clip_plan: tuple[clips.DemoClip, ...] = clips.DEFAULT_CLIPS
     ports: FakePorts = field(default_factory=FakePorts.pick)
     fakes: dict[str, RigFake] = field(default_factory=dict)
@@ -58,6 +60,7 @@ class RigSession:
             self.log_directory,
             self.obs_seed,
             tools.ffprobe.found_at,
+            self.measured_visca,
         )
         for fake in self.fakes.values():
             fake.process.start()

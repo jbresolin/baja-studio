@@ -43,6 +43,20 @@ def test_every_fake_the_rig_starts_listens_on_loopback_only(tmp_path: Path) -> N
         assert host_argument(fake.process.command) == "127.0.0.1", name
 
 
+def test_the_visca_cameras_are_well_behaved_unless_the_measured_mode_is_asked_for(
+    tmp_path: Path,
+) -> None:
+    # `--measured-visca` makes the rig's cameras answer like the bench PTZ
+    # (fakes/fake_visca_measured.py); by default they answer as the spec says.
+    plain = build_fakes(PORTS, tmp_path / "delivery", tmp_path / "logs", 1, None)
+    measured = build_fakes(PORTS, tmp_path / "delivery", tmp_path / "logs", 1, None, True)
+
+    assert "--measured" not in plain["camera1"].process.command
+    assert "--measured" in measured["camera1"].process.command
+    assert "--measured" in measured["camera2"].process.command
+    assert "--measured" not in measured["obs"].process.command
+
+
 def test_the_rigs_studio_listens_on_loopback_only(tmp_path: Path) -> None:
     # The studio's own default is every network card; the rig's is not.
     studio = studio_process(tmp_path / "studio", tmp_path / "logs")

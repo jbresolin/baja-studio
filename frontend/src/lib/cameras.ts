@@ -207,6 +207,8 @@ export interface CameraConfig {
   limits: MotionLimits;
   speed_curve: "linear" | "squared";
   direct_fallback: { driver: "visca_ip"; address: CameraAddress } | null;
+  /** VISCA/IP only: one position inquiry every this many seconds; 0 = none. */
+  position_poll_seconds: number;
   usb_device: UsbDeviceRef | null;
   /** Edited on the Image page, not in the camera form. */
   image: Record<string, ImageSetting>;
@@ -287,6 +289,7 @@ export function newCamera(id: string): CameraConfig {
     },
     speed_curve: "linear",
     direct_fallback: null,
+    position_poll_seconds: 1,
     usb_device: null,
     image: {},
     stored_positions: [],

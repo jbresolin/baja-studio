@@ -285,3 +285,104 @@ last event. It was not added to the repository.
   and `cameras/drivers/agent_proxy.py` (~325, the follow loop and the
   fallback rule change together).
 - No camera UI or config pages (WP3); no Pixy or OBS crop drivers (WP6).
+
+## Decisions after the bench (2026-11-15)
+
+A PTZ added as a `visca_ip` camera (192.168.10.245 on the bench) flapped
+ok / degraded / offline, and its video in OBS froze while nudges still
+worked. Two probes, run with the studio off, measured how it answers
+(round 1, `ptz_probe_script.py`: 267 packets sent, 355 datagrams back):
+
+- Replies carry **the camera's own sequence counter** (~43000, rising about
+  40 a second even when nobody talks to it), never ours. It answers a
+  sequence-reset control message (`02 01 … 01`) but keeps its own numbers.
+- **Several messages per datagram** (up to four), each with its own 8-byte
+  header and length.
+- **Inquiries get an ACK and a completion** (`90 48 FF`, `90 58 FF`) and the
+  data only sometimes: 43 data answers for 259 inquiries (~17 %). Pan/tilt
+  data is 11 bytes (`90 50` + 8 nibbles + `FF`), zoom 7 bytes.
+- **Late, batched replies**: nothing for the first ~3 s, then 30–80 ms after
+  one of our packets, often for earlier ones; up to 6 s without a reply
+  while sending once a second; nothing at all while we send nothing.
+- Every reply also reached port 52381 of our host. Commands work (a speed-1
+  pan for 2 s moved pan 0x01A5 → 0x01AA).
+- With the probe's gentler traffic (no endless stop resends, ≤ 4
+  inquiries/s) the video did not freeze.
+
+Round 2 looked for another way to read position, and found none:
+
+- Only VISCA-over-IP on 52381 exists: raw VISCA on TCP 5678 does not
+  connect, raw VISCA on UDP 1259 is "port unreachable", ONVIF answers 404.
+- Block inquiries (`81 09 7E 7E 00/01 FF`) get ACK + completion, never data.
+- Inquiries sent as commands (type 0x0100) behave like inquiries: data is
+  rare and comes **in pairs**, an 11-byte pan/tilt answer then a 7-byte
+  `90 50 00 00 00 00 FF`, usually in the batch answering a *later* request,
+  whichever inquiry was asked, always the same values at rest. 7-byte
+  answers also came when no zoom inquiry had been sent.
+- **During a 3 s pan at medium speed: no data at all**, only ACKs and
+  completions.
+
+**So this PTZ gives no usable position: set its `position_poll_seconds` to
+0.** Its ACKs and completions to the liveness inquiry come reliably (if
+batched) and keep its status right.
+
+The cause: the driver matched replies by sequence number, so every packet
+counted as missed (the flapping), and no stop was ever "confirmed", so it
+was resent every `resend_interval` forever, on top of two inquiries every
+0.5 s: ~14 packets/s at rest, which choked the camera.
+
+37. **Every message of a datagram is read** (`visca_packets.parse_replies`).
+38. **Sequence echo is detected, not assumed** (`visca_replies.ReplyTracker`).
+    A reply with one of our pending numbers says "echo"; three in a row with
+    numbers we never sent say "no echo"; the latest evidence wins. An
+    echoing camera keeps decision 8's rule (3 misses `degraded`, 10
+    `offline`). One that does not echo is judged by silence: anything at all
+    from it shows it is alive; `degraded` after 7 s with nothing heard while
+    we were sending, `offline` after 12 s (above the 6 s measured gap).
+    Supersedes decision 8 for such cameras.
+39. **Position is published only while it can be trusted, otherwise null**,
+    never a stale value presented as current; missing answers never change
+    the camera's status.
+    - An echoing camera's answer is read as the inquiry its number answers
+      (also when it follows the ACK under the same number).
+    - From a camera that does not echo, an 11-byte `90 50` answer is
+      pan/tilt; a 7-byte one is zoom only while a zoom inquiry is the only
+      one outstanding. Either is taken only once no motion, stop or preset
+      was sent for 3 s (no data while moving; batches up to ~3 s late may
+      predate a move), and sending one forgets the position.
+    - A position not refreshed for 30 s is dropped.
+    - With `position_poll_seconds` 0 no position is published at all.
+40. **Polling: one inquiry in flight**, pan/tilt and zoom in turn, one every
+    `position_poll_seconds` (per camera, default 1.0, which suits cameras
+    that answer; 0 = no position polling, only a pan/tilt inquiry every 3 s
+    whose ACK and completion show the camera is there; 0 < value < 0.25 is
+    refused). The field's help on Camera setup says to set 0 for this PTZ. An inquiry is in flight until anything
+    comes back or 0.5 s pass. Supersedes decision 9. The setting is on
+    Camera setup with the VISCA address (or the direct fallback's); the
+    cameras settings layout is version 2 (older files get the default).
+41. **Stops are sent three times, never endlessly.** A stop goes out three
+    times, `resend_interval` apart, or fewer if an echoing camera answers it.
+    If nothing at all was heard from the camera while it went out and for
+    0.5 s after (for an echoing camera: no answer to the stop itself), it is
+    owed, and sent once more (three times) when the camera is next heard
+    from, so a stick released during a cable outage still stops the camera.
+    That second round is the last. Supersedes decision 10; no other VISCA
+    send repeats "until confirmed".
+42. **Traffic at rest**: one packet a second with the defaults (it was ~14);
+    a stop adds six packets over 0.2 s. `test_visca_ip.py` counts packets
+    per second against the fake in its measured mode.
+43. **The fake models the bench PTZ** with `measured=MeasuredReplies()`
+    (`fakes/fake_visca_measured.py`; `--measured` on its command line,
+    `--measured-visca` on the rig's): own counter, 3 s silent start, answers
+    released only by a later packet and batched up to four per datagram,
+    ACK + completion for every inquiry, and with probability 0.1 (seeded),
+    never while moving, the data pair (real pan/tilt, constant 7-byte
+    answer) released 0.5 s later than them. The duplicate to port 52381,
+    block inquiries and the sequence-reset answer are not modelled. The
+    well-behaved mode stays the default.
+44. The driver logs once which kind of camera it found ("does not echo VISCA
+    sequence numbers; judging it by any reply").
+
+Left open: a held velocity is still resent every `resend_interval_ms` (two
+packets each time, 20/s at the default 100 ms). The probe moved the camera
+at 4 packets/s without a freeze; faster motion traffic is not measured yet.

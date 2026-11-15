@@ -217,6 +217,9 @@ class CameraRegistry:
             opener=self._datagram_opener,
             worker_suffix=suffix,
             top_speed_steps=top_speed_steps,
+            position_poll_seconds=lambda: (
+                self._configs.get(camera.id, camera).position_poll_seconds
+            ),
         )
 
     def _driver_host(self, camera_id: str, publishes: bool = True) -> DriverHost:

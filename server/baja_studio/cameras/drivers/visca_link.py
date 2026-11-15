@@ -1,46 +1,49 @@
 """The VISCA/IP driver's logic, without sockets or threads: told the time on every call.
 
-`ViscaLink` decides what to put on the wire and when, and judges the camera's
-health from its replies. `drivers/visca_ip.py` runs it in a worker with a UDP
-socket. Rules, from the WP2 brief and ptz_test.py:
+`ViscaLink` decides what to put on the wire and when; its `ReplyTracker`
+(`visca_replies.py`) reads the camera's answers and judges its health.
+`drivers/visca_ip.py` runs it in a worker with a UDP socket. Rules, from the
+WP2 brief, ptz_test.py and the bench of 2026-11-15 (ADR 0003, "Decisions
+after the bench"):
 
 - A held velocity is re-sent every `resend_interval` (UDP loses packets) and
   stopped when `move` has not been called for its `ttl`: the camera itself
   has no dead-man switch.
-- A stop is pan-tilt stop *and* zoom stop, and is repeated until the camera
-  answers one of them, so a stop sent while the cable is out still lands
-  when it is back (no runaway).
-- Every packet expects a reply within 0.5 s. Three missed in a row:
-  `degraded`; ten: `offline`, and the socket is reopened every few seconds.
-- Position is asked for twice a second, which also tells an idle camera's health.
+- A stop is pan-tilt stop *and* zoom stop. It is sent `STOP_SENDS` times,
+  `resend_interval` apart, or fewer if a camera that echoes our sequence
+  numbers answers it first. Never more: endless stop resends (a camera that
+  never "confirms") choked the bench PTZ until its video froze.
+- If nothing at all was heard from the camera while a stop was sent and for
+  `REPLY_TIMEOUT_SECONDS` after (cable out), the stop is owed: it is sent
+  again, `STOP_SENDS` times and only once more, when the camera is next heard
+  from, so it does not run away when the cable is back.
+- Position is polled with one inquiry in flight at a time, pan/tilt and zoom
+  in turn, one every `position_poll_seconds` (0: no position polling and no
+  position published, only a pan/tilt inquiry every `LIVENESS_POLL_SECONDS`
+  whose ACK and completion show the camera is there). The bench PTZ gives no
+  usable position, so it runs with 0.
 """
 
 from dataclasses import dataclass
-from enum import Enum
 
 from baja_studio.agents.contract import Position, Status
 from baja_studio.cameras.driver import AT_REST, Velocity
 from baja_studio.cameras.drivers import visca_packets as packets
+from baja_studio.cameras.drivers.visca_replies import (
+    REPLY_TIMEOUT_SECONDS,
+    TIME_TOLERANCE_SECONDS,
+    Purpose,
+    ReplyTracker,
+)
 
-REPLY_TIMEOUT_SECONDS = 0.5
-MISSED_FOR_DEGRADED = 3
-MISSED_FOR_OFFLINE = 10
-POSITION_POLL_SECONDS = 0.5
+DEFAULT_POSITION_POLL_SECONDS = 1.0
+LIVENESS_POLL_SECONDS = 3.0
+STOP_SENDS = 3
 REOPEN_WHILE_OFFLINE_SECONDS = 5.0
 # A worker with nothing due still wakes this often to read replies promptly.
 MAX_IDLE_SECONDS = 0.1
-# Times are floats: 0.3 - 0.2 is just under 0.1. Deadlines this close count as reached.
-TIME_TOLERANCE_SECONDS = 1e-6
 
-
-class Purpose(Enum):
-    """Why a packet was sent; decides what its reply means."""
-
-    MOTION = "motion"
-    STOP = "stop"
-    PRESET = "preset"
-    PAN_TILT_INQUIRY = "pan_tilt_inquiry"
-    ZOOM_INQUIRY = "zoom_inquiry"
+__all__ = ["Outgoing", "Purpose", "ViscaLink"]
 
 
 @dataclass(frozen=True)
@@ -51,39 +54,40 @@ class Outgoing:
     purpose: Purpose
 
 
-@dataclass
-class _Pending:
-    purpose: Purpose
-    sent_at: float
-
-
 class ViscaLink:
     """What to send to one VISCA/IP camera, and how it is doing."""
 
-    def __init__(self, resend_interval: float, now: float) -> None:
-        """`resend_interval` in seconds; `now` is the clock's monotonic time."""
+    def __init__(
+        self,
+        resend_interval: float,
+        now: float,
+        position_poll_seconds: float = DEFAULT_POSITION_POLL_SECONDS,
+    ) -> None:
+        """`resend_interval` and `position_poll_seconds` in seconds (the driver
+        updates both live); `now` is the clock's monotonic time."""
         self.resend_interval = resend_interval
+        self.position_poll_seconds = position_poll_seconds
         # The camera's top pan and tilt speed steps (settings, read live by the driver).
         self.top_speed_steps = (
             packets.DEFAULT_PAN_SPEED_MAX_STEP,
             packets.DEFAULT_TILT_SPEED_MAX_STEP,
         )
+        self.replies = ReplyTracker()
         self._sequence = packets.SequenceCounter()
         self._velocity = AT_REST
         self._velocity_expires_at = 0.0
         self._last_motion_sent_at = float("-inf")
         self._sent_velocity: Velocity | None = None
-        self._stop_unconfirmed = False
+        # The current stop: sends still to make, when the last went out (None:
+        # no stop in progress or owed), and whether the camera said anything meanwhile.
+        self._stop_sends_left = 0
+        self._stop_last_sent_at: float | None = None
+        self._stop_heard = False
         self._queued: list[tuple[bytes, Purpose]] = []
-        self._pending: dict[int, _Pending] = {}
         self._next_poll_at = now
-        self._missed_in_a_row = 0
-        self._ever_answered = False
-        self._went_offline_at: float | None = None
+        self._poll_zoom_next = False
+        self._inquiry_sent_at: float | None = None
         self._last_reopen_at = now
-        self._raw_pan_tilt: tuple[int, int] | None = None
-        self._raw_zoom: int | None = None
-        self.last_error = ""
 
     # --- what the driver asks for -------------------------------------------------
 
@@ -94,13 +98,16 @@ class ViscaLink:
             return
         self._velocity = velocity
         self._velocity_expires_at = now + ttl
-        self._stop_unconfirmed = False
+        self._stop_sends_left = 0
+        self._stop_last_sent_at = None
 
     def stop(self, now: float) -> None:
-        """Stop pan, tilt and zoom now, and keep saying so until the camera answers."""
+        """Stop pan, tilt and zoom now; sent up to `STOP_SENDS` times."""
         self._velocity = AT_REST
         self._sent_velocity = None
-        self._stop_unconfirmed = True
+        self._stop_sends_left = STOP_SENDS
+        self._stop_last_sent_at = None
+        self._stop_heard = False
         self._last_motion_sent_at = float("-inf")  # send the stop on the next tick
 
     def recall_preset(self, n: int) -> None:
@@ -116,18 +123,20 @@ class ViscaLink:
     # --- the worker's loop ----------------------------------------------------------
 
     def due(self, now: float) -> list[Outgoing]:
-        """Everything to send at `now`: expiries, stops, resends, queued commands, polls."""
+        """Everything to send at `now`: expiries, stops, resends, queued commands, a poll."""
         if not self._velocity.is_zero and now >= self._velocity_expires_at - TIME_TOLERANCE_SECONDS:
             self.stop(now)  # the dead-man: nobody renewed the velocity
         outgoing: list[Outgoing] = []
         resend_due = (
             now - self._last_motion_sent_at >= self.resend_interval - TIME_TOLERANCE_SECONDS
         )
-        if self._stop_unconfirmed and resend_due:
+        if self._stop_sends_left > 0 and resend_due:
             outgoing += self._wrap_all(
                 [(packets.pan_tilt_stop(), Purpose.STOP), (packets.zoom_stop(), Purpose.STOP)], now
             )
             self._last_motion_sent_at = now
+            self._stop_last_sent_at = now
+            self._stop_sends_left -= 1
         elif not self._velocity.is_zero and (resend_due or self._velocity != self._sent_velocity):
             outgoing += self._wrap_all(
                 [
@@ -140,46 +149,22 @@ class ViscaLink:
             self._last_motion_sent_at = now
         outgoing += self._wrap_all(self._queued, now)
         self._queued = []
-        if now >= self._next_poll_at - TIME_TOLERANCE_SECONDS:
-            self._next_poll_at = now + POSITION_POLL_SECONDS
-            outgoing += self._wrap_all(
-                [
-                    (packets.pan_tilt_position_inquiry(), Purpose.PAN_TILT_INQUIRY),
-                    (packets.zoom_position_inquiry(), Purpose.ZOOM_INQUIRY),
-                ],
-                now,
-                payload_type=packets.PAYLOAD_INQUIRY,
-            )
+        outgoing += self._poll_if_due(now)
         return outgoing
 
     def received(self, datagram: bytes, now: float) -> None:
-        """A datagram arrived from the camera; match it to what we sent."""
-        reply = packets.parse_reply(datagram)
-        if reply is None:
-            return
-        pending = self._pending.pop(reply.sequence, None)
-        if pending is None:
-            return  # the second answer (completion after ack), or a stale one
-        self._missed_in_a_row = 0
-        self._ever_answered = True
-        self._went_offline_at = None
-        if reply.kind == packets.ReplyKind.ERROR:
-            self.last_error = f"camera refused a {pending.purpose.value} command"
-        if pending.purpose == Purpose.STOP:
-            self._stop_unconfirmed = False
-        elif pending.purpose == Purpose.PAN_TILT_INQUIRY:
-            self._raw_pan_tilt = packets.parse_pan_tilt_position(reply.payload)
-        elif pending.purpose == Purpose.ZOOM_INQUIRY:
-            self._raw_zoom = packets.parse_zoom_position(reply.payload)
+        """A datagram arrived from the camera: read every message in it."""
+        replies = packets.parse_replies(datagram)
+        if not replies:
+            return  # not VISCA/IP at all: says nothing about the camera
+        answered = self.replies.received(replies, now)
+        self._inquiry_sent_at = None  # it is talking: the next inquiry may go
+        self._follow_stop(answered, now)
+        self.replies.review(now)
 
     def expire_replies(self, now: float) -> None:
-        """Count every packet whose reply is overdue as missed (call after `received`)."""
-        for sequence, pending in list(self._pending.items()):
-            if now - pending.sent_at >= REPLY_TIMEOUT_SECONDS - TIME_TOLERANCE_SECONDS:
-                del self._pending[sequence]
-                self._missed_in_a_row += 1
-        if self.health == Status.OFFLINE and self._went_offline_at is None:
-            self._went_offline_at = now
+        """Count every packet whose reply is overdue as missed, and judge the camera's health."""
+        self.replies.review(now)
 
     def should_reopen(self, now: float) -> bool:
         """True when the socket should be closed and opened again (offline for a while)."""
@@ -193,35 +178,36 @@ class ViscaLink:
     def seconds_until_next(self, now: float) -> float:
         """How long the worker may sleep before something is due."""
         deadlines = [self._next_poll_at, now + MAX_IDLE_SECONDS]
+        if self._inquiry_sent_at is not None:
+            deadlines.append(self._inquiry_sent_at + REPLY_TIMEOUT_SECONDS)
         if not self._velocity.is_zero:
             deadlines += [
                 self._velocity_expires_at,
                 self._last_motion_sent_at + self.resend_interval,
             ]
-        if self._stop_unconfirmed:
+        if self._stop_sends_left > 0:
             deadlines.append(self._last_motion_sent_at + self.resend_interval)
-        deadlines += [pending.sent_at + REPLY_TIMEOUT_SECONDS for pending in self._pending.values()]
+        reply_deadline = self.replies.next_deadline()
+        if reply_deadline is not None:
+            deadlines.append(reply_deadline)
         return max(0.0, min(deadlines) - now)
 
     # --- what it observed -------------------------------------------------------------
 
     @property
     def health(self) -> Status:
-        """offline until the first answer and after ten misses; degraded after three."""
-        if not self._ever_answered or self._missed_in_a_row >= MISSED_FOR_OFFLINE:
-            return Status.OFFLINE
-        if self._missed_in_a_row >= MISSED_FOR_DEGRADED:
-            return Status.DEGRADED
-        return Status.OK
+        """ok, degraded or offline, as last judged (see visca_replies)."""
+        return self.replies.status
 
     @property
     def health_reason(self) -> str:
         """A sentence for the operator, empty when ok."""
-        if not self._ever_answered:
-            return "no answer from the camera yet"
-        if self._missed_in_a_row >= MISSED_FOR_DEGRADED:
-            return f"{self._missed_in_a_row} replies missed in a row"
-        return ""
+        return self.replies.reason
+
+    @property
+    def last_error(self) -> str:
+        """The last refusal the camera sent, worded for the operator."""
+        return self.replies.last_error
 
     @property
     def moving(self) -> bool:
@@ -230,8 +216,9 @@ class ViscaLink:
 
     @property
     def settled(self) -> bool:
-        """At rest and no stop waiting for the camera's answer."""
-        return self._velocity.is_zero and not self._stop_unconfirmed
+        """At rest, every send of the last stop made, and no stop owed to a silent camera."""
+        stop_owed = self._stop_last_sent_at is not None and not self._stop_heard
+        return self._velocity.is_zero and self._stop_sends_left == 0 and not stop_owed
 
     @property
     def velocity(self) -> Velocity:
@@ -239,16 +226,54 @@ class ViscaLink:
         return self._velocity
 
     def position(self) -> Position | None:
-        """The last position the camera reported, in degrees and 0..1 zoom."""
-        if self._raw_pan_tilt is None:
-            return None
-        raw_pan, raw_tilt = self._raw_pan_tilt
-        zoom = 0.0 if self._raw_zoom is None else self._raw_zoom / packets.ZOOM_POSITION_TELE
-        return Position(
-            pan=raw_pan * packets.DEGREES_PER_PAN_TILT_STEP,
-            tilt=raw_tilt * packets.DEGREES_PER_PAN_TILT_STEP,
-            zoom=min(1.0, max(0.0, zoom)),
-        )
+        """Where the camera is (degrees, 0..1 zoom); None when not known now or not polled."""
+        if self.position_poll_seconds <= 0:
+            return None  # only liveness inquiries: their rare data answers are not polled for
+        return self.replies.position()
+
+    # --- inside -----------------------------------------------------------------------
+
+    def _follow_stop(self, answered: set[Purpose], now: float) -> None:
+        """What a message from the camera means for the stop being sent, if any."""
+        if self._stop_last_sent_at is None:
+            return
+        since_last_send = now - self._stop_last_sent_at
+        if self._stop_sends_left > 0 or since_last_send <= REPLY_TIMEOUT_SECONDS:
+            if Purpose.STOP in answered:
+                # An echoing camera confirmed it: no need to repeat.
+                self._stop_heard = True
+                self._stop_sends_left = 0
+            elif self.replies.sequence_echo is not True:
+                # A camera whose replies cannot be matched: hearing anything
+                # while the stop goes out is the best sign it got it.
+                self._stop_heard = True
+            return
+        # The stop's sends are over and the camera talks again.
+        owed = not self._stop_heard
+        self._stop_last_sent_at = None
+        if owed and self._velocity.is_zero:
+            # Nothing was heard while it went out (cable out?): send it once more.
+            self.stop(now)
+            self._stop_heard = True  # and never owe this one again
+
+    def _poll_if_due(self, now: float) -> list[Outgoing]:
+        """One inquiry, if none is in flight and the poll interval has passed."""
+        if self._inquiry_sent_at is not None:
+            if now - self._inquiry_sent_at < REPLY_TIMEOUT_SECONDS - TIME_TOLERANCE_SECONDS:
+                return []  # still waiting for something from the camera
+            self._inquiry_sent_at = None
+        if now < self._next_poll_at - TIME_TOLERANCE_SECONDS:
+            return []
+        polling_position = self.position_poll_seconds > 0
+        interval = self.position_poll_seconds if polling_position else LIVENESS_POLL_SECONDS
+        self._next_poll_at = now + interval
+        self._inquiry_sent_at = now
+        if polling_position and self._poll_zoom_next:
+            inquiry = (packets.zoom_position_inquiry(), Purpose.ZOOM_INQUIRY)
+        else:
+            inquiry = (packets.pan_tilt_position_inquiry(), Purpose.PAN_TILT_INQUIRY)
+        self._poll_zoom_next = polling_position and not self._poll_zoom_next
+        return self._wrap_all([inquiry], now, payload_type=packets.PAYLOAD_INQUIRY)
 
     def _wrap_all(
         self,
@@ -259,6 +284,6 @@ class ViscaLink:
         outgoing = []
         for payload, purpose in items:
             sequence = self._sequence.take()
-            self._pending[sequence] = _Pending(purpose, now)
+            self.replies.sent(sequence, purpose, now)
             outgoing.append(Outgoing(packets.wrap(payload, payload_type, sequence), purpose))
         return outgoing

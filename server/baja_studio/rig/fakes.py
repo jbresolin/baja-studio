@@ -84,11 +84,14 @@ def build_fakes(
     log_directory: Path,
     obs_seed: int | None,
     ffprobe: str | None,
+    measured_visca: bool = False,
 ) -> dict[str, RigFake]:
     """Every fake, keyed by the name scenarios use (`obs`, `xr18`, `agent1`, ...); not started.
 
     `obs_seed` None turns the fake OBS's realistic timing off (`--fast-obs`);
-    `ffprobe` (if found) lets it play the demo clips at their real length.
+    `ffprobe` (if found) lets it play the demo clips at their real length;
+    `measured_visca` makes the VISCA cameras answer like the bench PTZ
+    (`--measured-visca`: late, batched replies with their own sequence numbers).
     """
     fakes: dict[str, RigFake] = {}
 
@@ -130,12 +133,15 @@ def build_fakes(
     inquiry = visca_packets.wrap(
         visca_packets.pan_tilt_position_inquiry(), visca_packets.PAYLOAD_INQUIRY, 1
     )
+    camera_arguments = ["--measured"] if measured_visca else []
+    camera_kind = "measured bench PTZ, " if measured_visca else ""
     for number, port in enumerate(ports.cameras, start=1):
         add(
             f"camera{number}",
             "fake_visca_camera",
-            ["--host", LOOPBACK, "--port", str(port)],
-            f"VISCA udp://{LOOPBACK}:{port} (direct fallback of agent {number}'s cam1)",
+            ["--host", LOOPBACK, "--port", str(port), *camera_arguments],
+            f"VISCA udp://{LOOPBACK}:{port} "
+            f"({camera_kind}direct fallback of agent {number}'s cam1)",
             lambda port=port: udp_answers(port, inquiry),  # type: ignore[misc]
         )
     for number, (agent_id, port) in enumerate(zip(AGENT_IDS, ports.agents, strict=True), start=1):
