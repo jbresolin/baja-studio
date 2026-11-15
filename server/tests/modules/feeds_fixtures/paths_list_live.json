@@ -1,0 +1,95 @@
+{
+    "itemCount": 2,
+    "pageCount": 1,
+    "items": [
+        {
+            "name": "drone",
+            "confName": "drone",
+            "ready": true,
+            "readyTime": "2026-11-15T19:43:32.841279933-03:00",
+            "available": true,
+            "availableTime": "2026-11-15T19:43:32.841279933-03:00",
+            "online": true,
+            "onlineTime": "2026-11-15T19:43:32.841286093-03:00",
+            "source": {
+                "type": "rtmpConn",
+                "id": "ee52dbfb-d6f8-45c2-a556-0d2d63686a3a"
+            },
+            "tracks": [
+                "H264",
+                "MPEG-4 Audio"
+            ],
+            "tracks2": [
+                {
+                    "codec": "H264",
+                    "codecProps": {
+                        "width": 1280,
+                        "height": 720,
+                        "profile": "Baseline",
+                        "level": "3.1"
+                    }
+                },
+                {
+                    "codec": "MPEG-4 Audio",
+                    "codecProps": {
+                        "sampleRate": 48000,
+                        "channelCount": 1
+                    }
+                }
+            ],
+            "readers": [
+                {
+                    "type": "rtspSession",
+                    "id": "934c0dc2-24bc-49bb-8006-80e7612f0517"
+                }
+            ],
+            "inboundBytes": 2581927,
+            "outboundBytes": 546384,
+            "inboundFramesInError": 0,
+            "bytesReceived": 2581927,
+            "bytesSent": 546384
+        },
+        {
+            "name": "laptop1",
+            "confName": "laptop1",
+            "ready": true,
+            "readyTime": "2026-11-15T19:43:31.448635926-03:00",
+            "available": true,
+            "availableTime": "2026-11-15T19:43:31.448635926-03:00",
+            "online": true,
+            "onlineTime": "2026-11-15T19:43:31.448640076-03:00",
+            "source": {
+                "type": "srtConn",
+                "id": "b1ce2022-055d-4a75-bd73-cc7b6dea70a9"
+            },
+            "tracks": [
+                "H264",
+                "MPEG-4 Audio"
+            ],
+            "tracks2": [
+                {
+                    "codec": "H264",
+                    "codecProps": {
+                        "width": 1920,
+                        "height": 1080,
+                        "profile": "Baseline",
+                        "level": "4"
+                    }
+                },
+                {
+                    "codec": "MPEG-4 Audio",
+                    "codecProps": {
+                        "sampleRate": 48000,
+                        "channelCount": 1
+                    }
+                }
+            ],
+            "readers": [],
+            "inboundBytes": 3661878,
+            "outboundBytes": 0,
+            "inboundFramesInError": 0,
+            "bytesReceived": 3661878,
+            "bytesSent": 0
+        }
+    ]
+}

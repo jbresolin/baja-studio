@@ -1,0 +1,44 @@
+{
+    "itemCount": 2,
+    "pageCount": 1,
+    "items": [
+        {
+            "name": "drone",
+            "confName": "drone",
+            "ready": false,
+            "readyTime": null,
+            "available": false,
+            "availableTime": null,
+            "online": false,
+            "onlineTime": null,
+            "source": null,
+            "tracks": [],
+            "tracks2": [],
+            "readers": [],
+            "inboundBytes": 0,
+            "outboundBytes": 0,
+            "inboundFramesInError": 0,
+            "bytesReceived": 0,
+            "bytesSent": 0
+        },
+        {
+            "name": "laptop1",
+            "confName": "laptop1",
+            "ready": false,
+            "readyTime": null,
+            "available": false,
+            "availableTime": null,
+            "online": false,
+            "onlineTime": null,
+            "source": null,
+            "tracks": [],
+            "tracks2": [],
+            "readers": [],
+            "inboundBytes": 0,
+            "outboundBytes": 0,
+            "inboundFramesInError": 0,
+            "bytesReceived": 0,
+            "bytesSent": 0
+        }
+    ]
+}

@@ -1,0 +1,59 @@
+{
+    "itemCount": 2,
+    "pageCount": 1,
+    "items": [
+        {
+            "name": "drone",
+            "confName": "drone",
+            "ready": false,
+            "readyTime": null,
+            "available": false,
+            "availableTime": null,
+            "online": false,
+            "onlineTime": null,
+            "source": null,
+            "tracks": [],
+            "tracks2": [],
+            "readers": [],
+            "inboundBytes": 0,
+            "outboundBytes": 0,
+            "inboundFramesInError": 0,
+            "bytesReceived": 0,
+            "bytesSent": 0
+        },
+        {
+            "name": "whatever",
+            "confName": "all_others",
+            "ready": true,
+            "readyTime": "2026-11-15T19:49:32.130220118-03:00",
+            "available": true,
+            "availableTime": "2026-11-15T19:49:32.130220118-03:00",
+            "online": true,
+            "onlineTime": "2026-11-15T19:49:32.130232185-03:00",
+            "source": {
+                "type": "rtmpConn",
+                "id": "7f095da2-b7d8-4133-90a2-a5ba9fd95156"
+            },
+            "tracks": [
+                "H264"
+            ],
+            "tracks2": [
+                {
+                    "codec": "H264",
+                    "codecProps": {
+                        "width": 320,
+                        "height": 240,
+                        "profile": "Baseline",
+                        "level": "1.3"
+                    }
+                }
+            ],
+            "readers": [],
+            "inboundBytes": 194374,
+            "outboundBytes": 0,
+            "inboundFramesInError": 0,
+            "bytesReceived": 194374,
+            "bytesSent": 0
+        }
+    ]
+}

@@ -1,0 +1,9 @@
+{
+  "version": "v1.21.3",
+  "url": "https://github.com/bluenviron/mediamtx/releases/download/v1.21.3/mediamtx_v1.21.3_windows_amd64.zip",
+  "sha256": "b2f5246b07cb72961df03b8d5e8cad43dc657bcf3f49a87bb031bdf22721af74",
+  "executable_in_zip": "mediamtx.exe",
+  "license_in_zip": "LICENSE",
+  "linux_url": "https://github.com/bluenviron/mediamtx/releases/download/v1.21.3/mediamtx_v1.21.3_linux_amd64.tar.gz",
+  "linux_sha256": "0a2ea7eba96023631efa1bea7804823a9145b043b6646a8a05798d4ac24ed635"
+}

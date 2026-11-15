@@ -9,9 +9,9 @@ from collections.abc import Iterator
 
 import pytest
 
-from baja_studio.adapters.obs_protocol import MediaAction, MediaState
+from baja_studio.adapters.obs_protocol import MediaAction, MediaState, RequestStatus
 from baja_studio.adapters.obs_requests import MediaStatus
-from baja_studio.adapters.obs_transport import ObsAddress
+from baja_studio.adapters.obs_transport import ObsAddress, ObsRequestFailedError
 from baja_studio.adapters.obs_websocket import ObsWebsocketClient
 from baja_studio.fakes.fake_obs import FakeObs
 from baja_studio.fakes.fake_obs_in_process import InProcessObsNetwork
@@ -187,3 +187,23 @@ def test_a_created_crop_filter_can_be_read_and_changed(
     assert found.settings["left"] == 100
     assert found.settings["relative"] is True
     assert fake_obs.requests_of("SetSourceFilterSettings")[-1].data["overlay"] is True
+
+
+def test_create_input_adds_an_enabled_source_to_the_scene_and_never_replaces_one(
+    client: ObsWebsocketClient, fake_obs: FakeObs
+) -> None:
+    # The feeds module's Add to OBS (WP14): one new media source in "Main".
+    item_id = client.create_input(
+        "Main", "Drone", "ffmpeg_source", {"is_local_file": False, "input": "rtsp://x/drone"}
+    )
+
+    assert fake_obs.inputs["Drone"].kind == "ffmpeg_source"
+    assert fake_obs.inputs["Drone"].settings["input"] == "rtsp://x/drone"
+    assert [(item.scene_item_id, item.enabled) for item in fake_obs.scenes["Main"]] == [
+        (item_id, True)
+    ]
+    # The same name again is refused by OBS (601): the existing input is untouched.
+    with pytest.raises(ObsRequestFailedError) as refused:
+        client.create_input("Main", "Drone", "ffmpeg_source", {"input": "rtsp://other"})
+    assert refused.value.code == RequestStatus.RESOURCE_ALREADY_EXISTS
+    assert fake_obs.inputs["Drone"].settings["input"] == "rtsp://x/drone"

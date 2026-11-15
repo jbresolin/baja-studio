@@ -3,12 +3,18 @@
 Each `_request_<Name>` takes the request data and returns the response data,
 or raises `FakeRequestRefusedError` with the status code real OBS would send.
 Only the requests the studio uses are here; others answer "unknown request".
+
+`CreateInput` (the feeds module's Add to OBS, WP14) follows the obs-websocket
+5.x protocol document: a name any source (input or scene) already has is
+refused with 601, a missing scene with 600, an unknown kind with 605; a new
+input is added to the scene, enabled, and `InputCreated` and
+`SceneItemCreated` are sent.
 """
 
 from dataclasses import dataclass, field
 from typing import Any
 
-from baja_studio.adapters.obs_protocol import MediaAction, RequestStatus
+from baja_studio.adapters.obs_protocol import EventSubscription, MediaAction, RequestStatus
 from baja_studio.fakes.simulated_media import SimulatedMedia
 
 
@@ -50,6 +56,12 @@ class FakeObsRequests:
     transitions: list[str]
     transition_overrides: dict[str, tuple[str | None, int | None]]
     stuck_files: set[str]
+    # Input kinds a CreateInput may use (a real OBS has many more).
+    creatable_input_kinds = frozenset({"ffmpeg_source", "dshow_input", "color_source_v3"})
+
+    def next_scene_item_id(self) -> int:
+        """Implemented by `FakeObs`."""
+        raise NotImplementedError
 
     def now(self) -> float:
         """Implemented by `FakeObs`."""
@@ -210,6 +222,43 @@ class FakeObsRequests:
             data.get("transitionDuration"),
         )
         return {}
+
+    def _request_CreateInput(self, data: dict[str, Any]) -> dict[str, Any]:  # noqa: N802
+        scene_name = self._scene_name(data)
+        input_name = str(data.get("inputName") or "")
+        kind = str(data.get("inputKind") or "")
+        if not input_name or not kind:
+            raise FakeRequestRefusedError(
+                RequestStatus.MISSING_REQUEST_FIELD, "inputName and inputKind are required"
+            )
+        if input_name in self.inputs or input_name in self.scenes:
+            raise FakeRequestRefusedError(
+                RequestStatus.RESOURCE_ALREADY_EXISTS, "A source already exists by that input name."
+            )
+        if kind not in self.creatable_input_kinds:
+            raise FakeRequestRefusedError(
+                RequestStatus.INVALID_INPUT_KIND,
+                "Your specified input kind is not supported by OBS.",
+            )
+        settings = data.get("inputSettings")
+        self.inputs[input_name] = FakeInput(kind, settings=dict(settings or {}))
+        item_id = self.next_scene_item_id()
+        self.scenes[scene_name].append(
+            FakeSceneItem(
+                item_id, input_name, enabled=data.get("sceneItemEnabled", True) is not False
+            )
+        )
+        self.emit(
+            "InputCreated",
+            {"inputName": input_name, "inputUuid": f"uuid-{input_name}", "inputKind": kind},
+            EventSubscription.INPUTS,
+        )
+        self.emit(
+            "SceneItemCreated",
+            {"sceneName": scene_name, "sourceName": input_name, "sceneItemId": item_id},
+            EventSubscription.SCENE_ITEMS,
+        )
+        return {"inputUuid": f"uuid-{input_name}", "sceneItemId": item_id}
 
     def _scene_name(self, data: dict[str, Any]) -> str:
         name = data.get("sceneName")
