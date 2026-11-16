@@ -162,7 +162,7 @@ laptop benchmark ("Video pipeline (node mode)" below).
 
 21. **`BajaCameraNode-<version>.exe`** from `build.ps1 -Node` and
     `installer/BajaCameraNode.iss`: embeddable Python with the service
-    package (no tray: the page is the status), NSSM, the node's page and its
+    package (and, since 16 Nov, the tray: decisions 24-28), NSSM, the node's page and its
     ffmpeg; the `BajaCameraNode` service (auto start, nobody logged in,
     restart on exit, Ctrl+C stop with 15 s), firewall TCP 8891 on private and
     domain networks, upgrade in place (service stopped first, same data
@@ -175,6 +175,62 @@ laptop benchmark ("Video pipeline (node mode)" below).
     unchanged.
 23. **The rig** starts the real node with `--fake-video --fake-cameras 2` as
     agent `rig-node`, and the bundle adds its two crop cameras.
+
+### The tray icon (added 2026-11-16)
+
+João asked for a tray icon on the laptops too, like the studio's, with a
+camera for its icon. Decision 21's "no tray: the page is the status" is
+replaced by these.
+
+24. **One tray package for both programs.** `tray/baja_studio_tray`, run with
+    `--node`, is the node's tray: `profile.py` holds what differs (name, icon,
+    single-instance mutex, registry key, data folder), and the poll loop,
+    badge dot, Quit and menu machinery are shared. The two trays use
+    different mutexes and Run values (`BajaStudioTray`,
+    `BajaCameraNodeTray`), so a PC with both shows both. The icon is a plain
+    camera in the Baja blue (`assets/camera-node.ico`, drawn by
+    `installer/icons/make_camera_icon.py`), at the studio icon's six sizes,
+    with the same green, amber or red dot.
+25. **The tray reads a status answer meant for it, which needs no token:**
+    `GET /api/node/tray-status` (`node/tray_status.py`). The tray runs as the
+    logged-on user and has no way to know the token: it is a secret setting
+    in the service's database, masked everywhere, and copying it to a file
+    the tray could read would put it where any local user could read it too.
+    Instead this one path is let through the token check, and:
+    - it answers only the laptop itself (client 127.0.0.1 or ::1; there is
+      no proxy in front of the node, so the address is the real one), and
+      `403` to any other computer, with or without the token;
+    - it holds nothing secret: the node's status and version, and per served
+      camera its id, name, video mode, status and short reason. The reason is
+      scrubbed again of the camera's output URL and its parts, its OBS
+      password and the token, in case a reason ever quoted one.
+    The rest of `/api/...` (settings, commands, health) still needs the
+    token, from the laptop too. Tests check each of these.
+26. **The port**: the node's port is a setting (8891 unless changed on its
+    page), stored in the database the tray does not open. The node writes
+    the port it serves on to `<data>\port.txt` at each start (a failure to
+    write it is logged, never fatal), and the tray reads that file at every
+    poll, falling back to 8891.
+27. **What it shows**: green when the node is ok and every camera it serves
+    is live; amber when a camera is not (the tooltip names it, with the
+    node's reason), when the node is degraded, or when no camera is set up
+    yet; red when the node does not answer. The menu: *Open the camera
+    node's page* (also the double-click), one greyed-out line per camera
+    ("Left S600 (node): live", "Right S600 (OBS): no OBS source"; a tray menu
+    has a fixed number of items, so these are six slots that show or hide),
+    *Restart the camera node* (`python -m baja_studio_tray.restart --node`
+    through UAC, `nssm restart BajaCameraNode`), *Open logs folder*, the
+    version, *Quit*. Portuguese on a Portuguese Windows, like the studio's.
+28. **Installer**: `build.ps1 -Node` now installs the tray and its pinned
+    dependencies in the node's Python too, and ships `camera-node.ico` (also
+    the installer's, the uninstaller's and the shortcuts' icon).
+    `BajaCameraNode.iss` copies the studio's tray handling: a ticked-by-default
+    task, the Run value at every user's logon, a Start-menu shortcut, "show
+    it now" at the end of the install, and the node's trays closed before an
+    upgrade or uninstall replaces their Python. `smoke-test-node.ps1` checks
+    the status answer, `port.txt`, the icon, the Run entry, and that
+    `--node --exit-after-first-poll` reports amber (no camera yet) with this
+    version; and that uninstall removes the Run entry.
 
 ## The interface between the node and its pipeline (brief §4)
 

@@ -5,6 +5,10 @@
 - *Open logs folder*: `<data>\\logs` in Explorer;
 - *Diagnostics bundle*: the service builds one, the tray saves it to the
   user's Downloads folder and opens it.
+
+The camera node's tray (`NodeTrayActions`): *Open the camera node's page*,
+*Restart the camera node* (`python -m baja_studio_tray.restart --node`,
+elevated the same way) and *Open logs folder*.
 """
 
 import ctypes
@@ -22,6 +26,7 @@ from baja_studio_tray.service import InstallPaths, StudioClient, StudioUnreachab
 PAGE_URL = "http://localhost:8888"
 READINESS_PATH = "/readiness"
 RESTART_MODULE = "baja_studio_tray.restart"
+NODE_RESTART_FLAG = "--node"
 # ShellExecute returns a value above 32 when it started the program.
 SHELL_EXECUTE_OK_ABOVE = 32
 SW_HIDE = 0
@@ -98,3 +103,33 @@ class TrayActions:
             return
         self.notify(self.labels.bundle_ready.format(path=saved))
         self.open_path(saved)
+
+
+@dataclass
+class NodeTrayActions:
+    """The camera node's menu actions, with the outside world injected."""
+
+    paths: InstallPaths
+    labels: Labels
+    notify: Callable[[str], None]
+    # The node's port, read again at each click (it is a setting; see service.port_from_file).
+    port: Callable[[], int]
+    open_url: Callable[[str], object] = webbrowser.open
+    open_path: Callable[[Path], None] = open_in_explorer
+    elevate: Callable[[str, str], bool] = run_elevated
+    python_executable: str = field(default_factory=lambda: sys.executable)
+
+    def open_page(self) -> None:
+        """The node's own page, on this laptop."""
+        self.open_url(f"http://localhost:{self.port()}/")
+
+    def restart_node(self) -> None:
+        """Ask for administrator rights and restart the node's service (see restart.py)."""
+        if self.elevate(self.python_executable, f"-m {RESTART_MODULE} {NODE_RESTART_FLAG}"):
+            self.notify(self.labels.node_restart_started)
+        else:
+            self.notify(self.labels.restart_cancelled)
+
+    def open_logs(self) -> None:
+        """The node's logs folder."""
+        self.open_path(self.paths.logs_directory)

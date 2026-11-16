@@ -18,6 +18,7 @@ from baja_studio.node.app import create_node_app, default_node_data_directory
 from baja_studio.node.parts import fake_parts, real_parts
 from baja_studio.node.settings import NodeSettings
 from baja_studio.node.test_cameras import fake_camera_settings
+from baja_studio.node.tray_status import write_port_file
 
 logger = logging.getLogger("baja_studio.node")
 
@@ -55,6 +56,7 @@ def main(argv: list[str] | None = None) -> None:
     settings = settings_store.get("node")
     assert isinstance(settings, NodeSettings)
     port = options.port or settings.port
+    write_port_file(options.data_dir or default_node_data_directory(), port)
     # log_config=None keeps uvicorn from replacing the studio's logging setup.
     uvicorn.run(app, host=options.host, port=port, log_config=None)
 

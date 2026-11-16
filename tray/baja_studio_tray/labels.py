@@ -40,6 +40,17 @@ class Labels:
     warnings_many: str
     failure_one: str
     failures_many: str
+    # The camera node's tray (`--node`).
+    open_node: str
+    restart_node: str
+    node_restart_started: str
+    node_unreachable: str
+    no_cameras: str
+    camera_live_one: str
+    cameras_live_many: str
+    camera_live: str
+    camera_trouble: str
+    camera_offline: str
 
     def modules_with_problems(self, titles: list[str]) -> str:
         """`attention: Playout, Audio`; the count when no title came with the answer."""
@@ -64,6 +75,10 @@ class Labels:
     def readiness_result(self, time: str, counts: list[str]) -> str:
         """`readiness at 14:32: 2 warnings, 1 failure`, for the tooltip."""
         return f"{self.readiness_at.format(time=time)}: {', '.join(counts)}"
+
+    def cameras_live(self, count: int) -> str:
+        """`1 camera live`, `2 cameras live`: the node's tooltip when all is well."""
+        return self.camera_live_one if count == 1 else self.cameras_live_many.format(count=count)
 
     def version_item(self, version: str | None) -> str:
         """The menu's version line."""
@@ -93,6 +108,16 @@ PT_BR = Labels(
     warnings_many="{count} avisos",
     failure_one="1 falha",
     failures_many="{count} falhas",
+    open_node="Abrir a página do nó de câmeras",
+    restart_node="Reiniciar o nó de câmeras",
+    node_restart_started="Reiniciando o nó de câmeras…",
+    node_unreachable="o nó não responde",
+    no_cameras="nenhuma câmera configurada",
+    camera_live_one="1 câmera no ar",
+    cameras_live_many="{count} câmeras no ar",
+    camera_live="no ar",
+    camera_trouble="com problema",
+    camera_offline="fora do ar",
 )
 
 EN = Labels(
@@ -118,6 +143,16 @@ EN = Labels(
     warnings_many="{count} warnings",
     failure_one="1 failure",
     failures_many="{count} failures",
+    open_node="Open the camera node's page",
+    restart_node="Restart the camera node",
+    node_restart_started="Restarting the camera node…",
+    node_unreachable="the node is not answering",
+    no_cameras="no cameras set up",
+    camera_live_one="1 camera live",
+    cameras_live_many="{count} cameras live",
+    camera_live="live",
+    camera_trouble="trouble",
+    camera_offline="offline",
 )
 
 
