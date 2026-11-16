@@ -36,6 +36,8 @@ RECENT_EVENTS_KEPT = 10
 LAST_SEEN_PUBLISH_INTERVAL_SECONDS = 1.0
 # If `subscribe` itself crashes (a bug, not a network problem), try again after this.
 LINK_CRASH_RETRY_SECONDS = 5.0
+# Shortest time between two re-reads of an agent's info after its camera list changed.
+INFO_REFRESH_MIN_SECONDS = 3.0
 DISABLED = "disabled"
 
 StatePublisher = Callable[[str, Any], None]
@@ -72,6 +74,9 @@ class _Link:
         self.status: str = LinkStatus.CONNECTING
         self.reason = ""
         self.info: dict[str, Any] | None = None
+        # True while `/agent/info` is being read again, so one change asks once.
+        self.refreshing_info = False
+        self.info_refreshed_at = float("-inf")
         self.cameras: dict[str, Any] = {}
         self.events: deque[dict[str, Any]] = deque(maxlen=RECENT_EVENTS_KEPT)
         self.last_seen: str | None = None
@@ -178,6 +183,11 @@ class AgentRegistry:
             if cameras != link.cameras:
                 link.cameras = cameras
                 self._publish(f"agents.{link.entry.id}.cameras", cameras)
+            if self._camera_list_is_stale(link, cameras) and self._may_refresh_info(link):
+                # A camera was added to or removed from the agent (the camera
+                # node's page does that while it runs): the camera list lives in
+                # `/agent/info`, read once at connect, so read it again.
+                self._in_background(self._refresh_info(link))
         elif isinstance(update, EventUpdate):
             event = update.message.model_dump(mode="json")
             if event in link.events:
@@ -199,12 +209,35 @@ class AgentRegistry:
         self._background.add(task)
         task.add_done_callback(self._background.discard)
 
+    @staticmethod
+    def _camera_list_is_stale(link: _Link, cameras: dict[str, Any]) -> bool:
+        """True if the state names other cameras than the info read at connect."""
+        if link.info is None:
+            return False  # not connected yet: the subscription reads the info first
+        known = {camera["id"] for camera in link.info.get("cameras", [])}
+        return known != set(cameras)
+
+    def _may_refresh_info(self, link: _Link) -> bool:
+        """Not while a read is under way, and at most every few seconds.
+
+        So an agent whose state and info disagree for good (a bug on its side)
+        costs one extra request every few seconds, not one per state push.
+        """
+        if link.refreshing_info:
+            return False
+        return self._clock.monotonic() - link.info_refreshed_at >= INFO_REFRESH_MIN_SECONDS
+
     async def _refresh_info(self, link: _Link) -> None:
-        """Presets live in `/agent/info`, so read it again when they change."""
-        with contextlib.suppress(Exception):
-            link.info = (await link.client.info()).model_dump(mode="json")
-            if self._links.get(link.entry.id) is link:
-                self._publish(f"agents.{link.entry.id}.info", link.info)
+        """Read `/agent/info` again: the presets or the camera list changed."""
+        link.refreshing_info = True
+        link.info_refreshed_at = self._clock.monotonic()
+        try:
+            with contextlib.suppress(Exception):
+                link.info = (await link.client.info()).model_dump(mode="json")
+                if self._links.get(link.entry.id) is link:
+                    self._publish(f"agents.{link.entry.id}.info", link.info)
+        finally:
+            link.refreshing_info = False
 
     def _set_status(self, link: _Link, status: str, reason: str) -> None:
         if status == LinkStatus.OK:
