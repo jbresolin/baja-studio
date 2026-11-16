@@ -45,6 +45,9 @@ def test_a_linked_agent_passes_and_says_what_it_has(
     start_agent(ptz_cameras=2)
     add(services, id="laptop-a")
     eventually(lambda: status_of(services) == "ok")
+    # The link says "ok" as soon as it is linked; the camera list lands in the state
+    # a moment later (on a slow machine, after this line): wait for both.
+    eventually(lambda: len(services.state.get("agents", "agents.laptop-a.cameras") or {}) == 2)
 
     result = run_module_checks(services, "agents", fake_clock)["agent:laptop-a"]
 
