@@ -1,6 +1,8 @@
 """Fixtures of the agent conformance suite.
 
     pytest tests/agent_contract                                  # the in-process fake
+    pytest tests/agent_contract --agent-impl node \\
+        [--agent-camera cam1|cam2]                               # an in-process camera node
     pytest tests/agent_contract --agent-url http://laptop:8890 \\
         --agent-token <token> [--agent-camera cam1]              # a real agent
 
@@ -9,6 +11,7 @@ velocity commands, always followed by a stop and a return to manual.
 """
 
 from collections.abc import Iterator
+from pathlib import Path
 from typing import Any
 
 import httpx2
@@ -23,6 +26,7 @@ from tests.agent_contract.agent_under_test import (
     in_process_socket,
     network_socket_opener,
 )
+from tests.node.node_harness import node_mode_camera, obs_mode_camera, running_node
 
 FAKE_TOKEN = "conformance-token"
 STUDIO_ID = "conformance-suite"
@@ -39,6 +43,9 @@ def agent(request: pytest.FixtureRequest) -> Iterator[AgentUnderTest]:
         with httpx2.Client(base_url=url, headers=headers, timeout=3.0, trust_env=False) as http:
             yield AgentUnderTest(http, token, network_socket_opener(url), camera)
         return
+    if request.config.getoption("--agent-impl") == "node":
+        yield from _in_process_node(request.getfixturevalue("tmp_path"), camera)
+        return
     # Real time on purpose: the suite must hold for real agents too.
     fake = FakeAgent(SystemClock(), ptz_cameras=2, crop_cameras=1, token=FAKE_TOKEN)
     headers = {STUDIO_ID_HEADER: STUDIO_ID, TOKEN_HEADER: FAKE_TOKEN}
@@ -49,6 +56,33 @@ def agent(request: pytest.FixtureRequest) -> Iterator[AgentUnderTest]:
             lambda socket_headers: in_process_socket(client, socket_headers),
             camera,
         )
+
+
+def _in_process_node(tmp_path: Path, camera: str | None) -> Iterator[AgentUnderTest]:
+    """A camera node with fake video: cam1 in node mode, cam2 in OBS mode (ADR 0023)."""
+    cameras = [node_mode_camera("cam1"), obs_mode_camera("cam2")]
+    with running_node(tmp_path / "node", cameras, token=FAKE_TOKEN, studio_id=STUDIO_ID) as node:
+        client = node.http
+        # The node's cameras start at once, but OBS mode first reads its filter and
+        # measures its source: wait until both cameras know their window.
+        node.wait_until_ready()
+        yield AgentUnderTest(
+            client,
+            FAKE_TOKEN,
+            lambda socket_headers: in_process_socket(client, socket_headers),
+            camera,
+        )
+
+
+@pytest.fixture
+def movable(agent: AgentUnderTest) -> Iterator[dict[str, Any]]:
+    """CameraInfo of a camera that moves (a PTZ, else a crop camera), in manual; stopped after."""
+    camera = agent.movable()
+    path = f"/cameras/{camera['id']}"
+    agent.http.put(f"{path}/mode", json={"mode": "manual"})
+    yield camera
+    agent.http.post(f"{path}/stop")
+    agent.http.put(f"{path}/mode", json={"mode": "manual"})
 
 
 @pytest.fixture
@@ -76,12 +110,14 @@ def crop(agent: AgentUnderTest) -> Iterator[dict[str, Any]]:
 
 
 def put_in_auto(agent: AgentUnderTest, camera_id: str, resume_after_ms: int) -> None:
-    """Switch to auto, or skip the test if this agent's tracker cannot run right now."""
+    """Switch to auto, or skip the test if this camera has no auto or its tracker cannot run."""
     answer = agent.http.put(
         f"/cameras/{camera_id}/mode",
         json={"mode": "auto", "profile": {"resume_after_ms": resume_after_ms}},
     )
     if answer.status_code == 409 and answer.json().get("error") == "tracker_not_ready":
         pytest.skip("the tracker is not ready on this camera; start it and run again")
+    if answer.status_code == 400 and answer.json().get("error") == "not_supported":
+        pytest.skip(f"{camera_id} has no auto mode (supports_auto: false)")
     assert answer.status_code == 200, answer.text
     assert answer.json()["mode"] == "auto"

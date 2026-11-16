@@ -27,8 +27,10 @@ def camera_path(camera: dict[str, Any]) -> str:
     return f"/cameras/{camera['id']}"
 
 
-def test_move_is_accepted_and_reports_the_mode(agent: AgentUnderTest, ptz: dict[str, Any]) -> None:
-    answer = agent.http.post(f"{camera_path(ptz)}/move", json={"pan": 0.1, "ttl_ms": 200})
+def test_move_is_accepted_and_reports_the_mode(
+    agent: AgentUnderTest, movable: dict[str, Any]
+) -> None:
+    answer = agent.http.post(f"{camera_path(movable)}/move", json={"pan": 0.1, "ttl_ms": 200})
 
     assert answer.status_code == 200
     assert CommandReply.model_validate(answer.json()) == CommandReply(
@@ -41,48 +43,48 @@ def test_move_is_accepted_and_reports_the_mode(agent: AgentUnderTest, ptz: dict[
     [{"pan": 1.5}, {"tilt": -2}, {"pan": 0.1, "ttl_ms": 2001}, {"pan": 0.1, "ttl_ms": 0}],
 )
 def test_velocities_outside_minus_one_to_one_and_bad_ttls_are_refused(
-    agent: AgentUnderTest, ptz: dict[str, Any], body: dict[str, Any]
+    agent: AgentUnderTest, movable: dict[str, Any], body: dict[str, Any]
 ) -> None:
-    answer = agent.http.post(f"{camera_path(ptz)}/move", json=body)
+    answer = agent.http.post(f"{camera_path(movable)}/move", json=body)
 
     assert answer.status_code == 400
     assert answer.json()["error"] == "bad_request"
 
 
 def test_motion_stops_by_itself_when_the_ttl_runs_out(
-    agent: AgentUnderTest, ptz: dict[str, Any]
+    agent: AgentUnderTest, movable: dict[str, Any]
 ) -> None:
     # The dead-man switch: no further /move, so the camera must stop after
     # ttl_ms, and the state must say so within one push cycle.
     with agent.socket() as socket:
-        agent.http.post(f"{camera_path(ptz)}/move", json={"pan": 0.1, "ttl_ms": 300})
-        socket.wait_for_camera(ptz["id"], lambda state: state["moving"], 1.0, "moving=true")
+        agent.http.post(f"{camera_path(movable)}/move", json={"pan": 0.1, "ttl_ms": 300})
+        socket.wait_for_camera(movable["id"], lambda state: state["moving"], 1.0, "moving=true")
 
         socket.wait_for_camera(
-            ptz["id"],
+            movable["id"],
             lambda state: not state["moving"],
             0.3 + PUSH_INTERVAL_MAX_SECONDS + MARGIN_SECONDS,
             "moving=false after the TTL",
         )
 
 
-def test_a_move_of_all_zeros_is_a_stop(agent: AgentUnderTest, ptz: dict[str, Any]) -> None:
+def test_a_move_of_all_zeros_is_a_stop(agent: AgentUnderTest, movable: dict[str, Any]) -> None:
     with agent.socket() as socket:
-        agent.http.post(f"{camera_path(ptz)}/move", json={"pan": 0.1, "ttl_ms": 2000})
-        socket.wait_for_camera(ptz["id"], lambda state: state["moving"], 1.0, "moving=true")
+        agent.http.post(f"{camera_path(movable)}/move", json={"pan": 0.1, "ttl_ms": 2000})
+        socket.wait_for_camera(movable["id"], lambda state: state["moving"], 1.0, "moving=true")
 
-        agent.http.post(f"{camera_path(ptz)}/move", json={"pan": 0, "tilt": 0, "zoom": 0})
+        agent.http.post(f"{camera_path(movable)}/move", json={"pan": 0, "tilt": 0, "zoom": 0})
 
         socket.wait_for_camera(
-            ptz["id"],
+            movable["id"],
             lambda state: not state["moving"],
             PUSH_INTERVAL_MAX_SECONDS + MARGIN_SECONDS,
             "moving=false after a zero move",
         )
 
 
-def test_stop_is_accepted(agent: AgentUnderTest, ptz: dict[str, Any]) -> None:
-    answer = agent.http.post(f"{camera_path(ptz)}/stop")
+def test_stop_is_accepted(agent: AgentUnderTest, movable: dict[str, Any]) -> None:
+    answer = agent.http.post(f"{camera_path(movable)}/stop")
 
     assert answer.status_code == 200
     assert answer.json()["accepted"] is True
@@ -118,45 +120,49 @@ def test_a_preset_number_above_preset_max_is_refused(
     assert answer.json()["error"] == "bad_request"
 
 
-def test_position_matches_the_feedback_flag(agent: AgentUnderTest, ptz: dict[str, Any]) -> None:
-    answer = agent.http.get(f"{camera_path(ptz)}/position")
+def test_position_matches_the_feedback_flag(agent: AgentUnderTest, movable: dict[str, Any]) -> None:
+    answer = agent.http.get(f"{camera_path(movable)}/position")
 
     assert answer.status_code == 200
-    if ptz["has_position_feedback"]:
+    if movable["has_position_feedback"]:
         Position.model_validate(answer.json())
     else:
         assert answer.json() is None
 
 
 def test_mode_can_be_read_and_auto_paused_cannot_be_requested(
-    agent: AgentUnderTest, ptz: dict[str, Any]
+    agent: AgentUnderTest, movable: dict[str, Any]
 ) -> None:
-    ModeReply.model_validate(agent.http.get(f"{camera_path(ptz)}/mode").json())
+    ModeReply.model_validate(agent.http.get(f"{camera_path(movable)}/mode").json())
 
-    answer = agent.http.put(f"{camera_path(ptz)}/mode", json={"mode": "auto_paused"})
+    answer = agent.http.put(f"{camera_path(movable)}/mode", json={"mode": "auto_paused"})
 
     assert answer.status_code == 400
     assert answer.json()["error"] == "bad_request"
 
 
 def test_image_controls_are_the_ones_info_lists_and_changes_are_read_back(
-    agent: AgentUnderTest, ptz: dict[str, Any]
+    agent: AgentUnderTest, movable: dict[str, Any]
 ) -> None:
-    controls = agent.http.get(f"{camera_path(ptz)}/image").json()
-    assert set(controls) == set(ptz["image_controls"])
+    controls = agent.http.get(f"{camera_path(movable)}/image").json()
+    assert set(controls) == set(movable["image_controls"])
     if not controls:
         return
     name, current = next(iter(controls.items()))
 
     # Write back the value it already has: harmless on a real camera.
-    answer = agent.http.put(f"{camera_path(ptz)}/image", json={name: {"value": current["value"]}})
+    answer = agent.http.put(
+        f"{camera_path(movable)}/image", json={name: {"value": current["value"]}}
+    )
 
     assert answer.status_code == 200
     ImageControlValue.model_validate(answer.json()[name])
 
 
-def test_an_unknown_image_control_is_refused(agent: AgentUnderTest, ptz: dict[str, Any]) -> None:
-    answer = agent.http.put(f"{camera_path(ptz)}/image", json={"no_such_control": {"value": 1}})
+def test_an_unknown_image_control_is_refused(
+    agent: AgentUnderTest, movable: dict[str, Any]
+) -> None:
+    answer = agent.http.put(f"{camera_path(movable)}/image", json={"no_such_control": {"value": 1}})
 
     assert answer.status_code == 400
     assert answer.json()["error"] == "unknown_control"
@@ -237,20 +243,66 @@ def test_a_crop_cameras_position_is_its_window_centre(
     assert 0.0 <= position["zoom"] <= 1.0
 
 
-def test_resync_is_accepted(agent: AgentUnderTest, ptz: dict[str, Any]) -> None:
-    answer = agent.http.post(f"{camera_path(ptz)}/resync")
+def test_resync_is_accepted(agent: AgentUnderTest, movable: dict[str, Any]) -> None:
+    answer = agent.http.post(f"{camera_path(movable)}/resync")
 
     assert answer.status_code == 200
     assert answer.json()["accepted"] is True
 
 
 def test_commands_to_an_offline_device_fail_with_503(
-    agent: AgentUnderTest, ptz: dict[str, Any]
+    agent: AgentUnderTest, movable: dict[str, Any]
 ) -> None:
-    agent.fake_switch(f"/cameras/{ptz['id']}/device", {"online": False})
+    agent.fake_switch(f"/cameras/{movable['id']}/device", {"online": False})
 
-    answer = agent.http.post(f"{camera_path(ptz)}/move", json={"pan": 0.1})
+    answer = agent.http.post(f"{camera_path(movable)}/move", json={"pan": 0.1})
 
     assert answer.status_code == 503
     assert answer.json()["error"] == "device_offline"
-    agent.fake_switch(f"/cameras/{ptz['id']}/device", {"online": True})
+    agent.fake_switch(f"/cameras/{movable['id']}/device", {"online": True})
+
+
+# --- contract 1.1: snapshots (run only where advertised) ------------------------------
+
+
+def test_a_snapshot_is_a_picture_of_the_camera(agent: AgentUnderTest) -> None:
+    # A camera that lists "snapshot" in its capabilities serves
+    # GET /cameras/{id}/snapshot: a small picture (JPEG; PNG from a fake OBS)
+    # of its whole frame, or of its window if it says so in a header.
+    camera = agent.with_capability("snapshot")
+
+    answer = agent.http.get(f"{camera_path(camera)}/snapshot", params={"width": 320})
+
+    assert answer.status_code in (200, 404), answer.text
+    if answer.status_code == 404:
+        # No picture yet (a pipeline still starting) is the contract's no_snapshot.
+        assert answer.json()["error"] == "no_snapshot"
+        return
+    assert answer.headers["content-type"].startswith("image/")
+    jpeg, png = answer.content.startswith(b"\xff\xd8"), answer.content.startswith(b"\x89PNG")
+    assert jpeg or png, "the picture is a JPEG (or a PNG)"
+    shows = answer.headers.get("x-snapshot-shows", "frame")
+    assert shows in ("frame", "window")
+    if shows == "window":
+        # Where the window was when the picture was taken: four fractions.
+        window = [float(part) for part in answer.headers["x-crop-window"].split(",")]
+        assert len(window) == 4 and all(0.0 <= part <= 1.0 for part in window)
+
+
+def test_a_snapshot_width_out_of_range_is_a_400(agent: AgentUnderTest) -> None:
+    camera = agent.with_capability("snapshot")
+
+    answer = agent.http.get(f"{camera_path(camera)}/snapshot", params={"width": 0})
+
+    assert answer.status_code == 400
+    assert answer.json()["error"] == "bad_request"
+
+
+def test_a_camera_without_snapshots_says_not_supported(agent: AgentUnderTest) -> None:
+    # The fake agent's PTZs list no "snapshot": asking one anyway is refused.
+    camera = agent.with_capability("snapshot", present=False)
+
+    answer = agent.http.get(f"{camera_path(camera)}/snapshot")
+
+    assert answer.status_code == 400
+    assert answer.json()["error"] == "not_supported"
