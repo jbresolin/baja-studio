@@ -125,7 +125,10 @@ def pipeline_backend(
     driver = PipelineCropDriver(host, config, spec, make_pipeline, initial_window)
 
     def snapshot(width: int) -> Snapshot:
-        picture = driver.snapshot()
+        try:
+            picture = driver.snapshot()
+        except Exception as error:  # a broken pipeline is no picture, never a 500
+            raise no_snapshot(f"the pipeline gave no picture: {error}") from None
         if picture is None:
             raise no_snapshot(f"no picture yet: {host.camera_id} {_pipeline_words(driver)}")
         return Snapshot(picture, JPEG)

@@ -95,7 +95,12 @@ class NodeCameras:
         """The current backend's details for the page (pipeline figures, OBS link)."""
         camera = self.camera(camera_id)
         backend = None if camera is None else camera.backend
-        return {} if backend is None else backend.details()
+        if backend is None:
+            return {}
+        try:
+            return backend.details()
+        except Exception as error:  # a pipeline that misbehaves must not stop the pushes
+            return {"error": f"cannot read the video's status: {error}"}
 
     def apply(self, settings: NodeSettings) -> None:
         """Make the running cameras match `settings`."""

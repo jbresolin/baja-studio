@@ -71,8 +71,8 @@ def create_node_app(
 ) -> FastAPI:
     """The node's app; its module starts when the app starts serving.
 
-    `token_override` (tests and the rig's `--token`) replaces the saved token
-    for this run, without saving it.
+    `token_override` (tests, and the rig's `--token`) sets the node's token
+    as if it had been typed on its page (it is saved).
     """
     app = create_app(
         data_directory=data_directory or default_node_data_directory(),

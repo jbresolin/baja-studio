@@ -128,6 +128,32 @@ def test_a_pipeline_that_restarts_keeps_the_window_and_the_api_up(tmp_path: Path
         assert window(node, "cam1") == {"x": 0.5, "y": 0.5, "w": 0.5, "h": 0.5}
 
 
+def test_a_pipeline_that_breaks_outright_never_takes_the_api_down(tmp_path: Path) -> None:
+    # Worse than a restart: the pipeline object itself raises when asked anything
+    # (a bug, a broken pipe). The camera's worker fails and is restarted by the
+    # supervisor with a new pipeline; meanwhile the API answers as usual.
+    with running_node(tmp_path, [node_mode_camera("cam1")]) as node:
+        node.wait_until_ready()
+        broken = pipeline_of(node)
+
+        def explode() -> Any:
+            raise RuntimeError("the pipe to ffmpeg broke")
+
+        broken.status = explode  # type: ignore[method-assign]
+
+        # A snapshot is "no picture", never a server error ...
+        answer = node.http.get("/cameras/cam1/snapshot")
+        assert answer.status_code == 404
+        assert answer.json()["error"] == "no_snapshot"
+        # ... the agent's info and health still answer ...
+        assert node.http.get("/agent/info").status_code == 200
+        assert node.http.get("/agent/health").status_code == 200
+        # ... and the camera comes back on a new pipeline, at the same window.
+        eventually(lambda: len(node.pipelines.made) >= 2, "no new pipeline was started")
+        eventually(lambda: node.state("cameras.cam1.status") == "ok", "never ok again")
+        assert broken.stops == 1
+
+
 def test_a_camera_without_an_output_url_says_what_to_paste(tmp_path: Path) -> None:
     # A camera whose output URL is still empty starts no pipeline at all.
     camera = node_mode_camera("cam1")

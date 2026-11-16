@@ -181,6 +181,17 @@ begin
   Result := False;
 end;
 
+{ Stop any ffmpeg left running from this program folder (a node that crashed can
+  leave its children behind): they hold ffmpeg.exe, which an upgrade replaces and
+  uninstall deletes, and they hold the cameras. }
+procedure StopNodeFfmpeg();
+begin
+  RunHidden(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+    '-NoProfile -NonInteractive -Command "Get-Process ffmpeg -ErrorAction SilentlyContinue | ' +
+    'Where-Object { $_.Path -eq ''' + ExpandConstant('{app}\ffmpeg\ffmpeg.exe') + ''' } | ' +
+    'Stop-Process -Force"');
+end;
+
 { --- Wizard: welcome -> data folder -> tasks (firewall) -> install ------------------ }
 
 procedure InitializeWizard();
@@ -224,6 +235,7 @@ begin
     program folder can be replaced. }
   if FileExists(ExpandConstant('{app}\nssm\nssm.exe')) then
     Nssm('stop ' + NodeService);
+  StopNodeFfmpeg();
   Result := '';
 end;
 
@@ -309,6 +321,7 @@ begin
   if CurUninstallStep = usUninstall then
   begin
     Nssm('stop ' + NodeService);
+    StopNodeFfmpeg();
     Nssm('remove ' + NodeService + ' confirm');
     NetSh('delete rule name="' + FirewallRule + '"');
   end;

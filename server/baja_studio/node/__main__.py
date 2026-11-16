@@ -4,8 +4,8 @@ The node installer's service runs it with no options: the port comes from
 the node's settings (8891 by default), the data folder from `BAJA_NODE_DATA`.
 `--fake-video` serves fake pipelines and capture devices instead of ffmpeg
 (the rehearsal rig, CI's conformance run); `--fake-cameras N` also creates N
-`node`-mode cameras on a fresh data folder, so the node has something to
-serve; `--token` sets the token for this run only (the rig and CI).
+`node`-mode cameras (replacing the saved ones), so the node has something
+to serve; `--token` sets the token (saved, as from the page: the rig and CI).
 """
 
 import argparse
@@ -37,7 +37,7 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument(
         "--fake-cameras", type=int, default=0, help="with --fake-video: serve N node-mode cameras"
     )
-    parser.add_argument("--token", default=None, help="the agent token for this run only")
+    parser.add_argument("--token", default=None, help="set the agent token (saved)")
     parser.add_argument("--agent-id", default=None, help="the agent id for this run")
     options = parser.parse_args(argv)
     parts = fake_parts() if options.fake_video else real_parts()
