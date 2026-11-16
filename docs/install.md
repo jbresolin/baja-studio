@@ -254,3 +254,26 @@ lines. Close that program, or pick another port in the feeds settings (at the
 bottom of the Feeds page): the studio checks a new port is free before it
 writes it, so a change never stops MediaMTX. Then start *Baja Studio feeds*
 in the *Services* app if it shows as *Paused*.
+
+## A camera node on a NanoPi R3S (Linux)
+
+A NanoPi R3S LTS with one 4K webcam is a camera node like a laptop's
+([ADR 0024](adr/0024-nanopi-camera-node.md)): the studio adds it on the
+**Agents** page (port 8891) and its camera in **Camera setup**.
+
+1. Flash FriendlyElec's **Ubuntu Noble Core** image (its 6.1 vendor kernel
+   has the video codec and 2D engine drivers; a mainline image does not).
+2. Copy `BajaCameraNode-<version>-linux-arm64.tar.gz` from the GitHub
+   Release to the board, unpack it, and run
+   `sudo ./BajaCameraNode-<version>-linux-arm64/install.sh`. It installs the
+   few Ubuntu packages it needs (the first time only, from the internet),
+   the program in `/opt/baja-camera-node`, and the `baja-camera-node`
+   service, and prints the node's page address.
+3. On that page: name, token, the camera (its USB device and capture device),
+   the decoder **Auto** (the board's hardware), and the camera's SRT URL from
+   the studio's **Feeds** page.
+
+Upgrade: run the new package's `install.sh` the same way (settings are kept).
+Remove: `sudo /opt/baja-camera-node/install.sh --uninstall` (`--purge` also
+removes the settings). Logs: `journalctl -u baja-camera-node -f`, and
+`/var/lib/baja-camera-node/logs`.

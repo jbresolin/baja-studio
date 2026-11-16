@@ -122,3 +122,9 @@ def test_a_diagonal_move_sends_x_and_y_and_nothing_for_the_same_window() -> None
     ]
     # The very same window again: nothing to send at all.
     assert window_commands(before, before) == []
+
+
+def test_a_larger_minimum_width_can_be_asked_for() -> None:
+    # The Rockchip RGA scales 8x at most, so the NanoPi asks for 240 pixels at least.
+    narrow = crop_pixels(SourceWindow(0.5, 0.5, 0.0, 0.0), WIDTH, HEIGHT, ASPECT, min_width=240)
+    assert narrow.width == 240

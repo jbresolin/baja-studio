@@ -93,3 +93,12 @@ def test_a_new_backend_is_needed_only_when_the_video_changes() -> None:
     # And so does another video mode.
     obs = camera.model_copy(update={"mode": VideoMode.OBS})
     assert backend_key(obs, "ffmpeg") != backend_key(camera, "ffmpeg")
+
+
+def test_the_decoder_is_auto_by_default_and_the_rockchip_one_can_be_chosen() -> None:
+    # auto: the Rockchip hardware path on the NanoPi, the CPU on a laptop (ADR 0024).
+    assert NodeCameraSettings(id="cam1").video.decoder == "auto"
+    chosen = NodeCameraSettings(id="cam1", video={"decoder": "mjpeg_rkmpp"})  # type: ignore[arg-type]
+    assert chosen.video.decoder == "mjpeg_rkmpp"
+    with pytest.raises(ValidationError):
+        NodeCameraSettings(id="cam1", video={"decoder": "mjpeg_vaapi"})  # type: ignore[arg-type]

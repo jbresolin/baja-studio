@@ -357,3 +357,67 @@ def test_stop_during_a_wait_returns_without_waiting_it_out(bench: Bench) -> None
     # stop() returns at once although no fake time passes.
     bench.pipeline.stop()
     assert bench.state() == PipelineState.STOPPED
+
+
+# --- the NanoPi: decoder "auto" on a Rockchip board (ADR 0024) ---------------------------------
+
+
+def rockchip_pipeline(
+    fake_clock: FakeClock, decoder: str, on_rockchip: bool
+) -> tuple[CameraPipeline, FakeLauncher, FakeProber, RecordingSenders]:
+    """A pipeline whose parts say whether this computer is a Rockchip board."""
+    launcher, senders = FakeLauncher(), RecordingSenders()
+    prober = FakeProber(working={"h264_rkmpp", "libx264"})
+    parts = PipelineParts(
+        launch=launcher,
+        probe_encoder=prober,
+        make_sender=senders,
+        free_port=lambda: 5555,
+        ffmpeg_exists=lambda path: True,
+        on_rockchip=lambda: on_rockchip,
+    )
+    spec = PipelineSpec(
+        device="/dev/v4l/by-path/platform-xhci-hcd.0.auto-usb-0:1:1.0-video-index0",
+        input_width=3840,
+        input_height=2160,
+        input_fps=30,
+        output_url=URL,
+        decoder=decoder,
+        label="nanopi camera",
+    )
+    pipeline = CameraPipeline(spec, fake_clock, logging.getLogger("test.pipeline"), parts)
+    return pipeline, launcher, prober, senders
+
+
+def test_auto_on_a_rockchip_board_runs_the_hardware_path(fake_clock: FakeClock) -> None:
+    pipeline, launcher, prober, _ = rockchip_pipeline(fake_clock, "auto", on_rockchip=True)
+    # "auto" was settled when the pipeline was made: the Rockchip decoder.
+    assert pipeline.spec.decoder == "mjpeg_rkmpp"
+    pipeline.start()
+    try:
+        wait_until_workers_sleep(fake_clock, PIPELINE_THREADS)
+        # Only the MPP encoder was tested, and ffmpeg runs the RGA graph with it.
+        assert prober.asked == ["h264_rkmpp"]
+        command = launcher.latest.command
+        assert "mjpeg_rkmpp" in command
+        assert "vpp_rkrga@window" in command[command.index("-filter_complex") + 1]
+    finally:
+        pipeline.stop()
+
+
+def test_auto_elsewhere_decodes_on_the_cpu(fake_clock: FakeClock) -> None:
+    pipeline, _, _, _ = rockchip_pipeline(fake_clock, "auto", on_rockchip=False)
+    assert pipeline.spec.decoder == "mjpeg"
+
+
+def test_on_the_rga_the_window_is_never_narrower_than_it_can_scale(fake_clock: FakeClock) -> None:
+    pipeline, _, _, senders = rockchip_pipeline(fake_clock, "auto", on_rockchip=True)
+    pipeline.start()
+    try:
+        wait_until_workers_sleep(fake_clock, PIPELINE_THREADS)
+        # A window 1 % of the frame wide (38 pixels of 4K) would need a 50x zoom;
+        # the RGA scales 8x at most, so the window is widened to 240 pixels.
+        pipeline.set_window(SourceWindow(0.5, 0.5, 0.01, 0.01))
+        assert senders.made[0].offered[-1].width == 240
+    finally:
+        pipeline.stop()

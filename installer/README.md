@@ -18,6 +18,8 @@ Why it is built this way: [ADR 0007](../docs/adr/0007-installer-and-gateway.md).
 | `caddy/pin.json` | Caddy version, the Cloudflare DNS module, the Go and xcaddy versions it is built with, and the SHA-256 of the result |
 | `ffmpeg/pin.json` | ffmpeg 9.0.2, gyan.dev "essentials" build (GPL, x64), from its GitHub release, and its SHA-256 |
 | `ffmpeg-node/pin.json` | The camera node's ffmpeg (WP15, ADR 0023): BtbN's static GPL build of ffmpeg 8.1.3 (not 9.x: see ADR 0023 on NVENC and Pascal cards), which has the zmq filter, SRT, NVENC, QuickSync and AMF that the studio's "essentials" build lacks; the Windows zip and its SHA-256, and the matching Linux build CI runs the node's video tests with |
+| `ffmpeg-rockchip/` | The Linux camera node's ffmpeg for Rockchip boards (the NanoPi R3S, [ADR 0024](../docs/adr/0024-nanopi-camera-node.md)): `pin.json` (ffmpeg-rockchip, MPP and librga commits), the patch that lets the RGA crop move while running, and `build.sh`, which the release workflow runs in an arm64 Ubuntu 24.04 container |
+| `linux-node/` | The Linux camera node's package: `build-package.sh` assembles `BajaCameraNode-<version>-linux-arm64.tar.gz` (arm64 wheelhouse, the node's page, the ffmpeg above); `install.sh` installs, upgrades or removes it on the board; the systemd unit and the udev rule it installs |
 | `mediamtx/pin.json` | MediaMTX v1.21.3 (MIT) for the feeds service: the Windows amd64 zip and its SHA-256, and the Linux build CI runs in the rig tests |
 | `icons/baja-icone.svg` | The Baja mascot artwork the icon is made from |
 | `icons/make_icons.py` | Makes `tray/baja_studio_tray/assets/baja-studio.ico` (full artwork at 256/48/32, single-fill silhouette at 24/20/16); run by hand, the result is committed |
@@ -27,6 +29,8 @@ The tray app itself is in [tray/](../tray/) (ADR 0010).
 
 The release workflow (`.github/workflows/release.yml`) runs all of this on a
 Windows runner for every `v*` tag and attaches the installer to a GitHub Release.
+The Linux camera node is built, installed and smoke-tested on GitHub's arm64
+Ubuntu runner by the same workflow and attached to the same release.
 
 ## Building locally (Windows)
 

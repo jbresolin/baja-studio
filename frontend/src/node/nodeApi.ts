@@ -184,7 +184,7 @@ export function newCamera(existing: NodeCamera[]): NodeCamera {
       input_fps: 30,
       output_url: "",
       encoder: "auto",
-      decoder: "mjpeg",
+      decoder: "auto",
       bitrate_kbps: 8000,
     },
     obs: { port: 4455, password: "", source: "", filter_name: "Baja crop", preview_source: "" },

@@ -21,10 +21,17 @@ Meanwhile, from any thread and without ever waiting for ffmpeg:
 import logging
 import threading
 from collections import deque
+from dataclasses import replace
 
 from baja_studio.core.clock import Clock
 from baja_studio.core.worker import MAX_RESTART_DELAY_SECONDS, FailureStreak
-from baja_studio.node.video.crop_commands import CropPixels, crop_pixels
+from baja_studio.node.video import rockchip
+from baja_studio.node.video.crop_commands import (
+    MIN_CROP_WIDTH_PIXELS,
+    CropPixels,
+    crop_pixels,
+    window_commands,
+)
 from baja_studio.node.video.encoders import PROFILES, choose_encoder
 from baja_studio.node.video.ffmpeg_command import build_ffmpeg_command
 from baja_studio.node.video.ffmpeg_log import (
@@ -96,11 +103,16 @@ class CameraPipeline:
         logger: Logger,
         parts: PipelineParts | None = None,
     ) -> None:
-        """Ready to run `spec`; nothing starts until `start()`."""
-        self.spec = spec
+        """Ready to run `spec`; nothing starts until `start()`.
+
+        A decoder of `auto` is settled here, once: the Rockchip hardware path
+        on a Rockchip board, the CPU elsewhere (ADR 0024).
+        """
+        self._parts = parts or PipelineParts()
+        decoder = rockchip.resolve_decoder(spec.decoder, self._parts.on_rockchip())
+        self.spec = replace(spec, decoder=decoder)
         self._clock = clock
         self._logger = logger
-        self._parts = parts or PipelineParts()
         self._lock = threading.Lock()
         self._stop_requested = threading.Event()
         self._thread: threading.Thread | None = None
@@ -115,6 +127,11 @@ class CameraPipeline:
         self._encoder: str | None = None
         self._restarts = 0
         self._log = LogTail(url_secrets(spec.output_url))
+        self._min_crop_width = (
+            rockchip.min_rga_crop_width(spec.output_width)
+            if self.spec.on_rockchip
+            else MIN_CROP_WIDTH_PIXELS
+        )
 
     # --- the interface -----------------------------------------------------------------
 
@@ -185,7 +202,13 @@ class CameraPipeline:
 
     def _pixels(self, window: SourceWindow) -> CropPixels:
         spec = self.spec
-        return crop_pixels(window, spec.input_width, spec.input_height, spec.output_aspect)
+        return crop_pixels(
+            window,
+            spec.input_width,
+            spec.input_height,
+            spec.output_aspect,
+            min_width=self._min_crop_width,
+        )
 
     def _set_state(self, state: PipelineState, reason: str) -> None:
         with self._lock:
@@ -231,7 +254,9 @@ class CameraPipeline:
         with self._lock:
             if self._encoder is not None:
                 return self._encoder, ""
-        choice = choose_encoder(self.spec.encoder, self.spec.ffmpeg_path, self._parts.probe_encoder)
+        choice = choose_encoder(
+            self.spec.encoder, self.spec.ffmpeg_path, self._parts.probe_encoder, self.spec.decoder
+        )
         if choice.encoder is None:
             return None, choice.reason()
         for name, message in choice.failures:
@@ -244,7 +269,8 @@ class CameraPipeline:
         if self._parts.make_sender is not None:
             return self._parts.make_sender
         if self._zmq_senders is None:
-            self._zmq_senders = ZmqSenders(self._clock)
+            commands = rockchip.rga_window_commands if self.spec.on_rockchip else window_commands
+            self._zmq_senders = ZmqSenders(self._clock, commands)
         return self._zmq_senders
 
     def _one_run(

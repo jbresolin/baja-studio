@@ -1,6 +1,7 @@
 name: Release
 
-# A tag v* builds the installers (the studio's, and the camera node's since WP15),
+# A tag v* builds the installers (the studio's, the camera node's since WP15, and the
+# Linux camera node for the NanoPi since ADR 0024),
 # installs each on the runner (smoke test) and
 # attaches it to a GitHub Release. Pull requests that change the installer run
 # the same build and smoke test, without releasing anything.
@@ -169,3 +170,115 @@ jobs:
         run: |
           gh release upload $env:GITHUB_REF_NAME "dist/BajaCameraNode-$env:VERSION.exe"
           if ($LASTEXITCODE -ne 0) { exit 1 }
+
+  # --- the camera node for Linux boards: the NanoPi R3S (ADR 0024) -------------------------
+
+  node-arm64-ffmpeg:
+    name: Build the node's ffmpeg for Rockchip boards (arm64)
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      # The build takes a while; it only changes when its pin, patch or script does.
+      - name: Reuse the last build of the same pin and patch
+        id: cache
+        uses: actions/cache@v4
+        with:
+          path: ffmpeg-rockchip-node-linux-arm64.tar.xz
+          key: ffmpeg-rockchip-${{ hashFiles('installer/ffmpeg-rockchip/**') }}
+
+      - name: Build MPP, librga and the patched ffmpeg-rockchip (Ubuntu 24.04 container)
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: |
+          docker run --rm -v "$PWD:/src" -w /src ubuntu:24.04 \
+            installer/ffmpeg-rockchip/build.sh /src/ffmpeg-rockchip-node-linux-arm64.tar.xz
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ffmpeg-rockchip-node-linux-arm64
+          path: ffmpeg-rockchip-node-linux-arm64.tar.xz
+
+  node-arm64:
+    name: Build, install and test the Linux camera node (arm64)
+    needs: node-arm64-ffmpeg
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ffmpeg-rockchip-node-linux-arm64
+
+      - name: Stamp the version
+        working-directory: server
+        run: |
+          if [ "$GITHUB_REF_TYPE" = tag ]; then
+            version=$(python -m baja_studio.release_tools stamp-version --tag "$GITHUB_REF_NAME")
+          else
+            version=$(python -m baja_studio.release_tools stamp-version --dev "$GITHUB_RUN_NUMBER")
+          fi
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Build the node's page
+        working-directory: frontend
+        run: npm ci && npm run build
+
+      - name: Assemble the package
+        run: |
+          python -m pip install --quiet --upgrade pip
+          installer/linux-node/build-package.sh "$VERSION" ffmpeg-rockchip-node-linux-arm64.tar.xz \
+            "dist/BajaCameraNode-$VERSION-linux-arm64.tar.gz"
+
+      # The runner is arm64 Ubuntu 24.04, like the board's image, but without its
+      # video hardware: the node must install, start, answer, and say so; its ffmpeg
+      # must run and carry the patch. Then an upgrade in place, then removal.
+      - name: Smoke test (install, check, upgrade, uninstall)
+        run: |
+          set -euo pipefail
+          tar -C "$RUNNER_TEMP" -xzf "dist/BajaCameraNode-$VERSION-linux-arm64.tar.gz"
+          folder="$RUNNER_TEMP/BajaCameraNode-$VERSION-linux-arm64"
+          sudo "$folder/install.sh"
+          curl -fsS http://127.0.0.1:8891/agent/info | tee agent-info.json
+          python -c "import json; info = json.load(open('agent-info.json')); assert info['contract_version'] == '1.1', info"
+          curl -fsS http://127.0.0.1:8891/ | grep -q '<div id="root">'
+          /opt/baja-camera-node/ffmpeg/bin/ffmpeg -hide_banner -h filter=vpp_rkrga | grep -E '^\s+cw\s' | grep -q T
+          systemctl is-enabled baja-camera-node
+          sudo "$folder/install.sh"
+          curl -fsS http://127.0.0.1:8891/agent/info > /dev/null
+          sudo "$folder/install.sh" --uninstall
+          ! systemctl is-active baja-camera-node
+          test -d /var/lib/baja-camera-node
+
+      - name: Keep the package
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: baja-camera-node-linux-arm64-${{ env.VERSION }}
+          path: dist/BajaCameraNode-*-linux-arm64.tar.gz
+          if-no-files-found: warn
+
+  node-arm64-release:
+    name: Attach the Linux camera node to the GitHub Release
+    if: github.ref_type == 'tag'
+    needs: [installer, node-arm64]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: baja-camera-node-linux-arm64-*
+          merge-multiple: true
+      - name: Upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" BajaCameraNode-*-linux-arm64.tar.gz --repo "$GITHUB_REPOSITORY"

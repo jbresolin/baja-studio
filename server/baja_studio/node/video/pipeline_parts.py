@@ -16,10 +16,11 @@ from typing import Protocol
 import zmq
 
 from baja_studio.core.clock import Clock
-from baja_studio.node.video.crop_commands import CropPixels
+from baja_studio.node.video.crop_commands import CropPixels, WindowCommands, window_commands
 from baja_studio.node.video.encoders import EncoderProber, probe_encoder
 from baja_studio.node.video.ffmpeg_command import ZMQ_HOST
 from baja_studio.node.video.ffmpeg_process import Launcher, launch_ffmpeg
+from baja_studio.node.video.rockchip import is_rockchip_board
 from baja_studio.node.video.window_sender import WindowSender
 
 Logger = logging.Logger | logging.LoggerAdapter[logging.Logger]
@@ -64,9 +65,14 @@ def ffmpeg_is_installed(ffmpeg_path: str) -> bool:
 class ZmqSenders:
     """Makes real window senders, all sharing one ZeroMQ context (one per pipeline)."""
 
-    def __init__(self, clock: Clock) -> None:
-        """A fresh context; `close` ends it once every sender has stopped."""
+    def __init__(self, clock: Clock, commands: WindowCommands = window_commands) -> None:
+        """A fresh context; `close` ends it once every sender has stopped.
+
+        `commands` is how the pipeline's graph takes window changes (laptop
+        crop filter, or the Rockchip RGA).
+        """
         self._clock = clock
+        self._commands = commands
         self._context: zmq.Context[zmq.Socket[bytes]] = zmq.Context()
 
     def __call__(self, port: int, starting_window: CropPixels, logger: Logger) -> WindowSending:
@@ -78,6 +84,7 @@ class ZmqSenders:
             self._clock,
             logger,
             name=f"node-video-sender.{port}",
+            commands=self._commands,
         )
 
     def close(self) -> None:
@@ -95,3 +102,5 @@ class PipelineParts:
     make_sender: SenderFactory | None = None
     free_port: Callable[[], int] = free_loopback_port
     ffmpeg_exists: Callable[[str], bool] = ffmpeg_is_installed
+    # Whether this computer is a Rockchip board: decides what decoder `auto` means.
+    on_rockchip: Callable[[], bool] = is_rockchip_board

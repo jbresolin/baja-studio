@@ -1,0 +1,7 @@
+# The camera node's service user (baja-node, in group video) must open Rockchip's video
+# codec (MPP), its 2D engine (RGA) and the memory both share (DMA heaps), as well as the
+# webcams. Installed by install.sh into /etc/udev/rules.d (ADR 0024).
+KERNEL=="mpp_service", GROUP="video", MODE="0660"
+KERNEL=="rga", GROUP="video", MODE="0660"
+SUBSYSTEM=="dma_heap", GROUP="video", MODE="0660"
+SUBSYSTEM=="video4linux", GROUP="video", MODE="0660"

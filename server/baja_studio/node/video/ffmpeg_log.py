@@ -8,7 +8,8 @@ every line is scrubbed before it is kept.
 When a run ends, `explain_failure` turns its last lines into operator words
 ("camera not found: …", "SRT receiver unreachable: …"); the patterns are the
 messages of ffmpeg 6.1-9.0's DirectShow input, SRT protocol, encoders and
-zmq filter.
+zmq filter, and on Linux of its V4L2 input and the Rockchip MPP/RGA code of
+ffmpeg-rockchip (ADR 0024; the bench sheet checks them on the NanoPi).
 """
 
 import re
@@ -99,10 +100,27 @@ class Failure:
     reason: str
 
 
-_CAMERA_MISSING = ("Could not find video device", "Could not enumerate video devices")
-_CAMERA_BUSY = ("Could not run graph", "device already in use")
-_CAMERA_MODE = ("Could not set video options",)
-_CAMERA_GONE = ("Error during demuxing", "Error retrieving a packet from demuxer")
+_CAMERA_MISSING = (
+    "Could not find video device",
+    "Could not enumerate video devices",
+    # V4L2: "Cannot open video device /dev/v4l/by-path/...: No such file or directory".
+    "Cannot open video device",
+)
+# V4L2: "Cannot open video device ...: Permission denied" (checked before "missing").
+_CAMERA_NO_ACCESS = ("Permission denied",)
+_CAMERA_BUSY = ("Could not run graph", "device already in use", "Device or resource busy")
+_CAMERA_MODE = (
+    "Could not set video options",
+    # V4L2 gives the size it can do instead of the one asked for, or no MJPEG at all.
+    "The V4L2 driver changed the video",
+    "Cannot find a proper format",
+)
+_CAMERA_GONE = (
+    "Error during demuxing",
+    "Error retrieving a packet from demuxer",
+    # V4L2 when the camera is unplugged while streaming (ENODEV).
+    "ioctl(VIDIOC_DQBUF)",
+)
 _RECEIVER_UNREACHABLE = ("Connection to srt", "Connection setup failure", "Error opening output")
 _RECEIVER_LOST = ("Error submitting a packet to the muxer", "Error writing trailer")
 _ENCODER = (
@@ -113,6 +131,13 @@ _ENCODER = (
     "OpenEncodeSessionEx failed",
     "MFX session",
     "AMF",
+    # Rockchip MPP (decoder and encoder) and RGA, ffmpeg-rockchip's words.
+    "Failed to init MPP",
+    "Failed to set MPP",
+    "MPP doesn't support",
+    "Failed to call RGA",
+    "RGA scale ratio",
+    "Failed to init RGA",
 )
 _CONTROL = ("ZMQ socket", "ZMQ context")
 _NO_DIRECTSHOW = ("Unknown input format",)
@@ -146,9 +171,15 @@ def explain_failure(exit_code: int | None, lines: list[str], device: str, url: s
     where = receiver_address(url)
     checks: list[tuple[tuple[str, ...], FailureKind, str]] = [
         (_CONTROL, FailureKind.CONTROL, "the window control port could not be opened"),
+        (
+            _CAMERA_NO_ACCESS,
+            FailureKind.CAMERA,
+            f"no permission to open the camera (the service user must be in group video): {device}",
+        ),
+        # Busy before missing: V4L2 can say "Cannot open video device ...: Device or resource busy".
+        (_CAMERA_BUSY, FailureKind.CAMERA, f"camera busy (is another program using it?): {device}"),
         (_CAMERA_MISSING, FailureKind.CAMERA, f"camera not found: {device}"),
         (_NO_DIRECTSHOW, FailureKind.CAMERA, "this ffmpeg cannot capture cameras (no DirectShow)"),
-        (_CAMERA_BUSY, FailureKind.CAMERA, f"camera busy (is another program using it?): {device}"),
         (_CAMERA_MODE, FailureKind.CAMERA, f"camera refused the mode: {device}"),
         (_ENCODER, FailureKind.ENCODER, "encoder failed"),
         (_RECEIVER_UNREACHABLE, FailureKind.RECEIVER, f"SRT receiver unreachable: {where}"),

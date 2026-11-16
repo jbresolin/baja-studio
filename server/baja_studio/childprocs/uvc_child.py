@@ -6,7 +6,8 @@ duvc-ctl is native DirectShow code that could crash the interpreter, so it
 runs apart from the service (goals §7.1), like the MIDI child. Requests (see
 `core/childproc.py`):
 
-- `status`: `{available, message}`; not available off Windows or without duvc-ctl.
+- `status`: `{available, message}`; not available without duvc-ctl on Windows,
+  nor on a system that is neither Windows nor Linux.
 - `list_devices`: `[{name, path, index}]`, `index` counting devices with the same name.
 - `read_controls {path, names?}`: `{controls: {name: {value, auto, min, max,
   step, default, default_auto}}, errors: {name: message}}` for the controls
@@ -24,17 +25,22 @@ Everything runs on the one thread that answers requests: DirectShow handles
 are COM objects and must not be used or released from another thread, so
 there is no watcher thread; the service's `check` drives the 2 s look.
 
-The backend is duvc-ctl, or the fake library (`fakes/fake_duvc.py`) when
-`BAJA_STUDIO_UVC_BACKEND=fake`; the fake also answers `fake_*` requests.
+The backend is duvc-ctl on Windows, V4L2 on Linux (`uvc_v4l2.py`, the NanoPi
+node of ADR 0024), or a fake library: `fakes/fake_duvc.py` when
+`BAJA_STUDIO_UVC_BACKEND=fake` (the fake also answers `fake_*` requests), the
+fake V4L2 system (`fakes/fake_v4l2.py`) when it is `fake-v4l2`.
 """
 
 import os
+import sys
 import threading
 from typing import Any, Protocol
 
 from baja_studio.core.childproc_child import ChildChannel, run_child
 
 BACKEND_ENVIRONMENT_VARIABLE = "BAJA_STUDIO_UVC_BACKEND"
+FAKE_DUVC = "fake"
+FAKE_V4L2 = "fake-v4l2"
 
 
 class UvcBackend(Protocol):
@@ -163,14 +169,24 @@ class UnavailableBackend:
         return []
 
 
-def make_backend() -> tuple[UvcBackend, str]:
-    """duvc-ctl, or the fake library (`BAJA_STUDIO_UVC_BACKEND=fake`); and why not, if neither."""
+def make_backend(platform: str = sys.platform) -> tuple[UvcBackend, str]:
+    """The backend for this computer (see the module docstring); and why none, if none."""
     from baja_studio.childprocs.uvc_duvc import DuvcBackend
+    from baja_studio.childprocs.uvc_v4l2 import V4l2Backend
 
-    if os.environ.get(BACKEND_ENVIRONMENT_VARIABLE) == "fake":
+    chosen = os.environ.get(BACKEND_ENVIRONMENT_VARIABLE)
+    if chosen == FAKE_DUVC:
         from baja_studio.fakes.fake_duvc import FakeDuvcLibrary, studio_devices
 
         return DuvcBackend(FakeDuvcLibrary(studio_devices())), ""
+    if chosen == FAKE_V4L2:
+        from baja_studio.fakes.fake_v4l2 import FakeV4l2System
+
+        return V4l2Backend(FakeV4l2System()), ""
+    if platform.startswith("linux"):
+        from baja_studio.adapters.v4l2_ioctl import KernelV4l2System
+
+        return V4l2Backend(KernelV4l2System()), ""
     try:
         import importlib
 

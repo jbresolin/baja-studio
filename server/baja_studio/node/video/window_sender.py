@@ -30,7 +30,7 @@ from collections import deque
 import zmq
 
 from baja_studio.core.clock import Clock
-from baja_studio.node.video.crop_commands import CropPixels, window_commands
+from baja_studio.node.video.crop_commands import CropPixels, WindowCommands, window_commands
 
 ANSWER_TIMEOUT_SECONDS = 1.0
 # How long the thread waits for an answer before looking at new windows again.
@@ -50,13 +50,19 @@ class WindowSender:
         clock: Clock,
         logger: Logger,
         name: str = "window-sender",
+        commands: WindowCommands = window_commands,
     ) -> None:
-        """Ready to send to `endpoint`, where ffmpeg already shows `starting_window`."""
+        """Ready to send to `endpoint`, where ffmpeg already shows `starting_window`.
+
+        `commands` turns a window change into zmq commands: the crop filter's
+        (the default) or the Rockchip RGA's (`rockchip.rga_window_commands`).
+        """
         self._context = context
         self._endpoint = endpoint
         self._clock = clock
         self._logger = logger
         self._name = name
+        self._commands = commands
         self._lock = threading.Lock()
         self._pending: CropPixels | None = None
         self._last_sent = starting_window
@@ -133,7 +139,7 @@ class WindowSender:
             self._wake.wait(0.1)
             self._wake.clear()
             return
-        commands = window_commands(self._last_sent, window)
+        commands = self._commands(self._last_sent, window)
         self._last_sent = window
         if not commands:
             return

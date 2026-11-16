@@ -176,3 +176,25 @@ def test_the_real_child_reports_a_device_leaving(
     eventually(lambda: any(event == "devices" for event, _ in events))
     with pytest.raises(ChildRequestError, match="not plugged in"):
         host.request("read_controls", {"path": S600_A_PATH})
+
+
+# --- choosing the backend (the NanoPi node on Linux, ADR 0024) ----------------------------------
+
+
+def test_on_linux_the_child_uses_v4l2(monkeypatch: pytest.MonkeyPatch) -> None:
+    from baja_studio.childprocs.uvc_child import make_backend
+    from baja_studio.childprocs.uvc_v4l2 import V4l2Backend
+
+    monkeypatch.delenv(BACKEND_ENVIRONMENT_VARIABLE, raising=False)
+    backend, unavailable = make_backend(platform="linux")
+    # Available: on a computer without webcams it simply lists none.
+    assert isinstance(backend, V4l2Backend) and unavailable == ""
+
+
+def test_the_fake_v4l2_system_can_be_chosen_for_the_child(monkeypatch: pytest.MonkeyPatch) -> None:
+    from baja_studio.childprocs.uvc_child import FAKE_V4L2, make_backend
+    from baja_studio.fakes.fake_v4l2 import R3S_USB3_LINK
+
+    monkeypatch.setenv(BACKEND_ENVIRONMENT_VARIABLE, FAKE_V4L2)
+    backend, _ = make_backend(platform="win32")
+    assert [device.path for device in backend.list_devices()] == [R3S_USB3_LINK]

@@ -15,8 +15,10 @@ from baja_studio.node.video.encoders import (
     NVENC,
     PROFILES,
     QUICKSYNC,
+    RKMPP,
     X264,
     ProbeResult,
+    auto_order,
     choose_encoder,
     probe_command,
     probe_encoder,
@@ -143,3 +145,44 @@ def test_testing_with_a_missing_ffmpeg_says_so(tmp_path: Path) -> None:
     result = probe_encoder(str(tmp_path / "no-ffmpeg-here"), X264)
     assert not result.works
     assert result.message.startswith("ffmpeg not found")
+
+
+# --- the Rockchip encoder (the NanoPi, ADR 0024) -----------------------------------------------
+
+
+def test_with_the_rockchip_decoder_auto_tries_only_the_mpp_encoder() -> None:
+    prober = ListProber(working={RKMPP, X264})
+    choice = choose_encoder("auto", "ffmpeg", prober, decoder="mjpeg_rkmpp")
+    assert choice.encoder == RKMPP
+    # x264 is not even tried: four small cores cannot encode 1080p30 in software.
+    assert prober.asked == [RKMPP]
+    assert auto_order("mjpeg_rkmpp") == (RKMPP,)
+    assert auto_order("mjpeg") == AUTO_ORDER
+
+
+def test_the_mpp_encoder_forced_without_the_rockchip_graph_is_refused_untested() -> None:
+    prober = ListProber(working={RKMPP})
+    choice = choose_encoder(RKMPP, "ffmpeg", prober, decoder="mjpeg")
+    assert choice.encoder is None
+    assert "needs the Rockchip decoder" in choice.reason()
+    assert prober.asked == []
+
+
+def test_the_mpp_encoder_takes_hardware_frames_and_constant_bitrate() -> None:
+    profile = PROFILES[RKMPP]
+    assert profile.takes_hardware_frames
+    assert not any(PROFILES[name].takes_hardware_frames for name in AUTO_ORDER)
+    arguments = profile.arguments(bitrate_kbps=8000, keyframe_interval_frames=30)
+    assert arguments[arguments.index("-rc_mode") + 1] == "CBR"
+
+
+def test_the_rockchip_test_encode_runs_the_live_feed_s_hardware_path() -> None:
+    command = probe_command("/opt/baja-camera-node/ffmpeg/bin/ffmpeg", RKMPP)
+    # The hardware is opened for the upload, a 4K picture is uploaded to it, and the
+    # RGA crops and scales it to 1080p before the MPP encoder: as the camera's picture goes.
+    assert command[command.index("-init_hw_device") + 1] == "rkmpp=rk"
+    assert "color=black:size=3840x2160:rate=30" in command
+    filters = command[command.index("-vf") + 1]
+    assert filters.startswith("format=nv12,hwupload,vpp_rkrga=w=1920:h=1080")
+    assert command[command.index("-c:v") + 1] == RKMPP
+    assert command[-3:] == ["-f", "null", "-"]

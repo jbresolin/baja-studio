@@ -166,3 +166,25 @@ def test_stopping_works_even_with_no_ffmpeg_listening(
     lonely.start()
     lonely.offer(CropPixels(1920, 960, 540))
     lonely.stop()
+
+
+def test_the_rga_s_commands_can_be_sent_instead_of_the_crop_filter_s(
+    context: zmq.Context[zmq.Socket[bytes]], ffmpeg_filter: FakeZmqFilter, fake_clock: FakeClock
+) -> None:
+    # On the NanoPi the window is the RGA filter's crop (ADR 0024); same sender, other words.
+    from baja_studio.node.video.rockchip import rga_window_commands
+
+    rga_sender = WindowSender(
+        context, ffmpeg_filter.endpoint, WHOLE, fake_clock, LOGGER, commands=rga_window_commands
+    )
+    rga_sender.start()
+    try:
+        rga_sender.offer(CropPixels(1920, 960, 540))
+        eventually(lambda: rga_sender.commands_sent == 3, "window sent")
+        assert ffmpeg_filter.frame() == [
+            "vpp_rkrga@window cw 1920",
+            "vpp_rkrga@window cx 960-cw/2",
+            "vpp_rkrga@window cy 540-ch/2",
+        ]
+    finally:
+        rga_sender.stop()

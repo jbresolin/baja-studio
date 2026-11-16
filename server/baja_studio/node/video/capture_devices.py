@@ -18,9 +18,11 @@ what a pipeline is given. The samples in the tests follow ffmpeg's source;
 the bench tool prints the raw listing so a laptop's real output can be
 checked against them (`--raw`).
 
-Elsewhere (Linux CI, a dev machine) there is no DirectShow: the synthetic
-cameras are listed instead, so the settings page and the rig have something
-to show.
+On Linux the cameras come from V4L2 (`v4l2_devices.py`, the NanoPi node of
+ADR 0024) wherever there are cameras to list: on a Rockchip board always,
+elsewhere once udev has made `/dev/v4l/by-path`. Where there is neither
+(Linux CI, a dev machine without a webcam) the synthetic cameras are listed
+instead, so the settings page and the rig have something to show.
 """
 
 import re
@@ -28,7 +30,9 @@ import subprocess
 import sys
 from dataclasses import dataclass
 
+from baja_studio.adapters.v4l2_ioctl import BY_PATH_DIRECTORY, KernelV4l2System
 from baja_studio.node.video.ffmpeg_process import NO_CONSOLE_WINDOW
+from baja_studio.node.video.rockchip import is_rockchip_board
 from baja_studio.node.video.synthetic_sources import QUADRANTS, SYNTHETIC_PREFIX, TESTSRC2
 
 LIST_TIMEOUT_SECONDS = 15.0
@@ -144,26 +148,51 @@ def _dshow_listing(ffmpeg_path: str, arguments: list[str]) -> str:
 
 
 def raw_device_listing(ffmpeg_path: str = "ffmpeg") -> str:
-    """ffmpeg's own words listing the devices (the bench prints them with `--raw`)."""
+    """ffmpeg's own words listing the devices (the bench prints them with `--raw`).
+
+    ffmpeg cannot list V4L2 devices; on Linux the bench shows the by-path links instead.
+    """
+    if uses_v4l2():
+        links = sorted(BY_PATH_DIRECTORY.glob("*")) if BY_PATH_DIRECTORY.is_dir() else []
+        return "\n".join(f"{link} -> {link.resolve()}" for link in links) or "no /dev/v4l links"
     return _dshow_listing(ffmpeg_path, ["-list_devices", "true", "-f", "dshow", "-i", "dummy"])
 
 
 def raw_mode_listing(device: str, ffmpeg_path: str = "ffmpeg") -> str:
     """ffmpeg's own words listing one device's modes."""
+    if uses_v4l2():
+        return _dshow_listing(ffmpeg_path, ["-f", "v4l2", "-list_formats", "all", "-i", device])
     return _dshow_listing(
         ffmpeg_path, ["-list_options", "true", "-f", "dshow", "-i", f"video={device}"]
     )
 
 
+def uses_v4l2() -> bool:
+    """True on a Linux computer whose cameras should be listed from V4L2 (see the docstring)."""
+    return sys.platform.startswith("linux") and (is_rockchip_board() or BY_PATH_DIRECTORY.is_dir())
+
+
 def list_capture_devices(ffmpeg_path: str = "ffmpeg") -> list[CaptureDevice]:
-    """The laptop's cameras (Windows), or the synthetic ones elsewhere."""
-    if sys.platform != "win32":
-        return list(SYNTHETIC_DEVICES)
-    return parse_device_list(raw_device_listing(ffmpeg_path))
+    """The cameras (DirectShow on Windows, V4L2 on Linux), or the synthetic ones elsewhere."""
+    if sys.platform == "win32":
+        return parse_device_list(raw_device_listing(ffmpeg_path))
+    if uses_v4l2():
+        # Imported here: v4l2_devices.py answers in this module's types.
+        from baja_studio.node.video.v4l2_devices import list_v4l2_devices
+
+        return list_v4l2_devices(KernelV4l2System())
+    return list(SYNTHETIC_DEVICES)
 
 
 def capture_modes(device: str, ffmpeg_path: str = "ffmpeg") -> list[CaptureMode]:
-    """The modes `device` offers (Windows), or the synthetic ones elsewhere."""
-    if sys.platform != "win32" or device.startswith(SYNTHETIC_PREFIX):
+    """The modes `device` offers (DirectShow, V4L2), or the synthetic ones."""
+    if device.startswith(SYNTHETIC_PREFIX):
         return list(SYNTHETIC_MODES)
-    return parse_mode_list(raw_mode_listing(device, ffmpeg_path))
+    if sys.platform == "win32":
+        return parse_mode_list(raw_mode_listing(device, ffmpeg_path))
+    if uses_v4l2():
+        # Imported here: v4l2_devices.py answers in this module's types.
+        from baja_studio.node.video.v4l2_devices import v4l2_modes
+
+        return v4l2_modes(device, KernelV4l2System())
+    return list(SYNTHETIC_MODES)

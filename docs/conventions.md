@@ -355,6 +355,14 @@ reading its tests.
   kill-on-close job object, so neither a full pipe nor a crashed service
   leaves it frozen or orphaned holding a camera (ADR 0023).
 
+- **On Linux the same rules hold with systemd**: a program is a systemd
+  unit installed by `install.sh` (never started by hand), running as its own
+  service user; its control-group kill is the job object's job (ADR 0024).
+- **A kernel interface is asked with its ioctls, not by parsing a tool's
+  text** (`adapters/v4l2_ioctl.py`), behind a protocol the fake implements,
+  and nothing is kept open between questions; a module only Linux uses must
+  still import on Windows (`fcntl` behind a platform check).
+
 ## Decisions
 
 - Each work package ends with a short ADR in `docs/adr/` listing the

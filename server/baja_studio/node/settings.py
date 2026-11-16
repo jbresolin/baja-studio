@@ -35,8 +35,9 @@ NODE_PORT = 8891
 # The local OBS a camera in OBS mode is in: always this laptop's.
 LOCAL_OBS_HOST = "127.0.0.1"
 ENCODER_PATTERN = r"^(auto|[a-z0-9_]{1,40})$"
-# The MJPEG decoders the pipeline knows: the CPU, QuickSync, NVIDIA (the bench says which work).
-DECODER_PATTERN = r"^(mjpeg|mjpeg_qsv|mjpeg_cuvid)$"
+# The MJPEG decoders the pipeline knows: auto, the CPU, QuickSync, NVIDIA (the bench says
+# which work), and Rockchip's VPU with the whole hardware path (the NanoPi, ADR 0024).
+DECODER_PATTERN = r"^(auto|mjpeg|mjpeg_qsv|mjpeg_cuvid|mjpeg_rkmpp)$"
 
 
 class StrictModel(BaseModel):
@@ -58,7 +59,7 @@ class PipelineSettings(StrictModel):
     device: str = Field(
         default="",
         max_length=1000,
-        description="Capture device, as the device list names it (DirectShow).",
+        description="Capture device, as the device list names it (DirectShow, or V4L2 on Linux).",
     )
     device_name: str = Field(default="", max_length=200, description="Its name, for display.")
     input_width: int = Field(default=3840, ge=160, le=7680)
@@ -73,15 +74,20 @@ class PipelineSettings(StrictModel):
     encoder: str = Field(
         default="auto",
         pattern=ENCODER_PATTERN,
-        description="auto (NVENC, then QuickSync, AMF, x264), or an encoder's name.",
+        description=(
+            "auto (NVENC, then QuickSync, AMF, x264; Rockchip MPP on a Rockchip board), "
+            "or an encoder's name."
+        ),
     )
     bitrate_kbps: int = Field(default=8000, ge=500, le=50000)
     decoder: str = Field(
-        default="mjpeg",
+        default="auto",
         pattern=DECODER_PATTERN,
         description=(
-            "How the camera's MJPEG is decoded: mjpeg (the CPU), mjpeg_qsv (Intel QuickSync) "
-            "or mjpeg_cuvid (NVIDIA). Keep mjpeg unless the bench showed the other works."
+            "How the camera's MJPEG is decoded: auto (Rockchip hardware on a Rockchip board, "
+            "else the CPU), mjpeg (the CPU), mjpeg_qsv (Intel QuickSync), mjpeg_cuvid (NVIDIA) "
+            "or mjpeg_rkmpp (Rockchip: crop, scale and encode in hardware too). On a laptop "
+            "keep auto or mjpeg unless the bench showed another works."
         ),
     )
 

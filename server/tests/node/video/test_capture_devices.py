@@ -96,3 +96,17 @@ def test_without_directshow_the_synthetic_cameras_are_offered() -> None:
 
 def test_a_missing_ffmpeg_lists_nothing_rather_than_failing(tmp_path: Path) -> None:
     assert raw_device_listing(str(tmp_path / "no-ffmpeg")) == ""
+
+
+def test_on_a_linux_node_cameras_come_from_v4l2(monkeypatch: pytest.MonkeyPatch) -> None:
+    # The NanoPi (ADR 0024): with V4L2 in use, the listing is the V4L2 one, in
+    # the same types. The kernel is replaced by the fake V4L2 system.
+    from baja_studio.fakes.fake_v4l2 import R3S_USB3_LINK, FakeV4l2System
+    from baja_studio.node.video import capture_devices
+
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(capture_devices, "uses_v4l2", lambda: True)
+    monkeypatch.setattr(capture_devices, "KernelV4l2System", FakeV4l2System)
+    [device] = list_capture_devices("ffmpeg")
+    assert device.device == R3S_USB3_LINK
+    assert capture_modes(R3S_USB3_LINK, "ffmpeg")[0].describe() == "mjpeg 3840x2160 @ 30 fps"

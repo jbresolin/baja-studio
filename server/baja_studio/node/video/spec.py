@@ -18,6 +18,14 @@ DEFAULT_KEYFRAME_SECONDS = 1.0
 AUTO_ENCODER = "auto"
 # Decode MJPEG on the CPU; a hardware decoder name (`mjpeg_qsv`, `mjpeg_cuvid`) moves it off.
 SOFTWARE_DECODER = "mjpeg"
+# Rockchip's VPU (the NanoPi R3S, ADR 0024): it also moves crop, scale and encode to hardware.
+ROCKCHIP_DECODER = "mjpeg_rkmpp"
+# The settings' default: the Rockchip path on a Rockchip board, else the CPU (`rockchip.py`).
+AUTO_DECODER = "auto"
+# How ffmpeg reads the camera, from the device's name (`PipelineSpec.capture_api`).
+CAPTURE_DSHOW = "dshow"
+CAPTURE_V4L2 = "v4l2"
+CAPTURE_SYNTHETIC = "lavfi"
 
 
 @dataclass(frozen=True)
@@ -26,8 +34,9 @@ class PipelineSpec:
 
     `device` is a DirectShow device (its "alternative name", the
     `@device_pnp_...` path that tells two cameras of the same model apart,
-    or its friendly name) or a synthetic source `lavfi:<name>`
-    (`synthetic_sources.py`) for tests and the benchmark.
+    or its friendly name), a Linux video device (`/dev/v4l/by-path/...`, ADR
+    0024), or a synthetic source `lavfi:<name>` (`synthetic_sources.py`) for
+    tests and the benchmark.
     """
 
     device: str
@@ -53,6 +62,20 @@ class PipelineSpec:
     def camera_name(self) -> str:
         """How messages name the camera: `label`, or the device when there is none."""
         return self.label or self.device
+
+    @property
+    def capture_api(self) -> str:
+        """How ffmpeg reads the camera: `lavfi` (synthetic), `v4l2` (a `/dev/...` path), `dshow`."""
+        if self.device.startswith("lavfi:"):
+            return CAPTURE_SYNTHETIC
+        if self.device.startswith("/dev/"):
+            return CAPTURE_V4L2
+        return CAPTURE_DSHOW
+
+    @property
+    def on_rockchip(self) -> bool:
+        """True when the picture stays in Rockchip hardware from decode to encode (ADR 0024)."""
+        return self.decoder == ROCKCHIP_DECODER
 
     @property
     def output_aspect(self) -> float:

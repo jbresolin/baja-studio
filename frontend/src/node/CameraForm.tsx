@@ -210,11 +210,13 @@ export function CameraForm({ camera, usbDevices, onChange, onRemove }: Props) {
               value={video.encoder}
               onChange={(event) => setVideo({ encoder: event.target.value })}
             >
-              {["auto", "h264_nvenc", "h264_qsv", "h264_amf", "libx264"].map((name) => (
-                <option key={name} value={name}>
-                  {name}
-                </option>
-              ))}
+              {["auto", "h264_nvenc", "h264_qsv", "h264_amf", "h264_rkmpp", "libx264"].map(
+                (name) => (
+                  <option key={name} value={name}>
+                    {name}
+                  </option>
+                ),
+              )}
             </select>
           </label>
           <label className="field">
@@ -223,11 +225,13 @@ export function CameraForm({ camera, usbDevices, onChange, onRemove }: Props) {
               value={video.decoder}
               onChange={(event) => setVideo({ decoder: event.target.value })}
             >
+              <option value="auto">Auto (Rockchip hardware on a NanoPi, else CPU)</option>
               <option value="mjpeg">CPU (mjpeg)</option>
               <option value="mjpeg_qsv">Intel QuickSync (mjpeg_qsv)</option>
               <option value="mjpeg_cuvid">NVIDIA (mjpeg_cuvid)</option>
+              <option value="mjpeg_rkmpp">Rockchip hardware (mjpeg_rkmpp)</option>
             </select>
-            <span className="field-help">Keep CPU unless the bench showed the other works.</span>
+            <span className="field-help">Keep Auto unless the bench showed another works.</span>
           </label>
           <label className="field">
             Bitrate (kbit/s)

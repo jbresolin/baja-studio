@@ -11,12 +11,15 @@
   the fake OBS's in-process network);
 - `ffmpeg_path`: the one resolver for the ffmpeg the pipeline and the device
   list run: the setting, else the copy the node installer bundles
-  (`<program folder>\\ffmpeg\\ffmpeg.exe`), else PATH (`playout/tools.resolve_tool`,
-  the studio's own resolver).
+  (`<program folder>\\ffmpeg\\ffmpeg.exe`; on Linux the patched
+  ffmpeg-rockchip in `<program folder>/ffmpeg/bin/ffmpeg`, ADR 0024), else
+  PATH (`playout/tools.resolve_tool`, the studio's own resolver).
 """
 
+import sys
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from baja_studio.adapters.obs_transport import TransportFactory, open_websocket_transport
 from baja_studio.core.childproc import EventCallback
@@ -41,9 +44,26 @@ def real_uvc_child(
     return context.new_child_process(python_module, on_event)
 
 
+# Where the Linux installer puts its ffmpeg build (with its own libraries in ../lib).
+LINUX_BUNDLED_FFMPEG = Path("ffmpeg") / "bin" / "ffmpeg"
+
+
+def linux_bundled_ffmpeg(layout: InstallLayout | None) -> str | None:
+    """The Linux node installer's ffmpeg (`<program>/ffmpeg/bin/ffmpeg`), None if absent."""
+    if layout is None:
+        return None
+    bundled = layout.program_directory / LINUX_BUNDLED_FFMPEG
+    return str(bundled) if bundled.is_file() else None
+
+
 def bundled_ffmpeg(settings: NodeSettings) -> str:
     """The ffmpeg to run: the setting, else the installer's copy, else PATH."""
-    return resolve_tool(FFMPEG, settings.ffmpeg_path, InstallLayout.from_environment()).command
+    layout = InstallLayout.from_environment()
+    if sys.platform != "win32" and not settings.ffmpeg_path.strip():
+        bundled = linux_bundled_ffmpeg(layout)
+        if bundled is not None:
+            return bundled
+    return resolve_tool(FFMPEG, settings.ffmpeg_path, layout).command
 
 
 @dataclass
@@ -69,12 +89,16 @@ def fake_parts(
 
 
 def real_parts() -> NodeParts:
-    """A laptop's parts: the ffmpeg pipeline, and DirectShow's device list."""
+    """A node's parts: the ffmpeg pipeline, and the system's device list."""
     return NodeParts(pipelines=CameraPipeline, capture_devices=DshowCaptureDevices())
 
 
 class DshowCaptureDevices:
-    """The laptop's cameras and their modes, as ffmpeg lists them (synthetic ones off Windows)."""
+    """The computer's cameras and their modes: DirectShow on Windows, V4L2 on Linux.
+
+    (The name is from WP15, when only laptops ran a node; `capture_devices.py`
+    picks the system, synthetic cameras where it has none.)
+    """
 
     def list_capture_devices(self, ffmpeg_path: str) -> list[CaptureDevice]:
         """Every video capture device plugged in now."""

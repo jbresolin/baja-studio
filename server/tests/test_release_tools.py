@@ -13,6 +13,7 @@ import pytest
 from baja_studio import __version__
 from baja_studio.release_tools import (
     dev_version,
+    linux_node_requirements,
     main,
     read_version,
     runtime_requirements,
@@ -97,3 +98,16 @@ def test_the_manifest_lists_each_wheel_with_its_hash(tmp_path: Path) -> None:
             "sha256": "62cb81b5904a262ffaeed02abef36bfc540b09f964b8b0b636662f77ffce6714",
         },
     ]
+
+
+def test_the_linux_node_needs_everything_but_the_midi_library_and_windows_only_ones() -> None:
+    # The NanoPi node (ADR 0024) installs from a wheelhouse made for arm64 Linux.
+    requirements = linux_node_requirements()
+    names = {requirement.split("==")[0] for requirement in requirements}
+    # python-rtmidi is only used by the studio's audio module (a MIDI mixer);
+    # duvc-ctl is Windows-only. Neither belongs on the board.
+    assert "python-rtmidi" not in names
+    assert not any("duvc" in requirement for requirement in requirements)
+    # What the node does use is there, pinned as in pyproject.toml.
+    assert {"fastapi", "uvicorn", "pydantic", "pyzmq"} <= names
+    assert all("==" in requirement for requirement in requirements)

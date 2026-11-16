@@ -17,6 +17,7 @@ The crop filter keeps the window inside the frame itself (it clamps `x` and
 `y`), and we clamp here too so what we send is what is shown.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
 
 from baja_studio.node.video.spec import SourceWindow
@@ -47,17 +48,22 @@ def widest_crop(input_width: int, input_height: int, aspect: float) -> int:
 
 
 def crop_pixels(
-    window: SourceWindow, input_width: int, input_height: int, aspect: float
+    window: SourceWindow,
+    input_width: int,
+    input_height: int,
+    aspect: float,
+    min_width: int = MIN_CROP_WIDTH_PIXELS,
 ) -> CropPixels:
     """The pixels that show `window` on an `input_width` x `input_height` source.
 
     The width is rounded to an even number (MJPEG and H.264 pictures store
     colour at half resolution, so an odd width would be rounded by ffmpeg
-    anyway) and kept between `MIN_CROP_WIDTH_PIXELS` and the widest window;
-    the centre is kept where the whole window fits.
+    anyway) and kept between `min_width` (`MIN_CROP_WIDTH_PIXELS`, or what the
+    Rockchip RGA can scale from, ADR 0024) and the widest window; the centre
+    is kept where the whole window fits.
     """
     widest = widest_crop(input_width, input_height, aspect)
-    width = round(_clamp(window.w * input_width, MIN_CROP_WIDTH_PIXELS, widest))
+    width = round(_clamp(window.w * input_width, min(min_width, widest), widest))
     width -= width % 2
     height = width / aspect
     centre_x = (window.x + window.w / 2) * input_width
@@ -89,6 +95,11 @@ def crop_filter(pixels: CropPixels, output_width: int, output_height: int) -> st
         f":h=ow*{output_height}/{output_width}"
         f":x={_left_option(pixels)}:y={_top_option(pixels)}"
     )
+
+
+# How a window change becomes zmq commands: `window_commands` for the laptop's crop
+# filter, `rockchip.rga_window_commands` for the RGA's.
+WindowCommands = Callable[[CropPixels | None, CropPixels], list[str]]
 
 
 def window_commands(previous: CropPixels | None, new: CropPixels) -> list[str]:

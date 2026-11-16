@@ -71,6 +71,23 @@ def runtime_requirements(pyproject: Path = PYPROJECT_FILE) -> list[str]:
     return [str(requirement) for requirement in project.get("dependencies", [])]
 
 
+# Dependencies the camera node never imports (WP4's MIDI mixer runs only in the studio),
+# left out of the Linux node's wheelhouse: python-rtmidi has no wheel for every board.
+NOT_ON_THE_LINUX_NODE = ("python-rtmidi",)
+
+
+def linux_node_requirements(pyproject: Path = PYPROJECT_FILE) -> list[str]:
+    """The camera node's dependencies on Linux (ADR 0024): the service's, minus what it never
+    imports there (`NOT_ON_THE_LINUX_NODE`) and what is for Windows only."""
+    kept = []
+    for requirement in runtime_requirements(pyproject):
+        name = re.split(r"[<>=!~;\[ ]", requirement, maxsplit=1)[0].strip().lower()
+        if name in NOT_ON_THE_LINUX_NODE or "win32" in requirement:
+            continue
+        kept.append(requirement)
+    return kept
+
+
 def wheelhouse_manifest(wheelhouse: Path) -> list[dict[str, Any]]:
     """Every wheel with its size and SHA-256, sorted by name: what the install was built from."""
     entries = []
@@ -90,6 +107,9 @@ def main(arguments: list[str] | None = None) -> None:
     source.add_argument("--dev", type=int, help="a build number, for builds that are not releases")
     commands.add_parser("version", help="print the version written in __init__.py")
     commands.add_parser("requirements", help="print the runtime dependencies, one per line")
+    commands.add_parser(
+        "linux-node-requirements", help="print the Linux camera node's dependencies (ADR 0024)"
+    )
     manifest = commands.add_parser("wheelhouse-manifest", help="list the wheels with hashes")
     manifest.add_argument("--wheelhouse", type=Path, required=True)
     manifest.add_argument("--output", type=Path, required=True)
@@ -106,6 +126,8 @@ def main(arguments: list[str] | None = None) -> None:
         print(read_version())
     elif parsed.command == "requirements":
         print("\n".join(runtime_requirements()))
+    elif parsed.command == "linux-node-requirements":
+        print("\n".join(linux_node_requirements()))
     else:
         entries = wheelhouse_manifest(parsed.wheelhouse)
         parsed.output.write_text(json.dumps(entries, indent=2) + "\n", encoding="utf-8")

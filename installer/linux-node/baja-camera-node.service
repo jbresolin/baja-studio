@@ -1,0 +1,31 @@
+# The camera node on a Linux board (the NanoPi R3S, ADR 0024); installed by install.sh.
+# The Linux counterpart of the BajaCameraNode Windows service (NSSM): starts at boot with
+# nobody logged in, restarts when it exits, stops with Ctrl+C (SIGINT) and 15 s to finish.
+[Unit]
+Description=Baja camera node (USB webcams cropped, encoded and sent to Baja Studio)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=baja-node
+Group=baja-node
+Environment=BAJA_NODE_DATA=/var/lib/baja-camera-node
+Environment=BAJA_STUDIO_FRONTEND=/opt/baja-camera-node/frontend
+Environment=BAJA_STUDIO_INSTALL_DIR=/opt/baja-camera-node
+Environment=PYTHONUNBUFFERED=1
+StateDirectory=baja-camera-node
+StateDirectoryMode=0750
+WorkingDirectory=/var/lib/baja-camera-node
+ExecStart=/opt/baja-camera-node/venv/bin/python -m baja_studio.node
+Restart=always
+RestartSec=2
+KillSignal=SIGINT
+TimeoutStopSec=15
+# Every ffmpeg the node started is stopped with it (the Windows job object's job here).
+KillMode=control-group
+# The video work must not wait behind other programs on four small cores.
+Nice=-5
+
+[Install]
+WantedBy=multi-user.target

@@ -150,3 +150,52 @@ def test_anything_else_gives_the_exit_code_and_the_last_line() -> None:
         "ffmpeg stopped (exit code 1): Something odd",
     )
     assert explain(exit_code=None) == (FailureKind.OTHER, "ffmpeg stopped")
+
+
+# --- Linux (V4L2) and the Rockchip hardware (the NanoPi, ADR 0024) ------------------------------
+# The lines follow ffmpeg's V4L2 input (libavdevice/v4l2.c) and ffmpeg-rockchip's
+# MPP/RGA code; the NanoPi bench sheet checks them against a real board.
+
+
+def test_a_linux_camera_that_is_not_plugged_in_reads_as_not_found() -> None:
+    kind, reason = explain(
+        "[video4linux2,v4l2 @ 0xaaaad] Cannot open video device "
+        "/dev/v4l/by-path/platform-xhci-hcd.0.auto-usb-0:1:1.0-video-index0: "
+        "No such file or directory"
+    )
+    assert (kind, reason) == (FailureKind.CAMERA, f"camera not found: {CAMERA}")
+
+
+def test_a_linux_camera_held_by_another_program_reads_as_busy() -> None:
+    kind, reason = explain(
+        "[video4linux2,v4l2 @ 0xaaaad] ioctl(VIDIOC_STREAMON): Device or resource busy"
+    )
+    assert kind == FailureKind.CAMERA and reason.startswith("camera busy")
+
+
+def test_a_linux_camera_the_service_may_not_open_says_which_group_it_needs() -> None:
+    kind, reason = explain(
+        "[video4linux2,v4l2 @ 0xaaaad] Cannot open video device /dev/video0: Permission denied"
+    )
+    assert kind == FailureKind.CAMERA and "group video" in reason
+
+
+def test_a_linux_camera_that_cannot_do_the_mode_reads_as_refused() -> None:
+    kind, reason = explain(
+        "[video4linux2,v4l2 @ 0xaaaad] The V4L2 driver changed the video from 3840x2160 "
+        "to 1920x1080"
+    )
+    assert (kind, reason) == (FailureKind.CAMERA, f"camera refused the mode: {CAMERA}")
+
+
+def test_a_linux_camera_unplugged_while_streaming_reads_as_stopped_sending() -> None:
+    kind, reason = explain("[video4linux2,v4l2 @ 0xaaaad] ioctl(VIDIOC_DQBUF): No such device")
+    assert (kind, reason) == (FailureKind.CAMERA, f"camera stopped sending: {CAMERA}")
+
+
+def test_a_rockchip_hardware_failure_is_an_encoder_failure() -> None:
+    # An encoder failure makes the pipeline test the encoders again before the next run.
+    kind, reason = explain("[h264_rkmpp @ 0xaaaad] Failed to init MPP context: -1")
+    assert kind == FailureKind.ENCODER and "Failed to init MPP" in reason
+    kind, _ = explain("[vpp_rkrga@window @ 0xaaaad] RGA scale ratio (16.0000x16.0000) exceeds")
+    assert kind == FailureKind.ENCODER

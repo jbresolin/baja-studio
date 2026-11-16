@@ -1,0 +1,142 @@
+--- a/libavfilter/vf_vpp_rkrga.c	2026-11-16 07:22:19.020660173 -0300
++++ b/libavfilter/vf_vpp_rkrga.c	2026-11-16 07:22:41.446342910 -0300
+@@ -457,6 +457,107 @@
+     return 0;
+ }
+ 
++/*
++ * Baja Studio patch: move the crop area while running.
++ *
++ * The cw/ch/cx/cy options take the same expressions as on the command line
++ * (e.g. "cx 1700-cw/2"). A command is applied between two frames: the zmq
++ * filter hands every waiting command over before it passes the next frame on,
++ * on the filter graph's own thread, so a frame never sees half a change.
++ * The output size never changes (w and h are kept as configured), so nothing
++ * downstream is reconfigured: only the RGA's source rectangle moves.
++ * A crop that cannot work (outside the frame, a scale ratio the RGA cannot do)
++ * is refused and the previous crop stays.
++ */
++#define RGAVPP_RUNTIME_SCALE_LIMIT 8.0
++
++static int rgavpp_process_command(AVFilterContext *ctx, const char *cmd, const char *args,
++                                  char *res, int res_len, int flags)
++{
++    RGAVppContext *r = ctx->priv;
++    AVFilterLink *inlink  = ctx->inputs[0];
++    AVFilterLink *outlink = ctx->outputs[0];
++    RGAFrameInfo *in_info;
++    char *saved_cw = NULL, *saved_ch = NULL, *saved_cx = NULL, *saved_cy = NULL;
++    int w, h, act_x, act_y, act_w, act_h, ret;
++    double ratio_w, ratio_h;
++
++    if (strcmp(cmd, "cw") && strcmp(cmd, "ch") && strcmp(cmd, "cx") && strcmp(cmd, "cy"))
++        return AVERROR(ENOSYS);
++    if (!r->rga.in_rga_frame_infos || r->transpose >= 0)
++        return AVERROR(ENOSYS);
++
++    saved_cw = av_strdup(r->cw);
++    saved_ch = av_strdup(r->ch);
++    saved_cx = av_strdup(r->cx);
++    saved_cy = av_strdup(r->cy);
++    if (!saved_cw || !saved_ch || !saved_cx || !saved_cy) {
++        ret = AVERROR(ENOMEM);
++        goto end;
++    }
++
++    ret = ff_filter_process_command(ctx, cmd, args, res, res_len, flags);
++    if (ret < 0)
++        goto end;
++
++    ret = eval_expr(ctx, &w, &h, &act_x, &act_y, &act_w, &act_h);
++    if (ret < 0)
++        goto restore;
++
++    /* The same clamping as at start (set_size_info), then the RGA's 2-pixel YUV grid. */
++    act_w = FFMAX(FFMIN(act_w, inlink->w), 0);
++    act_h = FFMAX(FFMIN(act_h, inlink->h), 0);
++    act_x = FFMAX(FFMIN(act_x, inlink->w - act_w), 0);
++    act_y = FFMAX(FFMIN(act_y, inlink->h - act_h), 0);
++    in_info = &r->rga.in_rga_frame_infos[0];
++    if (!(in_info->pix_desc->flags & AV_PIX_FMT_FLAG_RGB)) {
++        act_x &= ~(RK_RGA_YUV_ALIGN - 1);
++        act_y &= ~(RK_RGA_YUV_ALIGN - 1);
++        act_w &= ~(RK_RGA_YUV_ALIGN - 1);
++        act_h &= ~(RK_RGA_YUV_ALIGN - 1);
++    }
++    if (act_w < 2 || act_h < 2) {
++        av_log(ctx, AV_LOG_ERROR, "Crop area %dx%d is too small\n", act_w, act_h);
++        ret = AVERROR(EINVAL);
++        goto restore;
++    }
++    ratio_w = (double)outlink->w / act_w;
++    ratio_h = (double)outlink->h / act_h;
++    if (ratio_w > RGAVPP_RUNTIME_SCALE_LIMIT || ratio_w < 1.0 / RGAVPP_RUNTIME_SCALE_LIMIT ||
++        ratio_h > RGAVPP_RUNTIME_SCALE_LIMIT || ratio_h < 1.0 / RGAVPP_RUNTIME_SCALE_LIMIT) {
++        av_log(ctx, AV_LOG_ERROR, "Crop area %dx%d needs a scale ratio beyond %g\n",
++               act_w, act_h, RGAVPP_RUNTIME_SCALE_LIMIT);
++        ret = AVERROR(EINVAL);
++        goto restore;
++    }
++
++    r->act_x = act_x;
++    r->act_y = act_y;
++    r->act_w = act_w;
++    r->act_h = act_h;
++    in_info->crop  = 1;
++    in_info->act_x = act_x;
++    in_info->act_y = act_y;
++    in_info->act_w = act_w;
++    in_info->act_h = act_h;
++    av_log(ctx, AV_LOG_DEBUG, "crop now %dx%d at %d,%d\n", act_w, act_h, act_x, act_y);
++    ret = 0;
++    goto end;
++
++restore:
++    /* Put the options back as they were, so the next command starts from the crop shown. */
++    FFSWAP(char *, r->cw, saved_cw);
++    FFSWAP(char *, r->ch, saved_ch);
++    FFSWAP(char *, r->cx, saved_cx);
++    FFSWAP(char *, r->cy, saved_cy);
++end:
++    av_freep(&saved_cw);
++    av_freep(&saved_ch);
++    av_freep(&saved_cx);
++    av_freep(&saved_cy);
++    return ret;
++}
++
+ static av_cold int rgavpp_init(AVFilterContext *ctx)
+ {
+     return 0;
+@@ -469,6 +570,8 @@
+ 
+ #define OFFSET(x) offsetof(RGAVppContext, x)
+ #define FLAGS (AV_OPT_FLAG_FILTERING_PARAM | AV_OPT_FLAG_VIDEO_PARAM)
++/* Baja Studio: the crop area of vpp_rkrga can be moved while running (process_command). */
++#define TFLAGS (FLAGS | AV_OPT_FLAG_RUNTIME_PARAM)
+ 
+ #define RKRGA_VPP_COMMON_OPTS \
+     { "force_yuv",    "Enforce planar YUV format output", OFFSET(force_yuv), AV_OPT_TYPE_INT, { .i64 = FORCE_YUV_DISABLE }, 0, FORCE_YUV_NB - 1, FLAGS, .unit = "force_yuv" }, \
+@@ -555,10 +658,10 @@
+ static const AVOption rgavpp_options[] = {
+     { "w",  "Output video width",                  OFFSET(ow), AV_OPT_TYPE_STRING, { .str = "cw" }, 0, 0, FLAGS },
+     { "h",  "Output video height",                 OFFSET(oh), AV_OPT_TYPE_STRING, { .str = "w*ch/cw" }, 0, 0, FLAGS },
+-    { "cw", "Set the width crop area expression",  OFFSET(cw), AV_OPT_TYPE_STRING, { .str = "iw" }, 0, 0, FLAGS },
+-    { "ch", "Set the height crop area expression", OFFSET(ch), AV_OPT_TYPE_STRING, { .str = "ih" }, 0, 0, FLAGS },
+-    { "cx", "Set the x crop area expression",      OFFSET(cx), AV_OPT_TYPE_STRING, { .str = "(in_w-out_w)/2" }, 0, 0, FLAGS },
+-    { "cy", "Set the y crop area expression",      OFFSET(cy), AV_OPT_TYPE_STRING, { .str = "(in_h-out_h)/2" }, 0, 0, FLAGS },
++    { "cw", "Set the width crop area expression",  OFFSET(cw), AV_OPT_TYPE_STRING, { .str = "iw" }, 0, 0, TFLAGS },
++    { "ch", "Set the height crop area expression", OFFSET(ch), AV_OPT_TYPE_STRING, { .str = "ih" }, 0, 0, TFLAGS },
++    { "cx", "Set the x crop area expression",      OFFSET(cx), AV_OPT_TYPE_STRING, { .str = "(in_w-out_w)/2" }, 0, 0, TFLAGS },
++    { "cy", "Set the y crop area expression",      OFFSET(cy), AV_OPT_TYPE_STRING, { .str = "(in_h-out_h)/2" }, 0, 0, TFLAGS },
+     { "format", "Output video pixel format", OFFSET(format), AV_OPT_TYPE_PIXEL_FMT, { .i64 = AV_PIX_FMT_NONE }, INT_MIN, INT_MAX, .flags = FLAGS },
+     { "transpose", "Set transpose direction", OFFSET(transpose), AV_OPT_TYPE_INT, { .i64 = -1 }, -1, 6, FLAGS, .unit = "transpose" },
+         { "cclock_hflip", "Rotate counter-clockwise with horizontal flip", 0, AV_OPT_TYPE_CONST, { .i64 = TRANSPOSE_CCLOCK_FLIP }, 0, 0, FLAGS, .unit = "transpose" },
+@@ -586,6 +689,7 @@
+     FILTER_OUTPUTS(rgavpp_outputs),
+     FILTER_SINGLE_PIXFMT(AV_PIX_FMT_DRM_PRIME),
+     .activate       = rgavpp_activate,
++    .process_command = rgavpp_process_command,
+     .flags_internal = FF_FILTER_FLAG_HWFRAME_AWARE,
+ };
+ 

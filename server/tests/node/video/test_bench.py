@@ -18,7 +18,8 @@ from baja_studio.node.video.spec import PipelineState, PipelineStatus
 def test_the_defaults_are_sixty_second_passes_with_two_cameras_and_auto_encoder() -> None:
     arguments = parse_arguments([])
     assert (arguments.seconds, arguments.cameras, arguments.encoder) == (60.0, 2, "auto")
-    assert arguments.decoder == "mjpeg"
+    # "auto": the Rockchip hardware path on a NanoPi, the CPU on a laptop (ADR 0024).
+    assert arguments.decoder == "auto"
     assert not arguments.synthetic and not arguments.skip_decoders
 
 

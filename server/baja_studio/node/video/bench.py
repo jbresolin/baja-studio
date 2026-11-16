@@ -7,9 +7,16 @@ What it does, in order, printing as it goes:
 3. runs **one camera** for `--seconds` (60) through the real pipeline to a
    local sink, playing operator on it (`bench_pass.py`), then **two cameras**
    together if there are two;
-4. on a real camera, tries the hardware MJPEG decoders (QuickSync, NVIDIA)
-   for 20 s each, to see whether they work and how much CPU they save
-   (`--skip-decoders` to leave this out).
+4. on a real camera, tries the hardware MJPEG decoders (QuickSync, NVIDIA;
+   on a Rockchip board the CPU instead, for comparison) for 20 s each, to see
+   whether they work and how much CPU they save (`--skip-decoders` to leave
+   this out).
+
+On the NanoPi (ADR 0024) the same tool runs from the node's own Python:
+`/opt/baja-camera-node/venv/bin/python -m baja_studio.node.video.bench`. The
+decoder `auto` there is the Rockchip hardware path; `--synthetic` uploads the
+test card to the hardware so the RGA crop and the MPP encoder are measured
+without a camera.
 
 Per camera it prints frames in and out per second, dropped frames, the
 encoder, the bitrate, the window apply time (window sent → reached a frame)
@@ -37,13 +44,16 @@ from baja_studio.node.video.capture_devices import (
     raw_device_listing,
     raw_mode_listing,
 )
-from baja_studio.node.video.encoders import AUTO_ORDER, PROFILES, probe_encoder
+from baja_studio.node.video.encoders import PROFILES, auto_order, probe_encoder
 from baja_studio.node.video.probe_reader import summarise_ms
-from baja_studio.node.video.spec import SOFTWARE_DECODER, PipelineSpec
+from baja_studio.node.video.rockchip import is_rockchip_board, resolve_decoder
+from baja_studio.node.video.spec import AUTO_DECODER, SOFTWARE_DECODER, PipelineSpec
 from baja_studio.node.video.synthetic_sources import is_synthetic
 from baja_studio.playout.tools import FFMPEG, resolve_tool
 
 HARDWARE_DECODERS = ("mjpeg_qsv", "mjpeg_cuvid")
+# On a Rockchip board the hardware path is the default; the CPU pass shows what it saves.
+ROCKCHIP_COMPARISON_DECODERS = (SOFTWARE_DECODER,)
 DECODER_PASS_SECONDS = 20.0
 
 
@@ -56,7 +66,11 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
     parser.add_argument("--ffmpeg", default="", help="ffmpeg to use (default: bundled, else PATH)")
     parser.add_argument("--seconds", type=float, default=60.0, help="length of each pass")
     parser.add_argument("--encoder", default="auto", help="auto, h264_nvenc, h264_qsv, ...")
-    parser.add_argument("--decoder", default=SOFTWARE_DECODER, help="MJPEG decoder for the passes")
+    parser.add_argument(
+        "--decoder",
+        default=AUTO_DECODER,
+        help="MJPEG decoder for the passes (auto: Rockchip hardware on a Rockchip board, else CPU)",
+    )
     parser.add_argument("--mode", default="", help="camera mode, e.g. 3840x2160@30 (default: best)")
     parser.add_argument("--cameras", type=int, default=2, help="at most this many cameras")
     parser.add_argument("--synthetic", action="store_true", help="use the synthetic test card")
@@ -72,7 +86,17 @@ def resolve_ffmpeg(configured: str) -> str:
     Run from a terminal, the installer's environment variable is not set; the
     installed Python is `<program>\\python\\python.exe`, so the program folder
     is also found from it (`<program>\\ffmpeg\\ffmpeg.exe`, as the studio has).
+    On Linux the node's Python is `<program>/venv/bin/python`, two folders
+    further down, and its ffmpeg `<program>/ffmpeg/bin/ffmpeg` (ADR 0024).
     """
+    if sys.platform != "win32" and not configured:
+        # Imported here: parts.py imports the node's whole module, which the bench does not need.
+        from baja_studio.node.parts import linux_bundled_ffmpeg
+
+        layout = InstallLayout.from_environment() or InstallLayout(Path(sys.executable).parents[2])
+        bundled = linux_bundled_ffmpeg(layout)
+        if bundled is not None:
+            return bundled
     layout = InstallLayout.from_environment() or InstallLayout(Path(sys.executable).parents[1])
     return resolve_tool(FFMPEG, configured, layout).command
 
@@ -113,9 +137,9 @@ def list_cameras(ffmpeg: str, show_raw: bool) -> list[tuple[CaptureDevice, list[
     return cameras
 
 
-def list_encoders(ffmpeg: str) -> None:
+def list_encoders(ffmpeg: str, decoder: str) -> None:
     """Print which encoders pass the test encode."""
-    for name in AUTO_ORDER:
+    for name in auto_order(decoder):
         result = probe_encoder(ffmpeg, name)
         verdict = "works" if result.works else f"does not work: {result.message}"
         print(f"encoder {PROFILES[name].label} ({name}): {verdict}")
@@ -158,9 +182,12 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.WARNING, format="%(levelname)s %(message)s")
     logger = logging.getLogger("bench")
     ffmpeg = resolve_ffmpeg(arguments.ffmpeg)
+    on_rockchip = is_rockchip_board()
+    decoder = resolve_decoder(arguments.decoder, on_rockchip)
     print(f"ffmpeg: {ffmpeg}")
+    print(f"decoder: {decoder}" + (" (Rockchip board)" if on_rockchip else ""))
     cameras = list_cameras(ffmpeg, arguments.raw)
-    list_encoders(ffmpeg)
+    list_encoders(ffmpeg, decoder)
     if arguments.list:
         return 0
     if arguments.synthetic or not cameras:
@@ -178,7 +205,7 @@ def main(argv: list[str] | None = None) -> int:
                 input_fps=fps,
                 output_url="",  # each pass sends to its own local sink
                 encoder=arguments.encoder,
-                decoder=arguments.decoder,
+                decoder=decoder,
                 ffmpeg_path=ffmpeg,
                 label=device.name,
             )
@@ -187,10 +214,11 @@ def main(argv: list[str] | None = None) -> int:
     if len(specs) > 1:
         print_pass(f"{len(specs)} cameras", run_pass(specs, arguments.seconds, ffmpeg, logger))
     if not arguments.skip_decoders and not is_synthetic(specs[0].device):
-        for decoder in HARDWARE_DECODERS:
-            spec = replace(specs[0], decoder=decoder)
+        others = ROCKCHIP_COMPARISON_DECODERS if on_rockchip else HARDWARE_DECODERS
+        for other in others:
+            spec = replace(specs[0], decoder=other)
             result = run_pass([spec], DECODER_PASS_SECONDS, ffmpeg, logger)
-            print_pass(f"1 camera, decoder {decoder}", result)
+            print_pass(f"1 camera, decoder {other}", result)
     return 0
 
 
