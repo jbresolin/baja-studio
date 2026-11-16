@@ -6,13 +6,15 @@ presets, modes, image and crop).
 
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any
+
+# A command the camera refuses (shared with the camera node); re-exported for the fakes.
+from baja_studio.agents.server import MAX_RESUME_AFTER_MS, CameraCommandError, checked_profile
+
+__all__ = ["MAX_RESUME_AFTER_MS", "CameraCommandError", "checked_profile"]
 
 from baja_studio.agents.contract import (
-    DEFAULT_RESUME_AFTER_MS,
     CameraKind,
     CameraLimits,
-    ErrorCode,
     Mode,
     TrackerState,
     TrackerStatus,
@@ -30,7 +32,6 @@ FIXED_LIMITS = CameraLimits(
     pan_speed_max=0.0, tilt_speed_max=0.0, zoom_speed_max=0.0, preset_max=None
 )
 MOVABLE_KINDS = (CameraKind.PTZ, CameraKind.CROP)
-MAX_RESUME_AFTER_MS = 600_000
 FAKE_TARGET_ID = "fake-target-1"
 
 
@@ -40,16 +41,6 @@ class FakeTracker(StrEnum):
     NOT_READY = "not_ready"
     READY = "ready"
     TRACKING = "tracking"
-
-
-class CameraCommandError(Exception):
-    """A command the camera refuses; the agent turns it into `{error, detail}`."""
-
-    def __init__(self, code: ErrorCode, detail: str) -> None:
-        """`code` decides the HTTP status (contract.ERROR_HTTP_STATUS)."""
-        super().__init__(detail)
-        self.code = code
-        self.detail = detail
 
 
 @dataclass(frozen=True)
@@ -74,18 +65,3 @@ def tracker_state(mode: Mode, tracker: "FakeTracker") -> TrackerState:
     if tracker == FakeTracker.READY:
         return TrackerState(state=TrackerStatus.SEARCHING)
     return TrackerState(state=TrackerStatus.LOST)
-
-
-def checked_profile(profile: dict[str, Any]) -> dict[str, Any]:
-    """A copy of a mode profile, refused if `resume_after_ms` is not 0-600000 whole ms."""
-    resume_after_ms = profile.get("resume_after_ms", DEFAULT_RESUME_AFTER_MS)
-    if (
-        not isinstance(resume_after_ms, int)
-        or isinstance(resume_after_ms, bool)
-        or not 0 <= resume_after_ms <= MAX_RESUME_AFTER_MS
-    ):
-        raise CameraCommandError(
-            ErrorCode.BAD_REQUEST,
-            f"profile.resume_after_ms must be a whole number of ms from 0 to {MAX_RESUME_AFTER_MS}",
-        )
-    return dict(profile)

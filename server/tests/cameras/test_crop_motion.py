@@ -1,4 +1,4 @@
-"""Tests for an OBS crop camera's held velocity (cameras/drivers/obs_crop_motion.py).
+"""Tests for a crop camera's held velocity (cameras/crop_motion.py; was obs_crop_motion.py).
 
 `CropMotion` is told the time on every call, so these tests just pass
 numbers: no clock, no threads. It answers "move the window at this velocity
@@ -7,8 +7,8 @@ for this long" each time the driver's worker asks.
 
 import pytest
 
+from baja_studio.cameras.crop_motion import CropMotion
 from baja_studio.cameras.driver import AT_REST, Velocity
-from baja_studio.cameras.drivers.obs_crop_motion import CropMotion
 
 RIGHT = Velocity(pan=0.5)
 

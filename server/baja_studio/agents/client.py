@@ -15,6 +15,7 @@ from pydantic import TypeAdapter
 
 from baja_studio.agents.contract import (
     CONTRACT_VERSION,
+    DEFAULT_SNAPSHOT_WIDTH,
     DEFAULT_TTL_MS,
     STUDIO_ID_HEADER,
     TOKEN_HEADER,
@@ -231,6 +232,21 @@ class AgentClient:
         body = rect.model_dump()
         return CropRect.model_validate(await self._command(camera_id, "PUT", "/crop", body))
 
+    async def snapshot(self, camera_id: str, width: int = DEFAULT_SNAPSHOT_WIDTH) -> bytes:
+        """The camera's whole frame as JPEG bytes (contract 1.1; only if it lists `snapshot`).
+
+        Raises `AgentError` (e.g. `no_snapshot` while the agent has no picture yet).
+        """
+        if self._incompatible_reason is None:
+            await self.info()
+        if self._incompatible_reason:
+            raise IncompatibleAgentError(self._incompatible_reason)
+        path = f"/cameras/{camera_id}/snapshot"
+        response = await self._request("GET", path, params={"width": width})
+        if response.is_success:
+            return response.content
+        raise _error_of(response)
+
     async def resync(self, camera_id: str) -> CommandReply:
         """Ask the agent to re-read the device after the studio drove it directly."""
         return CommandReply.model_validate(await self._command(camera_id, "POST", "/resync"))
@@ -249,6 +265,15 @@ class AgentClient:
         self, method: str, path: str, body: Any = None, params: dict[str, Any] | None = None
     ) -> Any:
         """One HTTP request; returns the decoded JSON or raises `AgentError`."""
+        response = await self._request(method, path, body, params)
+        if response.is_success:
+            return response.json()
+        raise _error_of(response)
+
+    async def _request(
+        self, method: str, path: str, body: Any = None, params: dict[str, Any] | None = None
+    ) -> httpx2.Response:
+        """Send one request and note that the agent answered; `AgentUnreachableError` if not."""
         try:
             response = await self._http.request(method, path, json=body, params=params)
         except httpx2.TransportError as error:
@@ -256,10 +281,13 @@ class AgentClient:
                 f"{self.base_url} did not answer {method} {path}: {error!r}"
             ) from error
         self.heard_from_agent()
-        if response.is_success:
-            return response.json()
-        try:
-            error_body = ErrorBody.model_validate(response.json())
-        except ValueError:
-            raise AgentError(response.status_code, "unexpected_answer", response.text) from None
-        raise AgentError(response.status_code, error_body.error, error_body.detail)
+        return response
+
+
+def _error_of(response: httpx2.Response) -> AgentError:
+    """The `AgentError` for an error answer (`{error, detail}`, or whatever else came)."""
+    try:
+        error_body = ErrorBody.model_validate(response.json())
+    except ValueError:
+        return AgentError(response.status_code, "unexpected_answer", response.text)
+    return AgentError(response.status_code, error_body.error, error_body.detail)

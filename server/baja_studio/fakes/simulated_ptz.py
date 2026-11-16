@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from baja_studio.agents.contract import (
+    CAMERA_CAPABILITY_SNAPSHOT,
     CameraInfo,
     CameraKind,
     CameraState,
@@ -29,6 +30,7 @@ from baja_studio.agents.contract import (
     Preset,
     Status,
 )
+from baja_studio.fakes.blocky_jpeg import test_card_jpeg
 from baja_studio.fakes.simulated_common import (
     FIXED_LIMITS,
     MOVABLE_KINDS,
@@ -90,6 +92,8 @@ class SimulatedCamera:
             image_controls=list(self.image),
             presets=[self.presets[n] for n in sorted(self.presets)],
             limits=limits.get(self.kind, FIXED_LIMITS),
+            # Contract 1.1: a crop camera's whole frame, as a test card.
+            capabilities=[CAMERA_CAPABILITY_SNAPSHOT] if self.kind == CameraKind.CROP else [],
         )
 
     def state(self, now: Moment) -> CameraState:
@@ -229,6 +233,16 @@ class SimulatedCamera:
         self.head.crop_window = CropWindow.from_rect(rect)
         self._studio_motion(now, source, motion_ends_at=now.seconds)
         return self.head.crop_window.rect()
+
+    def snapshot(self, now: Moment, width: int) -> bytes:
+        """`GET /snapshot` (contract 1.1): the whole 16:9 frame as a JPEG test card, `width` wide.
+
+        The picture changes once a second (the shade of its dark squares), as a
+        real agent's snapshot would at most.
+        """
+        self._require_kind(CameraKind.CROP)
+        self._require_online()
+        return test_card_jpeg(width, width * 9 // 16, shade=int(now.seconds) * 16)
 
     def resync(self, now: Moment) -> CommandReply:
         """Re-read the device (the fake's device never drifts, so nothing changes)."""

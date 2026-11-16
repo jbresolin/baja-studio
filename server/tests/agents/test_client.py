@@ -49,7 +49,8 @@ def info_with_version(version: str) -> AgentInfo:
 
 
 def test_an_agent_with_the_same_major_version_is_compatible_even_if_newer() -> None:
-    # 1.3 only adds things to 1.0, so a 1.0 studio can still use it.
+    # 1.3 only adds things to 1.1, so a 1.1 studio can still use it; and a 1.0
+    # agent (the MV tracker's zone agent pins 1.0) is just as usable.
     assert incompatibility(info_with_version("1.0")) is None
     assert incompatibility(info_with_version("1.3")) is None
 
@@ -67,7 +68,8 @@ async def test_info_lists_the_agents_cameras(start_agent: StartAgent, client: Ag
 
     info = await client.info()
 
-    assert info.contract_version == "1.0"
+    # The fake speaks the studio's own version (1.1 since WP15 added snapshots).
+    assert info.contract_version == "1.1"
     assert [camera.id for camera in info.cameras] == ["cam1", "cam2"]
     assert client.incompatible_reason == ""
 
