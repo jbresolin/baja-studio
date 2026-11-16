@@ -65,8 +65,9 @@ say "Checking the board"
 [ "$(uname -m)" = "aarch64" ] || fail "this package is for 64-bit ARM boards (this is $(uname -m))"
 missing=()
 for package in "${UBUNTU_PACKAGES[@]}"; do
-  dpkg-query -W -f='${Status}' "$package" 2>/dev/null | grep -q "install ok installed" ||
-    missing+=("$package")
+  # Read whole before comparing: `cmd | grep -q` can end cmd with SIGPIPE (pipefail).
+  status=$(dpkg-query -W -f='${Status}' "$package" 2>/dev/null || true)
+  [ "$status" = "install ok installed" ] || missing+=("$package")
 done
 if [ ${#missing[@]} -gt 0 ]; then
   echo "Installing Ubuntu packages: ${missing[*]}"
@@ -107,8 +108,9 @@ rm -rf "$PROGRAM/frontend" && cp -r "$HERE/frontend" "$PROGRAM/frontend"
 rm -rf "$PROGRAM/ffmpeg" && tar -C "$PROGRAM" -xJf "$HERE/ffmpeg-rockchip-node-linux-arm64.tar.xz"
 cp "$HERE/VERSION" "$PROGRAM/VERSION"
 cp "$HERE/install.sh" "$PROGRAM/install.sh"
-"$PROGRAM/ffmpeg/bin/ffmpeg" -hide_banner -version | head -1 ||
+version_line=$("$PROGRAM/ffmpeg/bin/ffmpeg" -hide_banner -version) ||
   fail "the node's ffmpeg does not run (a missing Ubuntu library?)"
+echo "${version_line%%$'\n'*}"
 
 say "Video hardware permissions"
 cp "$HERE/99-baja-camera-node.rules" "$RULES_FILE"
@@ -120,7 +122,7 @@ say "Service ($SERVICE, port $PORT)"
 cp "$HERE/$SERVICE.service" "$UNIT_FILE"
 systemctl daemon-reload
 systemctl enable --now "$SERVICE"
-if command -v ufw >/dev/null && ufw status | grep -q "Status: active"; then
+if command -v ufw >/dev/null && [[ "$(ufw status)" == *"Status: active"* ]]; then
   ufw allow "$PORT/tcp" comment "Baja camera node"
 fi
 

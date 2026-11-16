@@ -251,8 +251,11 @@ jobs:
           sudo "$folder/install.sh"
           curl -fsS http://127.0.0.1:8891/agent/info | tee agent-info.json
           python -c "import json; info = json.load(open('agent-info.json')); assert info['contract_version'] == '1.1', info"
-          curl -fsS http://127.0.0.1:8891/ | grep -q '<div id="root">'
-          /opt/baja-camera-node/ffmpeg/bin/ffmpeg -hide_banner -h filter=vpp_rkrga | grep -E '^\s+cw\s' | grep -q T
+          # Outputs read whole before grep: `cmd | grep -q` can end cmd with SIGPIPE (pipefail).
+          page=$(curl -fsS http://127.0.0.1:8891/)
+          grep -q '<div id="root">' <<<"$page"
+          rga_help=$(/opt/baja-camera-node/ffmpeg/bin/ffmpeg -hide_banner -h filter=vpp_rkrga)
+          grep -Eq '^ +cw +<[a-z]+> +[^ ]*T' <<<"$rga_help"
           systemctl is-enabled baja-camera-node
           sudo "$folder/install.sh"
           curl -fsS http://127.0.0.1:8891/agent/info > /dev/null

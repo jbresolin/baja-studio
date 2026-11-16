@@ -85,20 +85,33 @@ cp "$pin" "$prefix/pin.json"
 
 echo "== checks"
 ffmpeg="$prefix/bin/ffmpeg"
-"$ffmpeg" -hide_banner -version | head -1
+# Each listing is read whole first: `ffmpeg ... | grep -q` would end ffmpeg with
+# SIGPIPE once grep has its answer, which `set -o pipefail` counts as a failure.
+version=$("$ffmpeg" -hide_banner -version)
+echo "${version%%$'\n'*}"
+decoders=$("$ffmpeg" -hide_banner -decoders)
+encoders=$("$ffmpeg" -hide_banner -encoders)
+filters=$("$ffmpeg" -hide_banner -filters)
+protocols=$("$ffmpeg" -hide_banner -protocols)
+rkmpp_help=$("$ffmpeg" -hide_banner -h encoder=h264_rkmpp)
+rga_help=$("$ffmpeg" -hide_banner -h filter=vpp_rkrga)
+check() {  # check <what> <text> <extended regex>
+  if grep -Eq -- "$3" <<<"$2"; then echo "ok: $1"; else echo "MISSING: $1" >&2; exit 1; fi
+}
 # The features the node uses; none of these needs the board's hardware to be listed.
-"$ffmpeg" -hide_banner -decoders | grep -q ' mjpeg_rkmpp '
-"$ffmpeg" -hide_banner -encoders | grep -q ' h264_rkmpp '
+check "decoder mjpeg_rkmpp" "$decoders" ' mjpeg_rkmpp '
+check "encoder h264_rkmpp" "$encoders" ' h264_rkmpp '
+check "encoder libx264" "$encoders" ' libx264 '
+check "filter vpp_rkrga" "$filters" ' vpp_rkrga '
+check "filter zmq" "$filters" ' zmq '
+check "protocol srt" "$protocols" '^ +srt$'
 # The options the node gives the Rockchip encoder (encoders.PROFILES["h264_rkmpp"]).
-"$ffmpeg" -hide_banner -h encoder=h264_rkmpp | grep -q -- '-rc_mode '
-"$ffmpeg" -hide_banner -h encoder=h264_rkmpp | grep -q -- '-profile '
-"$ffmpeg" -hide_banner -encoders | grep -q ' libx264 '
-"$ffmpeg" -hide_banner -filters | grep -q ' vpp_rkrga '
-"$ffmpeg" -hide_banner -filters | grep -q ' zmq '
-"$ffmpeg" -hide_banner -protocols | grep -qw 'srt'
+check "h264_rkmpp -rc_mode" "$rkmpp_help" '-rc_mode '
+check "h264_rkmpp -profile" "$rkmpp_help" '-profile '
 # The patch: cw/cx/cy can change while running (a `T` in their flags).
-"$ffmpeg" -hide_banner -h filter=vpp_rkrga | grep -E '^\s+cw\s' | grep -q 'T'
-"$ffmpeg" -hide_banner -h filter=vpp_rkrga | grep -E '^\s+cx\s' | grep -q 'T'
+check "vpp_rkrga cw at runtime" "$rga_help" '^ +cw +<[a-z]+> +[^ ]*T'
+check "vpp_rkrga cx at runtime" "$rga_help" '^ +cx +<[a-z]+> +[^ ]*T'
+check "vpp_rkrga cy at runtime" "$rga_help" '^ +cy +<[a-z]+> +[^ ]*T'
 
 tar -C "$(dirname "$prefix")" -cJf "$output" "$(basename "$prefix")"
 sha256sum "$output"
