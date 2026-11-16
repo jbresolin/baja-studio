@@ -276,19 +276,21 @@ class CameraPipeline:
             )
         except FfmpegNotFoundError as error:
             return Failure(FailureKind.OTHER, str(error)), True
-        run.sender = self._sender_factory()(port, pixels, self._logger)
-        run.sender.start()
-        with self._lock:
-            self._run = run
-            newest = self._window
-        if newest != window:
-            run.sender.offer(self._pixels(newest))
+        # From here on ffmpeg runs: whatever happens, it is stopped and reaped below.
         try:
+            run.sender = self._sender_factory()(port, pixels, self._logger)
+            run.sender.start()
+            with self._lock:
+                self._run = run
+                newest = self._window
+            if newest != window:
+                run.sender.offer(self._pixels(newest))
             failure = self._watch(run, backoff, failures)
         finally:
             with self._lock:
                 self._run = None
-            run.sender.stop()
+            if run.sender is not None:
+                run.sender.stop()
             run.process.stop()
         return failure, False
 

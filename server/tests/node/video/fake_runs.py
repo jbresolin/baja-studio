@@ -134,8 +134,11 @@ class RecordingSenders:
 
     def __init__(self) -> None:
         self.made: list[RecordingSender] = []
+        self.broken = False
 
     def __call__(self, port: int, starting_window: CropPixels, logger: object) -> RecordingSender:
+        if self.broken:
+            raise RuntimeError("no sender today")
         sender = RecordingSender(port, starting_window)
         self.made.append(sender)
         return sender

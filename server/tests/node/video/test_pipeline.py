@@ -290,6 +290,15 @@ def test_a_bug_in_the_pipeline_is_logged_and_retried_not_fatal(
     assert len(bench.launcher.runs) == 1
 
 
+def test_ffmpeg_is_stopped_even_when_something_fails_after_it_started(bench: Bench) -> None:
+    # The window sender cannot be made (a bug, a ZeroMQ error) after ffmpeg is
+    # already running. That ffmpeg must not be left behind holding the camera.
+    bench.senders.broken = True
+    started(bench)
+    assert bench.launcher.runs[0].stopped
+    assert bench.pipeline.status().reason.startswith("internal error: no sender today")
+
+
 def test_snapshots_are_served_while_running_and_dropped_when_ffmpeg_fails(bench: Bench) -> None:
     run = started(bench).launcher.latest
     assert bench.pipeline.latest_snapshot() is None  # none yet
