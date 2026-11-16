@@ -32,6 +32,7 @@ PORTS = fakes.FakePorts(
     agents=(8890, 8891),
     orchestrator=8000,
     laptop_obs=4456,
+    node=8892,
 )
 CLIPS = Path("/rig/clips")
 
@@ -82,7 +83,13 @@ def test_the_bundle_points_every_module_at_the_fakes() -> None:
     ]
 
     assert values["audio"]["mixer"] == {"host": "127.0.0.1", "port": 10024, "enabled": True}
-    assert [agent["port"] for agent in values["agents"]["agents"]] == [8890, 8891]
+    # Both fake agents, and the laptop camera node (WP15).
+    assert [agent["port"] for agent in values["agents"]["agents"]] == [8890, 8891, 8892]
+    node_cameras = [c for c in values["cameras"]["cameras"] if c["id"].startswith("rig-node-")]
+    assert [c["address"] for c in node_cameras] == [
+        {"agent_id": "rig-node", "remote_camera_id": "cam1"},
+        {"agent_id": "rig-node", "remote_camera_id": "cam2"},
+    ]
     # Each agent's first camera falls back to its own fake VISCA camera.
     fallbacks = [
         camera["direct_fallback"]["address"]["port"]

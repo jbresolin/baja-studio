@@ -25,11 +25,22 @@ jobs:
           ruff check .
           ruff format --check .
       - name: Type-check (mypy --strict)
+        # Twice, so the Windows-only code is checked on every runner (as for the tray).
         working-directory: server
-        run: mypy
+        run: |
+          mypy
+          mypy --platform win32
       - name: Test (pytest)
         working-directory: server
         run: pytest
+      # The agent conformance suite against an in-process camera node with fake
+      # video (WP15): cam1 in node mode (fake pipeline), cam2 in OBS mode (fake OBS).
+      - name: Conformance of the camera node, node mode
+        working-directory: server
+        run: pytest tests/agent_contract --agent-impl node --agent-camera cam1
+      - name: Conformance of the camera node, OBS mode
+        working-directory: server
+        run: pytest tests/agent_contract --agent-impl node --agent-camera cam2
       # The rehearsal rig's integration tests (ADR 0016): every fake on loopback
       # ports, and playout's readiness wants ffmpeg/ffprobe on PATH.
       - name: Install ffmpeg (rig tests)

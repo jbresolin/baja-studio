@@ -12,6 +12,11 @@ The fake MediaMTX (WP14) watches the `mediamtx.yml` the rig studio writes in
 its data folder and writes MediaMTX-style lines where the studio reads the
 real one's log; it opens only its control API, not the RTMP/SRT/RTSP ports.
 
+The laptop camera node (WP15, ADR 0023) is the real node,
+`python -m baja_studio.node --fake-video`: two cameras in node mode on fake
+pipelines, as an agent with two crop cameras (its own data folder is under
+the rig's logs, so every rig starts it afresh).
+
 The passwords and tokens below protect nothing but these local fakes, so they
 are plain constants (and travel in the settings bundle; ADR 0016).
 """
@@ -48,6 +53,9 @@ XR18_NAME = "XR18-RIG"
 # Agent ids as the studio's registry knows them; the fakes report the same.
 AGENT_IDS = ("rig-laptop-a", "rig-laptop-b")
 CAMERAS_PER_AGENT = 2
+# The laptop camera node (WP15): its agent id, and how many fake-video cameras it serves.
+NODE_AGENT_ID = "rig-node"
+NODE_CAMERAS = 2
 # The feeds the bundle configures; the fake MediaMTX has them publishing from the start.
 FEED_SENDERS = ("drone", "laptop1")
 # What the studio needs in its environment to drive the fake M-VAVE and USB cameras.
@@ -69,6 +77,8 @@ class FakePorts:
     agents: tuple[int, int]
     orchestrator: int
     laptop_obs: int
+    # The laptop camera node's agent API (WP15).
+    node: int = 8891
     # The fake MediaMTX's control API, and the (unopened) RTMP, SRT and RTSP ports
     # the feeds settings name.
     mediamtx_api: int = 9997
@@ -84,6 +94,7 @@ class FakePorts:
             agents=(free_tcp_port(), free_tcp_port()),
             orchestrator=free_tcp_port(),
             laptop_obs=free_tcp_port(),
+            node=free_tcp_port(),
             mediamtx_api=free_tcp_port(),
             feeds=(free_tcp_port(), free_udp_port(), free_tcp_port()),
         )
@@ -215,6 +226,16 @@ def build_fakes(
         ],
         f"http://{LOOPBACK}:{ports.orchestrator}/manifest",
         lambda: tcp_answers(ports.orchestrator),
+    )
+    node_arguments = ["--host", LOOPBACK, "--port", str(ports.node), "--fake-video"]
+    node_arguments += ["--fake-cameras", str(NODE_CAMERAS), "--token", AGENT_TOKEN]
+    node_arguments += ["--agent-id", NODE_AGENT_ID]
+    node_arguments += ["--data-dir", str(log_directory / "node-data")]
+    fakes["node"] = RigFake(
+        RigProcess("node", "baja_studio.node", node_arguments, log_directory),
+        f"http://{LOOPBACK}:{ports.node} (camera node {NODE_AGENT_ID}, two fake-video crop "
+        "cameras; its page at /)",
+        lambda: tcp_answers(ports.node),
     )
     mediamtx_arguments = ["--host", LOOPBACK, "--port", str(ports.mediamtx_api)]
     mediamtx_arguments += ["--senders", ",".join(FEED_SENDERS)]

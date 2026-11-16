@@ -19,6 +19,7 @@ PORTS = FakePorts(
     agents=(8890, 8891),
     orchestrator=8000,
     laptop_obs=4456,
+    node=8892,
 )
 
 
@@ -32,8 +33,8 @@ def host_argument(command: list[str]) -> str | None:
 def test_every_fake_the_rig_starts_listens_on_loopback_only(tmp_path: Path) -> None:
     fakes = build_fakes(PORTS, tmp_path / "delivery", tmp_path / "logs", 1, None)
 
-    # The rig starts all nine fakes (a trackside laptop's OBS since WP13, MediaMTX's
-    # since WP14) ...
+    # The rig starts all ten fakes (a trackside laptop's OBS since WP13, MediaMTX's
+    # since WP14, the laptop camera node since WP15) ...
     assert set(fakes) == {
         "obs",
         "laptop-obs",
@@ -44,6 +45,7 @@ def test_every_fake_the_rig_starts_listens_on_loopback_only(tmp_path: Path) -> N
         "agent2",
         "orchestrator",
         "mediamtx",
+        "node",
     }
     # ... and each is told to listen on 127.0.0.1. Without `--host` several fakes
     # would listen on every network card (0.0.0.0 is their default).
