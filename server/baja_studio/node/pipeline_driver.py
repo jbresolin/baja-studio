@@ -26,6 +26,7 @@ whatever the pipeline is doing: the dead-man needs no message to anyone.
 """
 
 from collections.abc import Callable
+from dataclasses import replace
 
 from baja_studio.agents.contract import CameraKind, Position, Status
 from baja_studio.cameras.config import CameraConfig
@@ -36,11 +37,11 @@ from baja_studio.cameras.drivers.obs_crop_state import CropPublisher, crop_state
 from baja_studio.core.worker import HealthState, WorkerContext, WorkerSpec
 from baja_studio.node.redact import scrub, secret_parts
 from baja_studio.node.video.pipeline_types import (
-    CameraPipeline,
     PipelineSpec,
     PipelineState,
     PipelineStatus,
-    PipelineWindow,
+    SourceWindow,
+    VideoPipeline,
 )
 
 # At rest the worker still looks at the pipeline's status this often.
@@ -54,7 +55,7 @@ _HEALTH_STATE = {
     Status.OFFLINE: HealthState.OFFLINE,
 }
 
-MakePipeline = Callable[[PipelineSpec], CameraPipeline]
+MakePipeline = Callable[[PipelineSpec], VideoPipeline]
 
 
 def pipeline_health(status: PipelineStatus) -> tuple[Status, str]:
@@ -92,8 +93,8 @@ class PipelineCropDriver(CameraDriver):
         self._publisher = CropPublisher(host.publish)
         frame = self.frame()
         self.window = frame.clamp(initial_window) if initial_window else frame.whole()
-        self._sent: PipelineWindow | None = None
-        self.pipeline: CameraPipeline | None = None
+        self._sent: SourceWindow | None = None
+        self.pipeline: VideoPipeline | None = None
         self._health = (Status.DEGRADED, "starting")
         self._secrets = secret_parts(spec.output_url)
         self._worker: WorkerContext | None = None
@@ -155,6 +156,13 @@ class PipelineCropDriver(CameraDriver):
         pipeline = self.pipeline
         return None if pipeline is None else pipeline.latest_snapshot()
 
+    def log_tail(self) -> list[str]:
+        """ffmpeg's recent lines (for the node's page), with any piece of the output URL removed."""
+        pipeline = self.pipeline
+        if pipeline is None:
+            return []
+        return [scrub(line, self._secrets) for line in pipeline.log_tail()]
+
     def pipeline_status(self) -> PipelineStatus | None:
         """The pipeline's own status (for the node's page), None without a pipeline."""
         pipeline = self.pipeline
@@ -182,7 +190,7 @@ class PipelineCropDriver(CameraDriver):
             if pipeline is not None:
                 pipeline.stop()
 
-    def _start_pipeline(self) -> CameraPipeline | None:
+    def _start_pipeline(self) -> VideoPipeline | None:
         if not self.spec.device:
             self._health = (Status.DEGRADED, NO_DEVICE)
             return None
@@ -218,7 +226,7 @@ class PipelineCropDriver(CameraDriver):
 
     def _send_window(self, frame: CropFrame) -> None:
         rect = frame.rect(self.window)
-        wanted = PipelineWindow(rect["x"], rect["y"], rect["w"], rect["h"])
+        wanted = SourceWindow(rect["x"], rect["y"], rect["w"], rect["h"])
         if self.pipeline is not None and wanted != self._sent:
             self.pipeline.set_window(wanted)
             self._sent = wanted
@@ -232,13 +240,4 @@ class PipelineCropDriver(CameraDriver):
 
 
 def _with_reason(status: PipelineStatus, reason: str) -> PipelineStatus:
-    return PipelineStatus(
-        status.state,
-        reason,
-        status.input_fps,
-        status.output_fps,
-        status.dropped_frames,
-        status.bitrate_kbps,
-        status.encoder,
-        status.since,
-    )
+    return replace(status, reason=reason)

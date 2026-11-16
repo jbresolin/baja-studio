@@ -218,6 +218,18 @@ export function CameraForm({ camera, usbDevices, onChange, onRemove }: Props) {
             </select>
           </label>
           <label className="field">
+            MJPEG decoder
+            <select
+              value={video.decoder}
+              onChange={(event) => setVideo({ decoder: event.target.value })}
+            >
+              <option value="mjpeg">CPU (mjpeg)</option>
+              <option value="mjpeg_qsv">Intel QuickSync (mjpeg_qsv)</option>
+              <option value="mjpeg_cuvid">NVIDIA (mjpeg_cuvid)</option>
+            </select>
+            <span className="field-help">Keep CPU unless the bench showed the other works.</span>
+          </label>
+          <label className="field">
             Bitrate (kbit/s)
             <input
               type="number"

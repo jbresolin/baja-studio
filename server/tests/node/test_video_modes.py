@@ -19,7 +19,7 @@ talks to it over HTTP like the studio does, on the real clock: waits are
 from pathlib import Path
 from typing import Any
 
-from baja_studio.node.video.fake_pipeline import FakeCameraPipeline
+from baja_studio.node.video.fake import FakeCameraPipeline
 from tests.conftest import eventually
 from tests.node.node_harness import (
     CROP_FILTER,
@@ -139,7 +139,10 @@ def test_a_pipeline_that_breaks_outright_never_takes_the_api_down(tmp_path: Path
         def explode() -> Any:
             raise RuntimeError("the pipe to ffmpeg broke")
 
+        # Everything the node reads from it raises (stop() still works, to clean up).
         broken.status = explode  # type: ignore[method-assign]
+        broken.latest_snapshot = explode  # type: ignore[method-assign]
+        broken.log_tail = explode  # type: ignore[method-assign]
 
         # A snapshot is "no picture", never a server error ...
         answer = node.http.get("/cameras/cam1/snapshot")

@@ -14,6 +14,7 @@ limits, speeds) is read by the running driver on its next step.
 """
 
 from collections.abc import Callable
+from dataclasses import replace
 from typing import Any
 
 from baja_studio.cameras.config import CameraConfig, DriverKind
@@ -28,12 +29,14 @@ from baja_studio.node.pipeline_driver import PipelineCropDriver
 from baja_studio.node.redact import redacted_url
 from baja_studio.node.settings import LOCAL_OBS_HOST, NodeCameraSettings, VideoMode
 from baja_studio.node.snapshots import ObsSnapshots, Snapshot, no_snapshot
-from baja_studio.node.video.pipeline_types import CameraPipeline, PipelineSpec
+from baja_studio.node.video.pipeline_types import PipelineSpec, VideoPipeline
 
 NO_OBS_SOURCE = "OBS mode: choose the camera's source in OBS on this node's page"
 JPEG = "image/jpeg"
+# The newest ffmpeg lines the node's page shows for a camera in node mode.
+FFMPEG_LOG_LINES = 15
 
-MakePipeline = Callable[[PipelineSpec], CameraPipeline]
+MakePipeline = Callable[[PipelineSpec], VideoPipeline]
 
 
 def crop_settings(camera: NodeCameraSettings) -> ObsCropSettings:
@@ -85,6 +88,8 @@ def pipeline_spec(camera: NodeCameraSettings, ffmpeg_path: str) -> PipelineSpec:
         bitrate_kbps=video.bitrate_kbps,
         encoder=video.encoder,
         ffmpeg_path=ffmpeg_path,
+        decoder=video.decoder,
+        label=camera.label or camera.id,
     )
 
 
@@ -92,7 +97,9 @@ def backend_key(camera: NodeCameraSettings, ffmpeg_path: str) -> tuple[object, .
     """What a backend is built from; a change means stopping it and building another."""
     if camera.mode == VideoMode.OBS:
         return (VideoMode.OBS, camera.obs.port, bool(camera.obs.source.strip()))
-    return (VideoMode.NODE, pipeline_spec(camera, ffmpeg_path))
+    # Without the label: renaming a camera must not restart its ffmpeg (the running
+    # pipeline keeps naming it by its old label in its messages until the next restart).
+    return (VideoMode.NODE, replace(pipeline_spec(camera, ffmpeg_path), label=""))
 
 
 def obs_backend(
@@ -158,15 +165,18 @@ def _pipeline_details(driver: PipelineCropDriver) -> dict[str, Any]:
         figures = {
             "state": status.state.value,
             "reason": status.reason,
-            "input_fps": round(status.input_fps, 1),
-            "output_fps": round(status.output_fps, 1),
+            "input_fps": round(status.fps_in, 1),
+            "output_fps": round(status.fps_out, 1),
             "dropped_frames": status.dropped_frames,
             "bitrate_kbps": round(status.bitrate_kbps),
             "encoder": status.encoder,
+            "restarts": status.restarts,
+            "window_apply_ms": status.window_apply_ms,
         }
     spec = driver.spec
     return {
         "pipeline": figures,
+        "ffmpeg_log": driver.log_tail()[-FFMPEG_LOG_LINES:],
         "output": redacted_url(spec.output_url),
         "device": spec.device,
         "input": f"{spec.input_width}x{spec.input_height} at {spec.input_fps} fps",

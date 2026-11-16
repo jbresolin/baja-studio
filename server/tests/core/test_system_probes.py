@@ -27,8 +27,8 @@ from baja_studio.core.system_probes import (
     sntp_request,
     writable_problem,
 )
-from baja_studio.core.system_probes import _cpu_times as cpu_times
 from baja_studio.core.system_probes import _memory_percent as memory_percent
+from baja_studio.core.system_probes import read_cpu_times as cpu_times
 
 windows_only = pytest.mark.skipif(
     sys.platform != "win32",

@@ -11,13 +11,13 @@ Why it is built this way: [ADR 0007](../docs/adr/0007-installer-and-gateway.md).
 | `BajaStudio.iss` | Inno Setup script: services (gateway started once the studio answers), firewall, tray at logon, Start menu, upgrades, uninstall |
 | `BajaCameraNode.iss` | The camera node's installer: the `BajaCameraNode` service (NSSM, auto start, port 8891), its firewall rule (TCP 8891, private and domain), upgrades, uninstall |
 | `smoke-test-node.ps1` | Installs the node silently, checks the service, `/agent/info` (version, contract 1.1), the page, its ffmpeg and firewall rule, installs again over it, uninstalls |
-| `ffmpeg-node/pin.json` | The node's ffmpeg (zmq, libsrt, NVENC, QuickSync, AMF): added by WP15 Part B; `build.ps1 -Node` stops with a clear message while it is missing |
 | `smoke-test.ps1` | Installs silently, checks no failed step, Caddy up within 5 s and started once, the services, health, ffmpeg, MediaMTX, the tray, a diagnostics bundle; uninstalls |
 | `release-notes.md` | The top of every GitHub Release's notes (install, upgrade); GitHub's list of changes follows |
 | `python/pin.json` | Embeddable Python (3.12.10, the last 3.12 with Windows binaries) URL and SHA-256 |
 | `nssm/pin.json` | NSSM 2.24-101 (the build that works on current Windows) URL and SHA-256 |
 | `caddy/pin.json` | Caddy version, the Cloudflare DNS module, the Go and xcaddy versions it is built with, and the SHA-256 of the result |
 | `ffmpeg/pin.json` | ffmpeg 9.0.2, gyan.dev "essentials" build (GPL, x64), from its GitHub release, and its SHA-256 |
+| `ffmpeg-node/pin.json` | The camera node's ffmpeg (WP15, ADR 0023): BtbN's static GPL build of ffmpeg 9.0.2, which has the zmq filter, SRT, NVENC, QuickSync and AMF that the studio's "essentials" build lacks; the Windows zip and its SHA-256, and the matching Linux build CI runs the node's video tests with |
 | `mediamtx/pin.json` | MediaMTX v1.21.3 (MIT) for the feeds service: the Windows amd64 zip and its SHA-256, and the Linux build CI runs in the rig tests |
 | `icons/baja-icone.svg` | The Baja mascot artwork the icon is made from |
 | `icons/make_icons.py` | Makes `tray/baja_studio_tray/assets/baja-studio.ico` (full artwork at 256/48/32, single-fill silhouette at 24/20/16); run by hand, the result is committed |
@@ -54,6 +54,12 @@ no Windows wheel early.
   `folder_in_zip`), download the file, put its SHA-256
   (`Get-FileHash -Algorithm SHA256`) in the pin. For ffmpeg, use a numbered
   release of `GyanD/codexffmpeg`, never a `git` build: those are replaced.
+- **The node's ffmpeg** (`ffmpeg-node/pin.json`): a monthly build of
+  `BtbN/FFmpeg-Builds` (`autobuild-YYYY-MM-DD-...` dated the last day of a
+  month; BtbN deletes the daily ones after about two weeks) at least two weeks
+  old, `win64-gpl-<major>` and the same version's `linux64-gpl-<major>`. The
+  release's `checksums.sha256` lists both SHA-256; check against your own
+  download. CI checks the features the node needs (`tests/rig/test_node_ffmpeg_pin.py`).
 - **MediaMTX**: a stable release at least two weeks old. Change the version,
   both URLs and both SHA-256 (the release's `checksums.sha256` lists them; check
   against your own download). Then measure the new binary as ADR 0022 did (the

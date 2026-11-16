@@ -253,20 +253,13 @@ elseif ($PSCmdlet.ShouldProcess($caddy, "Build Caddy $($caddyPin.caddy_version) 
     }
 }
 
-# --- The camera node's ffmpeg (WP15): last, so a missing pin stops nothing else ----------
-# Part B of WP15 (branch wp15-node-video) adds installer\ffmpeg-node\pin.json: a pinned
-# Windows build with zmq, libsrt, NVENC, QuickSync and AMF (ADR 0023). Its fields are
-# expected to be the playout pin's: version, url, sha256, folder_in_zip (bin\ffmpeg.exe
-# inside it), and an optional `license_in_zip`.
-# TODO(Claude, merging Part B): check these field names against Part B's pin.json, and
-# that its archive is a .zip (Expand-Archive cannot open a .7z).
+# --- The camera node's ffmpeg (WP15, ADR 0023) ---------------------------------------
+# installer\ffmpeg-node\pin.json: BtbN's win64 GPL static build, with zmq (the live
+# crop), libsrt, NVENC, QuickSync and AMF. Its .zip holds `folder_in_zip\bin\ffmpeg.exe`
+# and the licence (`license_in_zip`); the pin's linux_* fields are for CI's rig tests.
+# It goes to {app}\ffmpeg\ffmpeg.exe, where the node looks first (playout/tools.py).
 if ($Node) {
-    $nodeFfmpegPinFile = Join-Path $PSScriptRoot 'ffmpeg-node\pin.json'
-    if (-not (Test-Path $nodeFfmpegPinFile)) {
-        throw ("installer\ffmpeg-node\pin.json is missing: the camera node's ffmpeg is pinned by " +
-            'WP15 Part B (branch wp15-node-video). Merge that branch, then build again.')
-    }
-    $nodeFfmpegPin = Get-Content $nodeFfmpegPinFile -Raw | ConvertFrom-Json
+    $nodeFfmpegPin = Read-Pin 'ffmpeg-node'
     if ($PSCmdlet.ShouldProcess((Join-Path $app 'ffmpeg'), "Unpack the node's ffmpeg $($nodeFfmpegPin.version)")) {
         $zip = Get-PinnedDownload $nodeFfmpegPin "ffmpeg-node-$($nodeFfmpegPin.version).zip"
         $unpacked = Join-Path $cache 'ffmpeg-node'
@@ -276,9 +269,9 @@ if ($Node) {
         $target = New-Item -ItemType Directory -Force (Join-Path $app 'ffmpeg')
         Copy-Item (Join-Path $source 'bin\ffmpeg.exe') $target
         # GPL: its licence goes along.
-        $license = if ($nodeFfmpegPin.license_in_zip) { $nodeFfmpegPin.license_in_zip } else { 'LICENSE' }
-        Copy-Item (Join-Path $source $license) (Join-Path $target 'LICENSE.txt')
+        Copy-Item (Join-Path $source $nodeFfmpegPin.license_in_zip) (Join-Path $target 'LICENSE.txt')
         $reported = Invoke-Native (Join-Path $target 'ffmpeg.exe') @('-hide_banner', '-version') | Select-Object -First 1
+        if ($reported -notmatch [regex]::Escape($nodeFfmpegPin.version)) { throw "the node's ffmpeg reports '$reported'" }
         Write-Host "The node's ffmpeg: $reported"
     }
 }

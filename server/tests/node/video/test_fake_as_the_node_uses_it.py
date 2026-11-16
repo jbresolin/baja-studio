@@ -1,6 +1,6 @@
-"""Tests for the fake video pipeline (node/video/fake_pipeline.py).
+"""Tests for the fake video pipeline (node/video/fake.py), as the node's tests use it.
 
-The fake stands in for the real ffmpeg pipeline (Part B) in the node's tests
+The fake stands in for the real ffmpeg pipeline in the node's tests
 and in the rehearsal rig. These tests pin down what the node relies on: it
 records windows, reports a scripted state, keeps its window through a
 failure, and serves a whole-frame JPEG while running.
@@ -8,18 +8,18 @@ failure, and serves a whole-frame JPEG while running.
 
 import logging
 
-from baja_studio.fakes.blocky_jpeg import jpeg_size
 from baja_studio.node.test_cameras import fake_output_url
-from baja_studio.node.video.fake_pipeline import (
+from baja_studio.node.video.fake import (
     FAKE_DEVICES,
     FakeCameraPipeline,
     FakeCaptureDevices,
     FakePipelines,
+    fake_snapshot_jpeg,
 )
-from baja_studio.node.video.pipeline_types import PipelineSpec, PipelineState, PipelineWindow
+from baja_studio.node.video.pipeline_types import PipelineSpec, PipelineState, SourceWindow
 from tests.conftest import FakeClock
 
-LOGGER = logging.getLogger("tests.fake_pipeline")
+LOGGER = logging.getLogger("tests.fake")
 
 
 def spec(encoder: str = "auto") -> PipelineSpec:
@@ -46,7 +46,7 @@ def test_it_starts_running_and_reports_the_specs_frame_rate(fake_clock: FakeCloc
 
     status = pipeline.status()
     assert status.state == PipelineState.RUNNING
-    assert (status.input_fps, status.output_fps) == (30.0, 30.0)
+    assert (status.fps_in, status.fps_out) == (30.0, 30.0)
     # "auto" settles on the encoder the CI runner's ffmpeg has.
     assert status.encoder == "libx264"
 
@@ -63,15 +63,15 @@ def test_with_a_startup_time_it_says_starting_first(fake_clock: FakeClock) -> No
 def test_it_records_windows_and_keeps_the_last_through_a_failure(fake_clock: FakeClock) -> None:
     pipeline = FakeCameraPipeline(spec(), fake_clock, LOGGER)
     pipeline.start()
-    pipeline.set_window(PipelineWindow(0.0, 0.0, 0.5, 0.5))
-    pipeline.set_window(PipelineWindow(0.25, 0.25, 0.5, 0.5))
+    pipeline.set_window(SourceWindow(0.0, 0.0, 0.5, 0.5))
+    pipeline.set_window(SourceWindow(0.25, 0.25, 0.5, 0.5))
 
     pipeline.fail("camera not found: EMEET SmartCam S600")
 
     status = pipeline.status()
     assert status.state == PipelineState.RESTARTING
     assert status.reason == "camera not found: EMEET SmartCam S600"
-    assert pipeline.last_window == PipelineWindow(0.25, 0.25, 0.5, 0.5)
+    assert pipeline.last_window == SourceWindow(0.25, 0.25, 0.5, 0.5)
     pipeline.recover()
     assert pipeline.status().state == PipelineState.RUNNING
 
@@ -83,9 +83,9 @@ def test_a_snapshot_is_a_whole_frame_jpeg_only_while_running(fake_clock: FakeClo
     pipeline.start()
     picture = pipeline.latest_snapshot()
 
-    # About 320 pixels wide, with the source's 16:9 shape (rounded to 8-pixel blocks).
+    # A 320x180 JPEG test card (the real pipeline sends about 320 pixels wide too).
     assert picture is not None and picture.startswith(b"\xff\xd8")
-    assert jpeg_size(picture) == (320, 176)
+    assert picture == fake_snapshot_jpeg()
 
 
 def test_the_factory_remembers_what_it_made(fake_clock: FakeClock) -> None:

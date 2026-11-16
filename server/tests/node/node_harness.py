@@ -2,7 +2,7 @@
 
 `running_node(...)` starts the node's real app (`node/app.py`) with:
 
-- fake video pipelines and two fake S600 capture devices (`node/video/fake_pipeline.py`);
+- fake video pipelines and two fake S600 capture devices (`node/video/fake.py`);
 - the UVC child called in-process over the fake duvc library
   (`tests/imaging/uvc_harness.py`), so image controls really go through
   the child's code;
@@ -33,11 +33,12 @@ from baja_studio.node.module import NodeModule
 from baja_studio.node.parts import NodeParts
 from baja_studio.node.settings import LOCAL_OBS_HOST
 from baja_studio.node.test_cameras import fake_output_url
-from baja_studio.node.video.fake_pipeline import (
+from baja_studio.node.video.fake import (
     FAKE_DEVICES,
     FakeCaptureDevices,
     FakePipelines,
 )
+from baja_studio.node.video.pipeline_types import PipelineFactory
 from tests.conftest import eventually
 from tests.imaging.uvc_harness import FakeUsb
 
@@ -141,19 +142,26 @@ def running_node(
     clock: Clock | None = None,
     token: str = NODE_TOKEN,
     studio_id: str = STUDIO_ID,
+    real_video: tuple[PipelineFactory, str] | None = None,
 ) -> Iterator[RunningNode]:
-    """Start a node with `cameras` (settings dicts) and the fakes; stop everything after."""
+    """Start a node with `cameras` (settings dicts) and the fakes; stop everything after.
+
+    `real_video` is (a real pipeline factory, the ffmpeg it runs), for the rig test
+    that runs the node on the real ffmpeg pipeline; `pipelines` then stays empty.
+    """
     clock = clock or SystemClock()
     pipelines, devices, usb = FakePipelines(), FakeCaptureDevices(), FakeUsb()
+    factory: PipelineFactory = pipelines if real_video is None else real_video[0]
+    ffmpeg = "ffmpeg" if real_video is None else real_video[1]
     network = InProcessObsNetwork()
     obs = laptop_obs(clock)
     network.plug(LOCAL_OBS_HOST, OBS_PORT, obs)
     parts = NodeParts(
-        pipelines=pipelines,
+        pipelines=factory,
         capture_devices=devices,
         uvc_child=lambda context, python_module, on_event: usb.new_host(context, on_event),
         obs_transport=network.connect,
-        ffmpeg_path=lambda settings: "ffmpeg",
+        ffmpeg_path=lambda settings: ffmpeg,
     )
     app = create_node_app(
         parts,

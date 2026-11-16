@@ -96,6 +96,12 @@ $ffmpeg = Join-Path $programDirectory 'ffmpeg\ffmpeg.exe'
 $banner = & $ffmpeg -hide_banner -version | Select-Object -First 1
 if ($LASTEXITCODE -ne 0) { throw "$ffmpeg did not run" }
 Write-Host "ok: $banner"
+# The live crop needs zmq; DirectShow capture and SRT out are the rest of the pipeline.
+$filters = & $ffmpeg -hide_banner -filters 2>$null | Out-String
+if ($filters -notmatch '\szmq\s') { throw "$ffmpeg has no zmq filter (the live crop needs it)" }
+$protocols = & $ffmpeg -hide_banner -protocols 2>$null | Out-String
+if ($protocols -notmatch '\ssrt\s') { throw "$ffmpeg has no SRT" }
+Write-Host 'ok: the zmq filter and SRT are there'
 if (-not (Test-Path (Join-Path $programDirectory 'ffmpeg\LICENSE.txt'))) { throw 'ffmpeg LICENSE.txt is missing' }
 $rule = Get-NetFirewallRule -DisplayName $firewallRule -ErrorAction SilentlyContinue
 if (-not $rule) { throw "the firewall rule '$firewallRule' is missing" }

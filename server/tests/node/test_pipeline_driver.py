@@ -7,6 +7,8 @@ a pipeline that cannot run at all is *offline*. The driver's motion itself
 is tested through the node (test_video_modes.py).
 """
 
+from datetime import UTC, datetime
+
 import pytest
 
 from baja_studio.agents.contract import Status
@@ -35,4 +37,14 @@ from baja_studio.node.video.pipeline_types import PipelineState, PipelineStatus
 def test_a_pipelines_state_is_a_health_in_operator_words(
     state: PipelineState, reason: str, expected: tuple[Status, str]
 ) -> None:
-    assert pipeline_health(PipelineStatus(state, reason)) == expected
+    status = PipelineStatus(
+        state,
+        reason,
+        fps_in=0.0,
+        fps_out=0.0,
+        dropped_frames=0,
+        bitrate_kbps=0.0,
+        encoder=None,
+        since=datetime(2026, 11, 21, 12, 0, tzinfo=UTC),
+    )
+    assert pipeline_health(status) == expected

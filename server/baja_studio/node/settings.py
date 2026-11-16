@@ -35,6 +35,8 @@ NODE_PORT = 8891
 # The local OBS a camera in OBS mode is in: always this laptop's.
 LOCAL_OBS_HOST = "127.0.0.1"
 ENCODER_PATTERN = r"^(auto|[a-z0-9_]{1,40})$"
+# The MJPEG decoders the pipeline knows: the CPU, QuickSync, NVIDIA (the bench says which work).
+DECODER_PATTERN = r"^(mjpeg|mjpeg_qsv|mjpeg_cuvid)$"
 
 
 class StrictModel(BaseModel):
@@ -74,6 +76,14 @@ class PipelineSettings(StrictModel):
         description="auto (NVENC, then QuickSync, AMF, x264), or an encoder's name.",
     )
     bitrate_kbps: int = Field(default=8000, ge=500, le=50000)
+    decoder: str = Field(
+        default="mjpeg",
+        pattern=DECODER_PATTERN,
+        description=(
+            "How the camera's MJPEG is decoded: mjpeg (the CPU), mjpeg_qsv (Intel QuickSync) "
+            "or mjpeg_cuvid (NVIDIA). Keep mjpeg unless the bench showed the other works."
+        ),
+    )
 
 
 class ObsModeSettings(StrictModel):

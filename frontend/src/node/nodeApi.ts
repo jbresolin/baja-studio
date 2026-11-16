@@ -34,6 +34,7 @@ export interface NodeCamera {
     output_url: string;
     encoder: string;
     bitrate_kbps: number;
+    decoder: string;
   };
   obs: {
     port: number;
@@ -80,8 +81,11 @@ export interface NodeCameraView {
       output_fps: number;
       dropped_frames: number;
       bitrate_kbps: number;
-      encoder: string;
+      encoder: string | null;
+      restarts: number;
+      window_apply_ms: number | null;
     } | null;
+    ffmpeg_log?: string[];
     output?: string;
     obs?: { connected: boolean; problem: string; source: string | null };
   };
@@ -180,6 +184,7 @@ export function newCamera(existing: NodeCamera[]): NodeCamera {
       input_fps: 30,
       output_url: "",
       encoder: "auto",
+      decoder: "mjpeg",
       bitrate_kbps: 8000,
     },
     obs: { port: 4455, password: "", source: "", filter_name: "Baja crop", preview_source: "" },

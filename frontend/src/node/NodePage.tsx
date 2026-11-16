@@ -53,7 +53,16 @@ export function CameraStatus({ id, view }: { id: string; view: NodeCameraView })
         <p>
           {pipeline.input_fps} fps in, {pipeline.output_fps} fps out, {pipeline.dropped_frames}{" "}
           dropped, {pipeline.bitrate_kbps} kbit/s, {pipeline.encoder || "no encoder yet"}
+          {pipeline.restarts > 0 && `, ${pipeline.restarts} restarts`}
+          {pipeline.window_apply_ms != null &&
+            `, window applied in ${Math.round(pipeline.window_apply_ms)} ms`}
         </p>
+      )}
+      {view.details?.ffmpeg_log && view.details.ffmpeg_log.length > 0 && (
+        <details>
+          <summary>ffmpeg&apos;s last lines</summary>
+          <pre className="node-ffmpeg-log">{view.details.ffmpeg_log.join("\n")}</pre>
+        </details>
       )}
       {view.details?.output && <p>Sends to {view.details.output}</p>}
       {obs && <p>OBS: {obs.connected ? `connected, source ${obs.source ?? "?"}` : obs.problem}</p>}

@@ -1,13 +1,13 @@
 """Ready-made camera settings for a node with fake video (the rig, CI, `--fake-cameras`).
 
-`node`-mode cameras on the fake capture devices (`video/fake_pipeline.py`),
+`node`-mode cameras on the fake capture devices (`video/fake.py`),
 each with an output URL to a pretend Feeds address: the fake pipeline never
 connects anywhere. The URL's password is built here from parts, so nothing
 in the repository looks like a real credential.
 """
 
 from baja_studio.node.settings import NodeCameraSettings, PipelineSettings
-from baja_studio.node.video.fake_pipeline import FAKE_DEVICES
+from baja_studio.node.video.fake import FAKE_DEVICES
 
 
 def fake_output_url(camera_id: str) -> str:

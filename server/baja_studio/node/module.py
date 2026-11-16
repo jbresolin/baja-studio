@@ -161,14 +161,14 @@ class NodeModule(Module):
         if command in OBS_COMMANDS:
             return self._obs_command(command, args)
         if command == "list_capture_devices":
-            devices = self._parts.capture_devices.list_capture_devices()
+            devices = self._parts.capture_devices.list_capture_devices(self._ffmpeg())
             return {"devices": [{"name": d.name, "device": d.device} for d in devices]}
         if command == "capture_modes":
             device = str(args.get("device") or "")
-            modes = self._parts.capture_devices.capture_modes(device)
+            modes = self._parts.capture_devices.capture_modes(device, self._ffmpeg())
             return {
                 "modes": [
-                    {"width": m.width, "height": m.height, "fps": m.fps, "codec": m.codec}
+                    {"width": m.width, "height": m.height, "fps": m.max_fps, "codec": m.format}
                     for m in modes
                 ]
             }
@@ -234,6 +234,10 @@ class NodeModule(Module):
         settings = self.context.current_settings()
         assert isinstance(settings, NodeSettings)
         return settings
+
+    def _ffmpeg(self) -> str:
+        """The ffmpeg that lists the capture devices: the same one the pipelines run."""
+        return self._parts.ffmpeg_path(self._settings())
 
     def _wake_apply(self) -> None:
         worker = self._apply_worker

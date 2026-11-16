@@ -350,6 +350,10 @@ reading its tests.
   service. A restart is never the way to apply a setting that reloads.
   The diagnostics bundle masks settings and also scrubs every secret value
   from every file it collects.
+- **A long-running child process** (the node's ffmpeg) has every pipe read
+  continuously by its own thread, is always reaped, and on Windows joins a
+  kill-on-close job object, so neither a full pipe nor a crashed service
+  leaves it frozen or orphaned holding a camera (ADR 0023).
 
 ## Decisions
 
