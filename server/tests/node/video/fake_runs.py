@@ -78,8 +78,11 @@ class FakeLauncher:
     def __init__(self) -> None:
         self.runs: list[FakeRun] = []
         self.missing = False
+        self.bug: Exception | None = None
 
     def __call__(self, command: list[str], on_line: LineSink, on_bytes: BytesSink) -> FakeRun:
+        if self.bug is not None:
+            raise self.bug
         if self.missing:
             raise FfmpegNotFoundError("ffmpeg could not be started (ffmpeg): no such file")
         run = FakeRun(command, on_line, on_bytes)

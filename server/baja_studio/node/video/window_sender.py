@@ -109,6 +109,9 @@ class WindowSender:
             socket.connect(self._endpoint)
             while not self._stop.is_set():
                 self._step(socket)
+        except zmq.ZMQError as error:
+            # The window stops following until the next run; the run itself goes on.
+            self._logger.error("window sender stopped: %s", error)
         finally:
             socket.close()
 

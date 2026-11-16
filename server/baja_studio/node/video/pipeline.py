@@ -70,9 +70,20 @@ class _Run:
 
     def __init__(self, clock: Clock) -> None:
         self.progress = ProgressTracker(clock)
-        self.lines: deque[str] = deque(maxlen=LOG_TAIL_LINES)
         self.process: RunningFfmpeg | None = None
         self.sender: WindowSending | None = None
+        # Written by the stderr thread, read by the supervisor: a deque must not
+        # be copied while another thread appends to it, hence the lock.
+        self._lines_lock = threading.Lock()
+        self._lines: deque[str] = deque(maxlen=LOG_TAIL_LINES)
+
+    def add_line(self, line: str) -> None:
+        with self._lines_lock:
+            self._lines.append(line)
+
+    def lines(self) -> list[str]:
+        with self._lines_lock:
+            return list(self._lines)
 
 
 class CameraPipeline:
@@ -186,7 +197,13 @@ class CameraPipeline:
         backoff = RestartBackoff()
         failures = FailureStreak()
         while not self._stop_requested.is_set():
-            failure, fatal = self._one_run(backoff, failures)
+            try:
+                failure, fatal = self._one_run(backoff, failures)
+            except Exception as error:
+                # A bug of ours must not leave the camera dead with a stale status:
+                # it is logged with its traceback and handled like a failed run.
+                self._logger.exception("camera %s: pipeline error", self.spec.camera_name)
+                failure, fatal = Failure(FailureKind.OTHER, f"internal error: {error}"), False
             if failure is None:
                 return
             with self._lock:
@@ -285,7 +302,7 @@ class CameraPipeline:
             # One per lost frame: counted, not kept (it would push everything else out).
             run.progress.count_capture_drop()
             return
-        run.lines.append(self._log.add(line))
+        run.add_line(self._log.add(line))
 
     def _keep_snapshot(self, jpeg: bytes) -> None:
         with self._lock:
@@ -297,10 +314,10 @@ class CameraPipeline:
         launched_at = self._clock.monotonic()
         running_since: float | None = None
         while not self._clock.wait(self._stop_requested, WATCH_INTERVAL_SECONDS):
-            if run.process.exited.is_set() or live_output_failed(list(run.lines)):
+            if run.process.exited.is_set() or live_output_failed(run.lines()):
                 return explain_failure(
                     run.process.exit_code,
-                    list(run.lines),
+                    run.lines(),
                     self.spec.camera_name,
                     self.spec.output_url,
                 )

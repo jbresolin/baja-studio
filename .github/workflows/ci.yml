@@ -67,21 +67,26 @@ jobs:
         run: |
           pin=installer/ffmpeg-node/pin.json
           field() { python -c "import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])" $pin "$1"; }
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            url=$(field url); sha=$(field sha256); folder=$(field folder_in_zip)
+          else
+            url=$(field linux_url); sha=$(field linux_sha256); folder=$(field linux_folder_in_archive)
+          fi
           mkdir -p "$RUNNER_TEMP/ffmpeg-node"
           cd "$RUNNER_TEMP/ffmpeg-node"
           if [ "$RUNNER_OS" = "Windows" ]; then
-            curl -fsSL --retry 5 -o ffmpeg.zip "$(field url)"
-            echo "$(field sha256)  ffmpeg.zip" | sha256sum -c -
+            curl -fsSL --retry 5 -o ffmpeg.zip "$url"
+            echo "$sha  ffmpeg.zip" | sha256sum -c -
             python -m zipfile -e ffmpeg.zip .
-            folder="$(field folder_in_zip)"
+            "$PWD/$folder/bin/ffmpeg.exe" -hide_banner -version | head -1
             binary="$(cygpath -w "$PWD/$folder/bin/ffmpeg.exe")"
           else
-            curl -fsSL --retry 5 -o ffmpeg.tar.xz "$(field linux_url)"
-            echo "$(field linux_sha256)  ffmpeg.tar.xz" | sha256sum -c -
+            curl -fsSL --retry 5 -o ffmpeg.tar.xz "$url"
+            echo "$sha  ffmpeg.tar.xz" | sha256sum -c -
             tar xJf ffmpeg.tar.xz
-            binary="$PWD/$(field linux_folder_in_archive)/bin/ffmpeg"
+            binary="$PWD/$folder/bin/ffmpeg"
+            "$binary" -hide_banner -version | head -1
           fi
-          "$binary" -hide_banner -version | head -1
           echo "BAJA_STUDIO_TEST_NODE_FFMPEG=$binary" >> "$GITHUB_ENV"
       - name: Test the rehearsal rig (pytest -m rig)
         working-directory: server

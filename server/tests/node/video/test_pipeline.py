@@ -274,6 +274,22 @@ def test_a_launch_that_cannot_find_ffmpeg_is_a_failure(bench: Bench) -> None:
     assert status.reason.startswith("ffmpeg could not be started (ffmpeg): no such file")
 
 
+def test_a_bug_in_the_pipeline_is_logged_and_retried_not_fatal(
+    bench: Bench, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Something unexpected goes wrong while starting a run (a bug of ours).
+    bench.launcher.bug = KeyError("surprise")
+    started(bench)
+    status = bench.pipeline.status()
+    # The camera does not silently stay "starting": it says what happened and retries.
+    assert status.state == PipelineState.RESTARTING
+    assert status.reason == "internal error: 'surprise' — trying again in 1 s"
+    assert any(record.exc_info for record in caplog.records)
+    bench.launcher.bug = None
+    bench.step(1.0)
+    assert len(bench.launcher.runs) == 1
+
+
 def test_snapshots_are_served_while_running_and_dropped_when_ffmpeg_fails(bench: Bench) -> None:
     run = started(bench).launcher.latest
     assert bench.pipeline.latest_snapshot() is None  # none yet

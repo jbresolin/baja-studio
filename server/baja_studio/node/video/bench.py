@@ -24,6 +24,7 @@ import argparse
 import logging
 import sys
 from dataclasses import replace
+from pathlib import Path
 
 from baja_studio.core.system_services import InstallLayout
 from baja_studio.node.video.bench_pass import CameraResult, PassResult, run_pass
@@ -66,8 +67,14 @@ def parse_arguments(argv: list[str] | None = None) -> argparse.Namespace:
 
 
 def resolve_ffmpeg(configured: str) -> str:
-    """The ffmpeg to run: the one given, else the installer's copy, else PATH."""
-    return resolve_tool(FFMPEG, configured, InstallLayout.from_environment()).command
+    """The ffmpeg to run: the one given, else the installer's copy, else PATH.
+
+    Run from a terminal, the installer's environment variable is not set; the
+    installed Python is `<program>\\python\\python.exe`, so the program folder
+    is also found from it (`<program>\\ffmpeg\\ffmpeg.exe`, as the studio has).
+    """
+    layout = InstallLayout.from_environment() or InstallLayout(Path(sys.executable).parents[1])
+    return resolve_tool(FFMPEG, configured, layout).command
 
 
 def parse_mode(text: str) -> tuple[int, int, float] | None:
