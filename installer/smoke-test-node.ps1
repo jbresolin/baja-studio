@@ -93,8 +93,12 @@ Write-Host 'ok: page and settings'
 
 Write-Host "--- the node's ffmpeg and the firewall rule"
 $ffmpeg = Join-Path $programDirectory 'ffmpeg\ffmpeg.exe'
-$banner = & $ffmpeg -hide_banner -version | Select-Object -First 1
-if ($LASTEXITCODE -ne 0) { throw "$ffmpeg did not run" }
+# All of the output first, then its first line: `| Select-Object -First 1` straight on
+# the command stops ffmpeg mid-output, and then its exit code is not 0.
+$versionLines = & $ffmpeg -hide_banner -version
+if ($LASTEXITCODE -ne 0) { throw "$ffmpeg did not run (exit code $LASTEXITCODE)" }
+$banner = $versionLines | Select-Object -First 1
+if ($banner -notmatch '^ffmpeg version') { throw "$ffmpeg says '$banner'" }
 Write-Host "ok: $banner"
 # The live crop needs zmq; DirectShow capture and SRT out are the rest of the pipeline.
 $filters = & $ffmpeg -hide_banner -filters 2>$null | Out-String
