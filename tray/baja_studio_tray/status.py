@@ -9,9 +9,13 @@ The tray shows:
 - amber: `degraded` (a module is degraded or offline), or the last readiness
   run had warnings or failures; the tooltip then says how many, and when;
 - red: the service does not answer, or any other status (a future `fail`).
+
+The camera node's tray (`--node`) reads `/api/node/tray-status` instead
+(`status_from_node`): the node's status and one line per camera, shown as
+the tooltip and as greyed-out lines in the menu.
 """
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, tzinfo
 from enum import StrEnum
 from typing import Any
@@ -38,10 +42,14 @@ class TrayStatus:
     badge: Badge
     version: str | None
     summary: str
+    # The program's name in the tooltip (the camera node's tray says "Baja camera node").
+    product: str = "Baja Studio"
+    # The camera node's per-camera menu lines ("Left S600 (node): live"); none for the studio.
+    camera_lines: tuple[str, ...] = field(default=())
 
     def tooltip(self, labels: Labels) -> str:
         """`Baja Studio 0.2.0: everything ok`, cut to what Windows shows."""
-        name = f"Baja Studio {self.version}" if self.version else "Baja Studio"
+        name = f"{self.product} {self.version}" if self.version else self.product
         text = f"{name}: {self.summary}"
         if len(text) > TOOLTIP_LIMIT:
             text = text[: TOOLTIP_LIMIT - 1] + "…"
@@ -113,3 +121,64 @@ def _clock_time(timestamp: Any, timezone: tzinfo | None) -> str:
     if moment.tzinfo is None:
         return moment.strftime("%H:%M")
     return moment.astimezone(timezone).strftime("%H:%M")
+
+
+# --- The camera node's tray ---------------------------------------------------------------
+
+NODE_PRODUCT = "Baja camera node"
+# How the menu names each video mode (the node's settings say "node" or "obs").
+MODE_NAMES = {"node": "node", "obs": "OBS"}
+
+
+def status_from_node(answer: dict[str, Any] | None, labels: Labels) -> TrayStatus:
+    """The badge, tooltip and camera lines for a `/api/node/tray-status` answer (None: no answer).
+
+    - green: the node is ok and every camera it serves is ok (live);
+    - amber: the node is degraded, a camera is not ok, or no camera is set up yet;
+    - red: the node does not answer, or answers a status the tray does not know.
+    """
+    if answer is None:
+        return TrayStatus(Badge.RED, None, labels.node_unreachable, NODE_PRODUCT)
+    version = answer.get("version")
+    version = str(version) if version else None
+    cameras = [camera for camera in answer.get("cameras") or [] if isinstance(camera, dict)]
+    lines = tuple(camera_line(camera, labels) for camera in cameras)
+    status = answer.get("status")
+    if status not in ("ok", "degraded"):
+        summary = labels.unexpected_status(str(status))
+        return TrayStatus(Badge.RED, version, summary, NODE_PRODUCT, lines)
+    if not cameras:
+        return TrayStatus(Badge.AMBER, version, labels.no_cameras, NODE_PRODUCT, lines)
+    problems = [camera for camera in cameras if camera.get("status") != "ok"]
+    if problems:
+        summary = "; ".join(
+            f"{_camera_name(camera)}: {_camera_state(camera, labels)}" for camera in problems
+        )
+        return TrayStatus(Badge.AMBER, version, summary, NODE_PRODUCT, lines)
+    if status == "degraded":
+        # Every camera is fine but something else on the node is not (its USB link, say).
+        summary = labels.modules_with_problems([NODE_PRODUCT])
+        return TrayStatus(Badge.AMBER, version, summary, NODE_PRODUCT, lines)
+    summary = labels.cameras_live(len(cameras))
+    return TrayStatus(Badge.GREEN, version, summary, NODE_PRODUCT, lines)
+
+
+def camera_line(camera: dict[str, Any], labels: Labels) -> str:
+    """`Left S600 (node): live`, or with the reason: `Left S600 (OBS): no OBS source`."""
+    mode = MODE_NAMES.get(str(camera.get("mode")), str(camera.get("mode") or "?"))
+    return f"{_camera_name(camera)} ({mode}): {_camera_state(camera, labels)}"
+
+
+def _camera_name(camera: dict[str, Any]) -> str:
+    return str(camera.get("label") or camera.get("id") or "?")
+
+
+def _camera_state(camera: dict[str, Any], labels: Labels) -> str:
+    """`live` when ok; otherwise the node's short reason, or a word for the state."""
+    status = camera.get("status")
+    if status == "ok":
+        return labels.camera_live
+    reason = str(camera.get("reason") or "").strip()
+    if reason:
+        return reason
+    return labels.camera_offline if status == "offline" else labels.camera_trouble

@@ -22,11 +22,12 @@
     version. Run with -WhatIf for a dry run that lists the steps.
 
     -Node assembles the slim camera node instead (WP15, ADR 0023), in dist\node\app:
-    dist\node\app\python     embeddable Python with the service package (no tray)
+    dist\node\app\python     embeddable Python with the service package and the tray
+                             (the same tray package, run with --node: a camera icon)
     dist\node\app\frontend   the node's own page (frontend\dist-node)
     dist\node\app\nssm       NSSM, which runs the BajaCameraNode service
     dist\node\app\ffmpeg     the node's ffmpeg, from installer\ffmpeg-node\pin.json
-    and the icon, VERSION and wheelhouse-manifest.json. No Caddy, MediaMTX or
+    and the icon (camera-node.ico), VERSION and wheelhouse-manifest.json. No Caddy, MediaMTX or
     playout's ffmpeg.
 
 .EXAMPLE
@@ -120,21 +121,19 @@ if ($PSCmdlet.ShouldProcess($wheelhouse, 'Build the wheelhouse')) {
     if ($hostVersion.Trim() -ne 'True') { throw 'build.ps1 needs a 64-bit Python 3.12 on PATH' }
     Invoke-Native python @('-m', 'pip', 'wheel', '--no-deps', '--wheel-dir', $wheelhouse, $server)
     $requirements = @(Invoke-Native python @('-m', 'baja_studio.release_tools', 'requirements') $server)
-    if (-not $Node) {
-        # The tray is the studio's only (the node's status is its own page).
-        Invoke-Native python @('-m', 'pip', 'wheel', '--no-deps', '--wheel-dir', $wheelhouse, $tray)
-        # The tray's pins, read from its pyproject (it has no release tools of its own).
-        # (No double quotes in the script: PowerShell would have to escape them for python.exe.)
-        $requirements += Invoke-Native python @('-c',
-            'import sys, tomllib; print(chr(10).join(tomllib.load(open(sys.argv[1], ''rb''))[''project''][''dependencies'']))',
-            (Join-Path $tray 'pyproject.toml'))
-    }
+    # The tray, for both: the studio's, and the camera node's (the same package with --node).
+    Invoke-Native python @('-m', 'pip', 'wheel', '--no-deps', '--wheel-dir', $wheelhouse, $tray)
+    # The tray's pins, read from its pyproject (it has no release tools of its own).
+    # (No double quotes in the script: PowerShell would have to escape them for python.exe.)
+    $requirements += Invoke-Native python @('-c',
+        'import sys, tomllib; print(chr(10).join(tomllib.load(open(sys.argv[1], ''rb''))[''project''][''dependencies'']))',
+        (Join-Path $tray 'pyproject.toml'))
     Invoke-Native python (@('-m', 'pip', 'download', '--dest', $wheelhouse, '--only-binary=:all:',
             '--platform', 'win_amd64', '--python-version', '3.12', '--implementation', 'cp') + $requirements)
     Invoke-Native python @('-m', 'baja_studio.release_tools', 'wheelhouse-manifest',
         '--wheelhouse', $wheelhouse, '--output', (Join-Path $app 'wheelhouse-manifest.json')) $server
     # Offline install from the wheelhouse only: what was downloaded and listed is what ships.
-    $packages = if ($Node) { @("baja_studio==$version") } else { @("baja_studio==$version", 'baja_studio_tray') }
+    $packages = @("baja_studio==$version", 'baja_studio_tray')
     Invoke-Native python (@('-m', 'pip', 'install', '--no-index', '--find-links', $wheelhouse,
         '--target', (Join-Path $pythonDirectory 'Lib\site-packages')) + $packages)
     $installed = Invoke-Native (Join-Path $pythonDirectory 'python.exe') @('-c',
@@ -145,16 +144,17 @@ if ($PSCmdlet.ShouldProcess($wheelhouse, 'Build the wheelhouse')) {
         Invoke-Native (Join-Path $pythonDirectory 'python.exe') @('-c',
             'import baja_studio.node.__main__, baja_studio.node.app; print(''node ok'')') | Out-Host
     }
-    else {
-        # The tray, with its icon frames (pystray itself only loads on a desktop).
-        Invoke-Native (Join-Path $pythonDirectory 'python.exe') @('-c',
-            'from baja_studio_tray.icons import load_frames; print(sorted(load_frames()))') | Out-Host
-    }
+    # The tray, with its icon frames (pystray itself only loads on a desktop).
+    $trayIcon = if ($Node) { 'NODE' } else { 'STUDIO' }
+    Invoke-Native (Join-Path $pythonDirectory 'python.exe') @('-c',
+        "from baja_studio_tray.icons import load_frames; from baja_studio_tray.profile import $trayIcon; print(sorted(load_frames($trayIcon.icon_path)))") | Out-Host
 }
 
 # --- The icon: the tray's, also the installer's and the shortcuts' --------------------
-if ($PSCmdlet.ShouldProcess((Join-Path $app 'baja-studio.ico'), 'Copy the icon')) {
-    Copy-Item (Join-Path $tray 'baja_studio_tray\assets\baja-studio.ico') (Join-Path $app 'baja-studio.ico')
+# The studio's is the Baja artwork; the camera node's is a camera (installer\icons\make_camera_icon.py).
+$iconName = if ($Node) { 'camera-node.ico' } else { 'baja-studio.ico' }
+if ($PSCmdlet.ShouldProcess((Join-Path $app $iconName), 'Copy the icon')) {
+    Copy-Item (Join-Path $tray "baja_studio_tray\assets\$iconName") (Join-Path $app $iconName)
 }
 
 # --- ffmpeg and ffprobe for playout (durations, thumbnails) ------------------------------

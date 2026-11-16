@@ -9,15 +9,22 @@ The gateway (Caddy) goes down first, because it depends on the studio; the
 studio restarts; the gateway starts again once the studio answers
 `/api/health` (it writes the Caddyfile before it answers, ADR 0010), or after
 60 s regardless, since NSSM keeps retrying it anyway.
+
+The camera node's tray restarts its one service instead:
+
+    pythonw -m baja_studio_tray.restart --node
 """
 
+import argparse
 import subprocess
 import time
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
+from baja_studio_tray.profile import NODE
 from baja_studio_tray.service import (
     GATEWAY_SERVICE,
+    NODE_SERVICE,
     STUDIO_SERVICE,
     StudioClient,
     read_install_paths,
@@ -73,10 +80,23 @@ def restart_services(
     return restarted and answering and started
 
 
-def main() -> None:
-    """Entry point for the elevated process; exit code 0 when both are back."""
-    paths = read_install_paths()
-    ok = restart_services(paths.nssm_executable, StudioClient())
+def restart_node(nssm: Path, run: Runner = run_hidden) -> bool:
+    """The camera node's one service, restarted; True if NSSM says it did.
+
+    The node needs nothing else running first (no gateway), so there is no wait.
+    """
+    return run([str(nssm), "restart", NODE_SERVICE]) == 0
+
+
+def main(arguments: list[str] | None = None) -> None:
+    """Entry point for the elevated process; exit code 0 when the service(s) are back."""
+    parser = argparse.ArgumentParser(prog="baja_studio_tray.restart", description=__doc__)
+    parser.add_argument("--node", action="store_true", help="restart the camera node instead")
+    options = parser.parse_args(arguments)
+    if options.node:
+        ok = restart_node(read_install_paths(profile=NODE).nssm_executable)
+    else:
+        ok = restart_services(read_install_paths().nssm_executable, StudioClient())
     raise SystemExit(0 if ok else 1)
 
 

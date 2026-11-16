@@ -6,6 +6,10 @@ a simplified single-fill silhouette (the car's cage and wheels) at 20 and
 16 px, where the thin outline and the small coloured parts vanish. The same
 file is the installer's and the shortcuts' icon.
 
+The camera node's tray (`--node`) uses `assets/camera-node.ico` instead, a
+plain camera drawn by `installer/icons/make_camera_icon.py`, with the same
+six sizes; the dot is drawn on it the same way.
+
 Each poll that changes the badge draws the dot on every frame and writes a
 new multi-size ICO, so Windows picks the frame made for the tray's size.
 """

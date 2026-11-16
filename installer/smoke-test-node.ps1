@@ -12,9 +12,11 @@
        with this version, contract 1.1 and no cameras yet (a fresh node);
     3. its page is served at /, and its settings API answers (no token yet);
     4. its ffmpeg is bundled and runs; the firewall rule for TCP 8891 is there;
-    5. install again over it (an upgrade): still no failed step, same data folder,
+    5. the tray: its status answer (no token, this laptop only), port.txt, the
+       camera icon, its Run entry, and one poll (amber: no camera yet);
+    6. install again over it (an upgrade): still no failed step, same data folder,
        the service answers again;
-    6. uninstall silently; service and firewall rule gone, data kept.
+    7. uninstall silently; service, firewall rule and the tray's Run entry gone, data kept.
 
     Leaves install.log, upgrade.log, uninstall.log in -OutputDirectory and,
     whatever happens, a copy of the data folder's logs with NSSM's view of the
@@ -33,6 +35,8 @@ $dataDirectory = Join-Path $env:ProgramData 'BajaCameraNode'
 $service = 'BajaCameraNode'
 $firewallRule = 'Baja camera node (LAN)'
 $nodeUrl = 'http://localhost:8891'
+$runKey = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Run'
+$trayRunValue = 'BajaCameraNodeTray'
 
 function Wait-Until([scriptblock] $Condition, [string] $What, [int] $Seconds = 120) {
     $deadline = (Get-Date).AddSeconds($Seconds)
@@ -113,6 +117,31 @@ $ports = ($rule | Get-NetFirewallPortFilter).LocalPort
 if ($ports -ne '8891') { throw "the firewall rule opens $ports" }
 Write-Host 'ok: firewall rule for TCP 8891'
 
+Write-Host '--- the tray: its status answer, its Run entry, one poll'
+# The answer meant for the tray: no token, this laptop only. A fresh node has no camera.
+$trayStatus = Invoke-RestMethod "$nodeUrl/api/node/tray-status" -TimeoutSec 5
+if ($trayStatus.version -ne $Version) { throw "the tray status reports version $($trayStatus.version)" }
+if (@($trayStatus.cameras).Count -ne 0) { throw 'the tray status lists cameras on a fresh node' }
+# The node writes its port for the tray at each start.
+$portFile = (Get-Content (Join-Path $dataDirectory 'port.txt') -Raw).Trim()
+if ($portFile -ne '8891') { throw "port.txt says '$portFile'" }
+if (-not (Test-Path (Join-Path $programDirectory 'camera-node.ico'))) { throw 'camera-node.ico is missing' }
+$runEntry = (Get-ItemProperty $runKey -Name $trayRunValue -ErrorAction SilentlyContinue).$trayRunValue
+if ($runEntry -notlike '*pythonw.exe" -m baja_studio_tray --node') { throw "the tray's Run entry is '$runEntry'" }
+Write-Host "ok: Run entry $runEntry"
+# python.exe rather than pythonw.exe, so its report reaches the log.
+$trayOutput = Join-Path $output 'tray.txt'
+$trayProcess = Start-Process (Join-Path $programDirectory 'python\python.exe') -PassThru -NoNewWindow `
+    -ArgumentList '-m', 'baja_studio_tray', '--node', '--exit-after-first-poll' `
+    -RedirectStandardOutput $trayOutput -RedirectStandardError (Join-Path $output 'tray-stderr.txt')
+if (-not $trayProcess.WaitForExit(60000)) { $trayProcess.Kill(); throw 'the tray did not exit after its first poll' }
+$report = Get-Content $trayOutput -Raw
+# A fresh node with no camera is amber ("no cameras set up"), and reports this version.
+if ($trayProcess.ExitCode -ne 0 -or $report -notmatch "badge=amber version=$([regex]::Escape($Version))") {
+    throw "the tray exited with $($trayProcess.ExitCode): $report $(Get-Content (Join-Path $output 'tray-stderr.txt') -Raw)"
+}
+Write-Host "ok: tray $($report.Trim() -replace "`r?`n", '; ')"
+
 Write-Host '--- upgrade: install again over it'
 Install-Node 'upgrade.log'
 $registered = (Get-ItemProperty 'HKLM:\Software\BajaCameraNode').DataDirectory
@@ -130,5 +159,6 @@ Wait-Until { -not (Get-Service $service -ErrorAction SilentlyContinue) } 'the se
 if (Get-NetFirewallRule -DisplayName $firewallRule -ErrorAction SilentlyContinue) {
     throw "the firewall rule '$firewallRule' is still there"
 }
+if (Get-ItemProperty $runKey -Name $trayRunValue -ErrorAction SilentlyContinue) { throw "the tray's Run entry is still there" }
 if (-not (Test-Path (Join-Path $dataDirectory 'baja-studio.sqlite3'))) { throw 'the data was not kept' }
 Write-Host 'ok: uninstalled, data kept'
