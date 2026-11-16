@@ -7,8 +7,10 @@
 ;   BajaCameraNode   the camera node (python -m baja_studio.node), port 8891 by
 ;                    default (its settings page can change it; the firewall
 ;                    rule covers 8891 only), started at boot with nobody logged in
-; No Caddy, MediaMTX, playout or tray: the node's own page (http://<laptop>:8891/)
-; shows its status. Its ffmpeg is in {app}\ffmpeg.
+; and, unless the task is unticked, starts the node's tray icon (a camera:
+; pythonw -m baja_studio_tray --node) at every user's logon. No Caddy, MediaMTX
+; or playout: the node's own page (http://<laptop>:8891/) is its settings and
+; status. Its ffmpeg is in {app}\ffmpeg.
 ;
 ; Build:   iscc /DAppVersion=1.2.3 installer\BajaCameraNode.iss
 ; Silent:  BajaCameraNode-1.2.3.exe /VERYSILENT /SUPPRESSMSGBOXES [/DATADIR=D:\Node]
@@ -23,6 +25,9 @@
 #ifndef OutputDirectory
   #define OutputDirectory "..\dist"
 #endif
+#define RunKey "Software\Microsoft\Windows\CurrentVersion\Run"
+; Its own Run value: the studio's tray (BajaStudioTray) may be on the same PC.
+#define TrayRunValue "BajaCameraNodeTray"
 
 [Setup]
 ; Its own AppId: the node and the studio are separate programs (both may be on one PC).
@@ -44,15 +49,16 @@ OutputBaseFilename=BajaCameraNode-{#AppVersion}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
-SetupIconFile=..\tray\baja_studio_tray\assets\baja-studio.ico
+SetupIconFile=..\tray\baja_studio_tray\assets\camera-node.ico
 UninstallDisplayName=Baja camera node
-UninstallDisplayIcon={app}\baja-studio.ico
-; The service is stopped by PrepareToInstall; nothing else holds our files.
+UninstallDisplayIcon={app}\camera-node.ico
+; The service and the tray icons are stopped by PrepareToInstall; nothing else holds our files.
 CloseApplications=no
 SetupLogging=yes
 
 [Tasks]
 Name: firewall; Description: "Open the firewall for the studio (TCP 8891, on private and domain networks)"
+Name: tray; Description: "Show the camera node's status icon in the taskbar when anyone logs on"
 
 [InstallDelete]
 ; An upgrade replaces the program folder: nothing of the old version stays behind.
@@ -66,10 +72,11 @@ Source: "{#DistDirectory}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubd
 
 [INI]
 Filename: "{group}\Baja camera node.url"; Section: "InternetShortcut"; Key: "URL"; String: "http://localhost:8891/"
-Filename: "{group}\Baja camera node.url"; Section: "InternetShortcut"; Key: "IconFile"; String: "{app}\baja-studio.ico"
+Filename: "{group}\Baja camera node.url"; Section: "InternetShortcut"; Key: "IconFile"; String: "{app}\camera-node.ico"
 Filename: "{group}\Baja camera node.url"; Section: "InternetShortcut"; Key: "IconIndex"; String: "0"
 
 [Icons]
+Name: "{group}\Baja camera node status icon"; Filename: "{app}\python\pythonw.exe"; Parameters: "-m baja_studio_tray --node"; IconFilename: "{app}\camera-node.ico"; Comment: "The tray icon: the node's cameras at a glance, and shortcuts"
 Name: "{group}\Baja camera node logs"; Filename: "{code:DataDirectory}\logs"
 Name: "{group}\Uninstall Baja camera node"; Filename: "{uninstallexe}"
 
@@ -80,8 +87,11 @@ Type: files; Name: "{group}\Baja camera node.url"
 ; Where the program and the data are, for upgrades (same folder again) and the uninstaller.
 Root: HKLM; Subkey: "Software\BajaCameraNode"; ValueType: string; ValueName: "DataDirectory"; ValueData: "{code:DataDirectory}"; Flags: uninsdeletekey
 Root: HKLM; Subkey: "Software\BajaCameraNode"; ValueType: string; ValueName: "InstallDirectory"; ValueData: "{app}"; Flags: uninsdeletekey
+; The tray at every user's logon (unticking the task removes it, see CurStepChanged).
+Root: HKLM; Subkey: "{#RunKey}"; ValueType: string; ValueName: "{#TrayRunValue}"; ValueData: """{app}\python\pythonw.exe"" -m baja_studio_tray --node"; Tasks: tray; Flags: uninsdeletevalue
 
 [Run]
+Filename: "{app}\python\pythonw.exe"; Parameters: "-m baja_studio_tray --node"; Description: "Show the camera node's status icon now"; Tasks: tray; Flags: postinstall nowait runasoriginaluser skipifsilent
 Filename: "http://localhost:8891/"; Description: "Open the camera node's page in the browser"; Flags: postinstall shellexec nowait skipifsilent
 
 [Code]
@@ -192,7 +202,18 @@ begin
     'Stop-Process -Force"');
 end;
 
-{ --- Wizard: welcome -> data folder -> tasks (firewall) -> install ------------------ }
+{ Close the node's tray icons started from this program folder (every user's): they
+  hold files in its python folder, which an upgrade replaces and uninstall deletes.
+  (The studio's tray, if the studio is on this PC too, runs from its own folder.) }
+procedure StopTrays();
+begin
+  RunHidden(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+    '-NoProfile -NonInteractive -Command "Get-Process pythonw -ErrorAction SilentlyContinue | ' +
+    'Where-Object { $_.Path -eq ''' + ExpandConstant('{app}\python\pythonw.exe') + ''' } | ' +
+    'Stop-Process -Force"');
+end;
+
+{ --- Wizard: welcome -> data folder -> tasks (firewall, tray) -> install ---------- }
 
 procedure InitializeWizard();
 var
@@ -236,6 +257,7 @@ begin
   if FileExists(ExpandConstant('{app}\nssm\nssm.exe')) then
     Nssm('stop ' + NodeService);
   StopNodeFfmpeg();
+  StopTrays();
   Result := '';
 end;
 
@@ -289,6 +311,8 @@ begin
   ForceDirectories(DataDirectory('') + '\logs');
   ConfigureService();
   ConfigureFirewall();
+  if not WizardIsTaskSelected('tray') then
+    RegDeleteValue(HKLM, '{#RunKey}', '{#TrayRunValue}');
   NssmStep('start ' + NodeService);
   if not WaitForNode() then
     FailedSteps := FailedSteps + #13#10 +
@@ -320,6 +344,7 @@ procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if CurUninstallStep = usUninstall then
   begin
+    StopTrays();
     Nssm('stop ' + NodeService);
     StopNodeFfmpeg();
     Nssm('remove ' + NodeService + ' confirm');

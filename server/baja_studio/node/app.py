@@ -12,7 +12,9 @@ the node module as its only module, plus what the agent contract needs:
   node's own page: the core API under `/api` (settings, commands, logs) and
   the page's state socket `/ws`, which a browser opens with `?token=` (it
   cannot set headers on a WebSocket). Without a token everything is open,
-  as on a fresh install, and the page says so.
+  as on a fresh install, and the page says so. One exception: the tray
+  icon's status (`GET /api/node/tray-status`, `tray_status.py`) needs no
+  token but answers only this laptop itself, and holds nothing secret.
 
 The page is the node's own small frontend build (`frontend/dist-node`).
 """
@@ -35,6 +37,7 @@ from baja_studio.node.agent_routes import is_contract_path
 from baja_studio.node.module import NodeModule
 from baja_studio.node.parts import NodeParts
 from baja_studio.node.settings import NodeSettings
+from baja_studio.node.tray_status import TRAY_STATUS_PATH
 
 NODE_DATA_ENVIRONMENT_VARIABLE = "BAJA_NODE_DATA"
 FRONTEND_ENVIRONMENT_VARIABLE = "BAJA_STUDIO_FRONTEND"
@@ -95,7 +98,10 @@ def create_node_app(
     @app.middleware("http")
     async def check_token(request: Request, call_next: Any) -> Response:
         path = request.url.path
-        if is_contract_path(path) or path.startswith("/api/"):
+        needs_token = path != TRAY_STATUS_PATH and (
+            is_contract_path(path) or path.startswith("/api/")
+        )
+        if needs_token:
             refusal = token_refusal(path, request.headers.get(TOKEN_HEADER), current_token())
             if refusal is not None:
                 return refusal

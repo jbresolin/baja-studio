@@ -9,18 +9,19 @@ Why it is built this way: [ADR 0007](../docs/adr/0007-installer-and-gateway.md).
 | --- | --- |
 | `build.ps1` | Assembles `dist\app`: embeddable Python with the service and the tray installed from a wheelhouse, the built frontend, Caddy, NSSM, ffmpeg, MediaMTX, the icon, `VERSION`, `wheelhouse-manifest.json` |
 | `BajaStudio.iss` | Inno Setup script: services (gateway started once the studio answers), firewall, tray at logon, Start menu, upgrades, uninstall |
-| `BajaCameraNode.iss` | The camera node's installer: the `BajaCameraNode` service (NSSM, auto start, port 8891), its firewall rule (TCP 8891, private and domain), upgrades, uninstall |
-| `smoke-test-node.ps1` | Installs the node silently, checks the service, `/agent/info` (version, contract 1.1), the page, its ffmpeg and firewall rule, installs again over it, uninstalls |
+| `BajaCameraNode.iss` | The camera node's installer: the `BajaCameraNode` service (NSSM, auto start, port 8891), its firewall rule (TCP 8891, private and domain), its tray at logon (`baja_studio_tray --node`, a camera icon), upgrades, uninstall |
+| `smoke-test-node.ps1` | Installs the node silently, checks the service, `/agent/info` (version, contract 1.1), the page, its ffmpeg and firewall rule, the tray (its status answer, `port.txt`, Run entry, one poll), installs again over it, uninstalls |
 | `smoke-test.ps1` | Installs silently, checks no failed step, Caddy up within 5 s and started once, the services, health, ffmpeg, MediaMTX, the tray, a diagnostics bundle; uninstalls |
 | `release-notes.md` | The top of every GitHub Release's notes (install, upgrade); GitHub's list of changes follows |
 | `python/pin.json` | Embeddable Python (3.12.10, the last 3.12 with Windows binaries) URL and SHA-256 |
 | `nssm/pin.json` | NSSM 2.24-101 (the build that works on current Windows) URL and SHA-256 |
 | `caddy/pin.json` | Caddy version, the Cloudflare DNS module, the Go and xcaddy versions it is built with, and the SHA-256 of the result |
 | `ffmpeg/pin.json` | ffmpeg 9.0.2, gyan.dev "essentials" build (GPL, x64), from its GitHub release, and its SHA-256 |
-| `ffmpeg-node/pin.json` | The camera node's ffmpeg (WP15, ADR 0023): BtbN's static GPL build of ffmpeg 9.0.2, which has the zmq filter, SRT, NVENC, QuickSync and AMF that the studio's "essentials" build lacks; the Windows zip and its SHA-256, and the matching Linux build CI runs the node's video tests with |
+| `ffmpeg-node/pin.json` | The camera node's ffmpeg (WP15, ADR 0023): BtbN's static GPL build of ffmpeg 8.1.3 (not 9.x: see ADR 0023 on NVENC and Pascal cards), which has the zmq filter, SRT, NVENC, QuickSync and AMF that the studio's "essentials" build lacks; the Windows zip and its SHA-256, and the matching Linux build CI runs the node's video tests with |
 | `mediamtx/pin.json` | MediaMTX v1.21.3 (MIT) for the feeds service: the Windows amd64 zip and its SHA-256, and the Linux build CI runs in the rig tests |
 | `icons/baja-icone.svg` | The Baja mascot artwork the icon is made from |
 | `icons/make_icons.py` | Makes `tray/baja_studio_tray/assets/baja-studio.ico` (full artwork at 256/48/32, single-fill silhouette at 24/20/16); run by hand, the result is committed |
+| `icons/make_camera_icon.py` | Makes `tray/baja_studio_tray/assets/camera-node.ico`, the camera node's icon (a plain camera drawn with Pillow, same six sizes); run by hand, the result is committed |
 
 The tray app itself is in [tray/](../tray/) (ADR 0010).
 
@@ -72,6 +73,8 @@ no Windows wheel early.
 - **The icon**: after changing `icons/baja-icone.svg`, run
   `pip install resvg-py==0.5.0 pillow==13.0.0` and
   `python installer/icons/make_icons.py`, look at the frames, commit the `.ico`.
+  The camera node's icon has no artwork: change `icons/make_camera_icon.py`
+  and run it (`pip install pillow==13.0.0`).
 - **Caddy or the Cloudflare module**: change the versions and set `sha256` to
   `""`. The next build stops after building Caddy and prints the hash. Check
   that build, then put the hash in the pin. Builds are reproducible: the same

@@ -24,20 +24,18 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, Protocol
 
-from baja_studio_tray.actions import TrayActions
 from baja_studio_tray.icons import badged_frames, load_frames, save_ico
 from baja_studio_tray.labels import Labels
 from baja_studio_tray.menu import MenuEntry, menu_entries
-from baja_studio_tray.service import StudioClient
-from baja_studio_tray.status import Badge, TrayStatus, status_from_health
+from baja_studio_tray.profile import STUDIO, TrayProfile
+from baja_studio_tray.service import StatusSource
+from baja_studio_tray.status import Badge, TrayStatus
 
 POLL_SECONDS = 5.0
 # Quit waits this long for the poll thread (at most one 2 s request is in flight;
 # the thread is a daemon, so the process exits even if it is still waiting).
 QUIT_JOIN_SECONDS = 1.0
-NOTIFICATION_TITLE = "Baja Studio"
 SM_CXSMICON = 49
-SINGLE_INSTANCE_MUTEX = "Local\\BajaStudioTray"
 ERROR_ALREADY_EXISTS = 183
 
 # The single-instance mutex, held for the life of the process once taken.
@@ -64,7 +62,7 @@ class StatusPoller:
     """Polls the service and reports a new status when the badge or tooltip changes."""
 
     def __init__(
-        self, client: StudioClient, labels: Labels, show: Callable[[TrayStatus], None]
+        self, client: StatusSource, labels: Labels, show: Callable[[TrayStatus], None]
     ) -> None:
         """`show` is called on the poll thread, with every status that differs from the last."""
         self._client = client
@@ -73,10 +71,9 @@ class StatusPoller:
         self.status: TrayStatus | None = None
 
     def poll_once(self) -> TrayStatus:
-        """Ask `/api/health` and `/api/readiness/last` once; tell `show` if anything changed."""
-        health = self._client.health()
-        last_run = self._client.last_readiness_run() if health is not None else None
-        status = status_from_health(health, self._labels, last_run)
+        """Ask the service once (the studio: `/api/health` and `/api/readiness/last`;
+        the camera node: `/api/node/tray-status`); tell `show` if anything changed."""
+        status = self._client.read_status(self._labels)
         if status != self.status:
             self.status = status
             self._show(status)
@@ -92,11 +89,15 @@ class StatusPoller:
         """The service's version from the last answer."""
         return self.status.version if self.status else None
 
+    def camera_lines(self) -> tuple[str, ...]:
+        """The camera node's per-camera lines from the last answer (none for the studio)."""
+        return self.status.camera_lines if self.status else ()
+
 
 class Tray:
     """The poll thread and Quit, around an icon backend."""
 
-    def __init__(self, client: StudioClient, labels: Labels, backend: IconBackend) -> None:
+    def __init__(self, client: StatusSource, labels: Labels, backend: IconBackend) -> None:
         """Nothing runs until the backend calls `start_polling`."""
         self._backend = backend
         self._stop = threading.Event()
@@ -136,24 +137,35 @@ class Tray:
             self._backend.show(status)
 
 
+# Builds the menu from the actions, the poller (for lines that follow the last poll) and Quit.
+MenuBuilder = Callable[[Any, StatusPoller, Callable[[], None]], list[MenuEntry]]
+
+
 def run_tray(
-    client: StudioClient,
+    client: StatusSource,
     labels: Labels,
-    make_actions: Callable[[Callable[[str], None]], TrayActions],
+    make_actions: Callable[[Callable[[str], None]], Any],
     exit_after_first_poll: bool = False,
     backend: IconBackend | None = None,
     on_started: Callable[[Tray], None] | None = None,
+    profile: TrayProfile = STUDIO,
+    make_menu: MenuBuilder | None = None,
 ) -> TrayStatus | None:
     """Show the icon until Quit; returns the last status (the smoke test prints it).
 
     `backend` defaults to the real icon; `on_started` lets a test see the tray.
+    `profile` and `make_menu` make it the camera node's tray (`--node`); by
+    default it is the studio's, with the studio's menu (`menu.menu_entries`).
     """
-    backend = backend if backend is not None else PystrayBackend(labels)
+    backend = backend if backend is not None else PystrayBackend(labels, profile)
     tray = Tray(client, labels, backend)
     if on_started is not None:
         on_started(tray)
     actions = make_actions(backend.notify)
-    entries = menu_entries(labels, actions, tray.poller.version, tray.quit)
+    if make_menu is None:
+        entries = menu_entries(labels, actions, tray.poller.version, tray.quit)
+    else:
+        entries = make_menu(actions, tray.poller, tray.quit)
     on_ready = tray.poll_once_and_quit if exit_after_first_poll else tray.start_polling
     backend.run(entries, on_ready)
     # However the loop ended, the poll thread ends too.
@@ -161,18 +173,21 @@ def run_tray(
     return tray.poller.status
 
 
-def badge_icons(directory: Path) -> dict[Badge, Path]:
-    """One multi-size ICO per badge, written once at startup."""
-    frames = load_frames()
+def badge_icons(directory: Path, profile: TrayProfile = STUDIO) -> dict[Badge, Path]:
+    """One multi-size ICO per badge, written once at startup (from the profile's icon)."""
+    frames = load_frames(profile.icon_path)
     paths = {}
     for badge in Badge:
-        paths[badge] = directory / f"baja-studio-{badge.value}.ico"
+        paths[badge] = directory / f"{profile.icon_file_prefix}-{badge.value}.ico"
         save_ico(badged_frames(frames, badge), paths[badge])
     return paths
 
 
-def already_running() -> bool:
-    """True when another tray runs in this logon session (Windows named mutex).
+def already_running(mutex_name: str = STUDIO.single_instance_mutex) -> bool:
+    """True when another tray of the same program runs in this logon session (named mutex).
+
+    The studio's and the camera node's trays use different mutexes, so both
+    can run on one PC.
 
     The last error is read the way ctypes guarantees (`use_last_error`): a
     plain `GetLastError()` call after `CreateMutexW` can see a value Python
@@ -184,7 +199,7 @@ def already_running() -> bool:
         return False
     kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
     kernel32.CreateMutexW.restype = ctypes.c_void_p
-    handle = kernel32.CreateMutexW(None, False, SINGLE_INSTANCE_MUTEX)
+    handle = kernel32.CreateMutexW(None, False, mutex_name)
     if ctypes.get_last_error() == ERROR_ALREADY_EXISTS:
         return True
     # Kept open for the life of the process: the mutex is the "I am running" flag.
@@ -195,9 +210,10 @@ def already_running() -> bool:
 class PystrayBackend:
     """The real icon in the notification area (pystray)."""
 
-    def __init__(self, labels: Labels) -> None:
+    def __init__(self, labels: Labels, profile: TrayProfile = STUDIO) -> None:
         """Nothing is shown until `run`."""
         self._labels = labels
+        self._profile = profile
         self._icon: Any = None
         self._icons: dict[Badge, Path] = {}
         self._stop_requested = threading.Event()
@@ -206,11 +222,12 @@ class PystrayBackend:
         """pystray's loop, on this (the main) thread, until `stop`."""
         import pystray
 
-        icon_directory = Path(tempfile.mkdtemp(prefix="baja-studio-tray-"))
+        profile = self._profile
+        icon_directory = Path(tempfile.mkdtemp(prefix=f"{profile.icon_file_prefix}-tray-"))
         try:
-            self._icons = badge_icons(icon_directory)
+            self._icons = badge_icons(icon_directory, profile)
             icon_class = _multi_size_icon_class(pystray)
-            self._icon = icon_class("BajaStudio", title="Baja Studio")
+            self._icon = icon_class(profile.icon_name, title=profile.product)
             self._icon.menu = pystray.Menu(*(_menu_item(pystray, entry) for entry in entries))
             if self._stop_requested.is_set():
                 return
@@ -236,7 +253,7 @@ class PystrayBackend:
     def notify(self, message: str) -> None:
         """A balloon from the icon."""
         if self._icon is not None:
-            self._icon.notify(message, NOTIFICATION_TITLE)
+            self._icon.notify(message, self._profile.product)
 
     def stop(self) -> None:
         """Ask pystray's loop to end (it posts itself a message, so any thread will do)."""
@@ -254,10 +271,12 @@ def _menu_item(pystray: Any, entry: MenuEntry) -> Any:
         if action is not None:
             action()
 
+    visible = entry.visible
     return pystray.MenuItem(
         lambda item: entry.text(),
         on_click,
         default=entry.default,
+        visible=True if visible is None else (lambda item: visible()),
         enabled=action is not None,
     )
 
