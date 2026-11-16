@@ -1,6 +1,14 @@
 --- a/libavfilter/vf_vpp_rkrga.c	2026-11-16 07:22:19.020660173 -0300
-+++ b/libavfilter/vf_vpp_rkrga.c	2026-11-16 07:22:41.446342910 -0300
-@@ -457,6 +457,107 @@
++++ b/libavfilter/vf_vpp_rkrga.c	2026-11-16 19:53:20.838023313 -0300
+@@ -29,6 +29,7 @@
+ #include "libavutil/eval.h"
+ #include "libavutil/internal.h"
+ #include "libavutil/opt.h"
++#include "libavutil/mem.h"
+ #include "libavutil/pixdesc.h"
+ 
+ #include "filters.h"
+@@ -457,6 +458,107 @@
      return 0;
  }
  
@@ -108,7 +116,7 @@
  static av_cold int rgavpp_init(AVFilterContext *ctx)
  {
      return 0;
-@@ -469,6 +570,8 @@
+@@ -469,6 +571,8 @@
  
  #define OFFSET(x) offsetof(RGAVppContext, x)
  #define FLAGS (AV_OPT_FLAG_FILTERING_PARAM | AV_OPT_FLAG_VIDEO_PARAM)
@@ -117,7 +125,7 @@
  
  #define RKRGA_VPP_COMMON_OPTS \
      { "force_yuv",    "Enforce planar YUV format output", OFFSET(force_yuv), AV_OPT_TYPE_INT, { .i64 = FORCE_YUV_DISABLE }, 0, FORCE_YUV_NB - 1, FLAGS, .unit = "force_yuv" }, \
-@@ -555,10 +658,10 @@
+@@ -555,10 +659,10 @@
  static const AVOption rgavpp_options[] = {
      { "w",  "Output video width",                  OFFSET(ow), AV_OPT_TYPE_STRING, { .str = "cw" }, 0, 0, FLAGS },
      { "h",  "Output video height",                 OFFSET(oh), AV_OPT_TYPE_STRING, { .str = "w*ch/cw" }, 0, 0, FLAGS },
@@ -132,7 +140,7 @@
      { "format", "Output video pixel format", OFFSET(format), AV_OPT_TYPE_PIXEL_FMT, { .i64 = AV_PIX_FMT_NONE }, INT_MIN, INT_MAX, .flags = FLAGS },
      { "transpose", "Set transpose direction", OFFSET(transpose), AV_OPT_TYPE_INT, { .i64 = -1 }, -1, 6, FLAGS, .unit = "transpose" },
          { "cclock_hflip", "Rotate counter-clockwise with horizontal flip", 0, AV_OPT_TYPE_CONST, { .i64 = TRANSPOSE_CCLOCK_FLIP }, 0, 0, FLAGS, .unit = "transpose" },
-@@ -586,6 +689,7 @@
+@@ -586,6 +690,7 @@
      FILTER_OUTPUTS(rgavpp_outputs),
      FILTER_SINGLE_PIXFMT(AV_PIX_FMT_DRM_PRIME),
      .activate       = rgavpp_activate,
