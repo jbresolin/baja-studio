@@ -47,7 +47,7 @@ def ask(*arguments: str) -> str:
 
 
 def test_it_is_the_pinned_version() -> None:
-    # `ffmpeg -version` starts with "ffmpeg version n9.0.2-39-g7adfbe40dc-20261031 ...".
+    # `ffmpeg -version` starts with "ffmpeg version n8.1.3-27-g8dca1586f4-20261031 ...".
     first_line = subprocess.run(
         [pinned(), "-version"], capture_output=True, text=True, check=True
     ).stdout.splitlines()[0]

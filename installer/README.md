@@ -17,7 +17,7 @@ Why it is built this way: [ADR 0007](../docs/adr/0007-installer-and-gateway.md).
 | `nssm/pin.json` | NSSM 2.24-101 (the build that works on current Windows) URL and SHA-256 |
 | `caddy/pin.json` | Caddy version, the Cloudflare DNS module, the Go and xcaddy versions it is built with, and the SHA-256 of the result |
 | `ffmpeg/pin.json` | ffmpeg 9.0.2, gyan.dev "essentials" build (GPL, x64), from its GitHub release, and its SHA-256 |
-| `ffmpeg-node/pin.json` | The camera node's ffmpeg (WP15, ADR 0023): BtbN's static GPL build of ffmpeg 9.0.2, which has the zmq filter, SRT, NVENC, QuickSync and AMF that the studio's "essentials" build lacks; the Windows zip and its SHA-256, and the matching Linux build CI runs the node's video tests with |
+| `ffmpeg-node/pin.json` | The camera node's ffmpeg (WP15, ADR 0023): BtbN's static GPL build of ffmpeg 8.1.3 (not 9.x: see ADR 0023 on NVENC and Pascal cards), which has the zmq filter, SRT, NVENC, QuickSync and AMF that the studio's "essentials" build lacks; the Windows zip and its SHA-256, and the matching Linux build CI runs the node's video tests with |
 | `mediamtx/pin.json` | MediaMTX v1.21.3 (MIT) for the feeds service: the Windows amd64 zip and its SHA-256, and the Linux build CI runs in the rig tests |
 | `icons/baja-icone.svg` | The Baja mascot artwork the icon is made from |
 | `icons/make_icons.py` | Makes `tray/baja_studio_tray/assets/baja-studio.ico` (full artwork at 256/48/32, single-fill silhouette at 24/20/16); run by hand, the result is committed |
