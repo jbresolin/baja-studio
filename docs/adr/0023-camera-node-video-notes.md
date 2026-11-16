@@ -79,7 +79,8 @@ and on Windows (`tests/rig/test_node_*`).
    (`-b:v = -maxrate = -bufsize`), keyframe every `keyframe_seconds`, no
    B-frames, no scene-cut keyframes, low-latency mode (`-tune ll
    -zerolatency 1` NVENC, `-look_ahead 0 -async_depth 1` QSV with NV12,
-   `-usage lowlatency -header_insertion_mode idr` AMF, `-tune zerolatency
+   `-usage lowlatency -header_spacing <keyframe interval>` AMF (its H.264
+   encoder has no `-header_insertion_mode`: the pin test caught that), `-tune zerolatency
    nal-hrd=cbr` x264). The test is repeated only after a run fails with an
    encoder error, not at every restart.
 5. **Snapshots** split off before the crop (the whole frame), once a

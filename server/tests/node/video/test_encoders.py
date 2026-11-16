@@ -105,6 +105,9 @@ def test_each_encoder_uses_its_low_latency_settings_and_no_scene_cut_keyframes()
     assert "zerolatency" in PROFILES[X264].options
     assert PROFILES[QUICKSYNC].options[-2:] == ("-async_depth", "1")
     assert "lowlatency" in PROFILES[AMF].options
+    # AMF repeats the stream headers at every keyframe: its spacing is the keyframe interval.
+    amf = PROFILES[AMF].arguments(bitrate_kbps=8000, keyframe_interval_frames=30)
+    assert amf[amf.index("-header_spacing") + 1] == "30"
     # QuickSync only takes NV12 pictures; the others take yuv420p.
     assert PROFILES[QUICKSYNC].pixel_format == "nv12"
     assert {PROFILES[name].pixel_format for name in (NVENC, AMF, X264)} == {"yuv420p"}

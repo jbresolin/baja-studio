@@ -78,7 +78,11 @@ def test_every_option_the_pipeline_gives_an_encoder_exists(encoder: str) -> None
     # A misspelt option makes ffmpeg refuse to start. `-h encoder=<name>` lists
     # the encoder's own options; every one the pipeline passes must be there.
     described = ask("-h", f"encoder={encoder}")
-    for option in PROFILES[encoder].options[::2]:
+    profile = PROFILES[encoder]
+    options = list(profile.options[::2])
+    if profile.keyframe_option:
+        options.append(profile.keyframe_option)
+    for option in options:
         assert f"{option} " in described, f"{encoder} has no option {option}"
 
 

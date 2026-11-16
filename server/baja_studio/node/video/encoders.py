@@ -35,14 +35,18 @@ class EncoderProfile:
     label: str
     pixel_format: str
     options: tuple[str, ...]
+    # An option that must be given the keyframe interval too (AMF's header spacing).
+    keyframe_option: str | None = None
 
     def arguments(self, bitrate_kbps: int, keyframe_interval_frames: int) -> list[str]:
         """ffmpeg's output options for this encoder at this bitrate and keyframe interval."""
         rate = f"{bitrate_kbps}k"
+        interval = str(keyframe_interval_frames)
+        extra = [self.keyframe_option, interval] if self.keyframe_option else []
         return [
-            "-c:v", self.name, *self.options,
+            "-c:v", self.name, *self.options, *extra,
             "-b:v", rate, "-maxrate", rate, "-bufsize", rate,
-            "-g", str(keyframe_interval_frames), "-bf", "0",
+            "-g", interval, "-bf", "0",
         ]  # fmt: skip
 
 
@@ -64,17 +68,10 @@ PROFILES: dict[str, EncoderProfile] = {
         AMF,
         "AMD AMF",
         "yuv420p",
-        # Headers at every keyframe, so a receiver can join at any one.
-        (
-            "-usage",
-            "lowlatency",
-            "-quality",
-            "speed",
-            "-rc",
-            "cbr",
-            "-header_insertion_mode",
-            "idr",
-        ),
+        ("-usage", "lowlatency", "-quality", "speed", "-rc", "cbr"),
+        # Headers (SPS/PPS) with every keyframe, so a receiver can join at any one.
+        # (`-header_insertion_mode` is HEVC/AV1 only: the pin test caught it.)
+        keyframe_option="-header_spacing",
     ),
     X264: EncoderProfile(
         X264,
