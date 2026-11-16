@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from baja_studio.node.video.encoders import PROFILES
+from baja_studio.node.video.encoders import AUTO_ORDER, PROFILES
 from tests.rig.node_video_tools import NODE_FFMPEG_VARIABLE, missing_features
 
 pytestmark = [
@@ -64,16 +64,22 @@ def test_it_has_every_filter_the_pipeline_graph_uses() -> None:
         assert name in filters, name
 
 
+# The laptop's encoders. The Rockchip one (h264_rkmpp, the NanoPi, ADR 0024)
+# exists only in the node's ffmpeg-rockchip build, whose own build script
+# (installer/ffmpeg-rockchip/build.sh) checks it and its options.
+LAPTOP_ENCODERS = AUTO_ORDER
+
+
 def test_it_lists_every_encoder_and_decoder_the_node_may_use() -> None:
     encoders = ask("-encoders").split()
-    for name in (*PROFILES, "mjpeg"):
+    for name in (*LAPTOP_ENCODERS, "mjpeg"):
         assert name in encoders, name
     decoders = ask("-decoders").split()
     for name in ("mjpeg", "mjpeg_qsv", "mjpeg_cuvid"):
         assert name in decoders, name
 
 
-@pytest.mark.parametrize("encoder", sorted(PROFILES))
+@pytest.mark.parametrize("encoder", sorted(LAPTOP_ENCODERS))
 def test_every_option_the_pipeline_gives_an_encoder_exists(encoder: str) -> None:
     # A misspelt option makes ffmpeg refuse to start. `-h encoder=<name>` lists
     # the encoder's own options; every one the pipeline passes must be there.

@@ -7,7 +7,7 @@ Here: what a control's flags mean, and that the real listing copes with a
 computer without cameras and with links that are not cameras.
 """
 
-import os
+import sys
 from pathlib import Path
 
 import pytest
@@ -26,7 +26,9 @@ def test_without_a_by_path_folder_there_are_no_cameras(tmp_path: Path) -> None:
     assert KernelV4l2System(tmp_path / "missing").capture_nodes() == []
 
 
-@pytest.mark.skipif(not hasattr(os, "symlink"), reason="needs symbolic links")
+# Linux only: udev's link names contain ":", which Windows does not allow in a file name,
+# and this listing only ever runs on a Linux node.
+@pytest.mark.skipif(not sys.platform.startswith("linux"), reason="V4L2 links exist on Linux only")
 def test_a_link_to_something_that_is_not_a_camera_is_skipped(tmp_path: Path) -> None:
     # A by-path link pointing at an ordinary file: the kernel answers "not a
     # video device" to the first ioctl, and the listing simply leaves it out.

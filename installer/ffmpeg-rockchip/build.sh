@@ -86,6 +86,9 @@ ffmpeg="$prefix/bin/ffmpeg"
 # The features the node uses; none of these needs the board's hardware to be listed.
 "$ffmpeg" -hide_banner -decoders | grep -q ' mjpeg_rkmpp '
 "$ffmpeg" -hide_banner -encoders | grep -q ' h264_rkmpp '
+# The options the node gives the Rockchip encoder (encoders.PROFILES["h264_rkmpp"]).
+"$ffmpeg" -hide_banner -h encoder=h264_rkmpp | grep -q -- '-rc_mode '
+"$ffmpeg" -hide_banner -h encoder=h264_rkmpp | grep -q -- '-profile '
 "$ffmpeg" -hide_banner -encoders | grep -q ' libx264 '
 "$ffmpeg" -hide_banner -filters | grep -q ' vpp_rkrga '
 "$ffmpeg" -hide_banner -filters | grep -q ' zmq '
