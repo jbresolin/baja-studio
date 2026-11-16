@@ -1,13 +1,17 @@
 # installer/
 
 Builds `BajaStudio-Setup-<version>.exe`, the one-click installer for the
-streaming PC. What it installs and how to use it: [docs/install.md](../docs/install.md).
+streaming PC, and `BajaCameraNode-<version>.exe`, the slim installer of the
+camera node for trackside laptops (WP15, [ADR 0023](../docs/adr/0023-camera-node.md)). What it installs and how to use it: [docs/install.md](../docs/install.md).
 Why it is built this way: [ADR 0007](../docs/adr/0007-installer-and-gateway.md).
 
 | File | What it is |
 | --- | --- |
 | `build.ps1` | Assembles `dist\app`: embeddable Python with the service and the tray installed from a wheelhouse, the built frontend, Caddy, NSSM, ffmpeg, MediaMTX, the icon, `VERSION`, `wheelhouse-manifest.json` |
 | `BajaStudio.iss` | Inno Setup script: services (gateway started once the studio answers), firewall, tray at logon, Start menu, upgrades, uninstall |
+| `BajaCameraNode.iss` | The camera node's installer: the `BajaCameraNode` service (NSSM, auto start, port 8891), its firewall rule (TCP 8891, private and domain), upgrades, uninstall |
+| `smoke-test-node.ps1` | Installs the node silently, checks the service, `/agent/info` (version, contract 1.1), the page, its ffmpeg and firewall rule, installs again over it, uninstalls |
+| `ffmpeg-node/pin.json` | The node's ffmpeg (zmq, libsrt, NVENC, QuickSync, AMF): added by WP15 Part B; `build.ps1 -Node` stops with a clear message while it is missing |
 | `smoke-test.ps1` | Installs silently, checks no failed step, Caddy up within 5 s and started once, the services, health, ffmpeg, MediaMTX, the tray, a diagnostics bundle; uninstalls |
 | `release-notes.md` | The top of every GitHub Release's notes (install, upgrade); GitHub's list of changes follows |
 | `python/pin.json` | Embeddable Python (3.12.10, the last 3.12 with Windows binaries) URL and SHA-256 |
@@ -36,6 +40,9 @@ pwsh installer\build.ps1
 # 3. The installer, in dist\.
 iscc /DAppVersion=0.1.0.dev1 installer\BajaStudio.iss
 ```
+
+The camera node: `pwsh installer\build.ps1 -Node` (no Go needed; `dist\node\app`),
+then `iscc /DAppVersion=0.1.0.dev1 installer\BajaCameraNode.iss`.
 
 `build.ps1 -SkipCaddy` assembles everything but Caddy (no Go needed). CI does
 that on pull requests that touch the dependencies, to catch a dependency with
