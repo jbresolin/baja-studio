@@ -222,7 +222,7 @@ once a second for the studio's preview.
 
 All on Linux (a 2-core VM) with ffmpeg 6.1 (Ubuntu's, built with libzmq and
 libsrt) and the pinned MediaMTX v1.21.3, a synthetic 4K30 camera (`lavfi`),
-x264. CI repeats the functional checks with the pinned ffmpeg 9.0.2 on Linux
+x264. CI repeats the functional checks with the pinned ffmpeg (8.1.3) on Linux
 and on Windows (`tests/rig/test_node_*`).
 
 1. **The zmq + crop route works.** The `crop` filter's `w`, `x`, `y` options
@@ -335,7 +335,7 @@ and on Windows (`tests/rig/test_node_*`).
 
 #### The ffmpeg build
 
-12. **BtbN FFmpeg-Builds, ffmpeg n9.0.2-39-g7adfbe40dc, win64 GPL static,
+12. **BtbN FFmpeg-Builds, ffmpeg n8.1.3-27-g8dca1586f4, win64 GPL static,
     release `autobuild-2026-10-31-12-59`** (the newest build at least two
     weeks old on 2026-11-15; BtbN keeps month-end builds and deletes daily
     ones after about two weeks), pinned with its SHA-256 in
@@ -343,6 +343,16 @@ and on Windows (`tests/rig/test_node_*`).
     `license_in_zip` and the matching `linux64-gpl` build for CI). Gyan.dev
     "essentials" (the studio's) has no zmq; gyan "full" has everything but no
     Linux build of the same version, so CI could not run what the laptops run.
+    *Changed on 2026-11-16 (first laptop bench): the pin was ffmpeg 9.0.2,
+    whose NVENC needs NVENC API 13.1, that is NVIDIA driver 610 or newer.
+    Pascal cards (the XPS's GTX 1050 Ti) stop at driver branch 580 (API
+    13.0), so NVENC failed with "Driver does not support the required nvenc
+    API version. Required: 13.1 Found: 13.0". BtbN builds ffmpeg 8.0/8.1
+    with nv-codec-headers `sdk/13.0` (driver 570+) and 9.x with the newest
+    headers (`scripts.d/50-ffnvcodec.sh`), so the pin is the 8.1.3 build from
+    the same release. Before moving the pin to 9.x or later, check which
+    headers that build uses and that the oldest laptop's driver supports
+    them; `test_ffmpeg_pin_file.py` refuses 9.x until then.*
 13. **How its features were verified**: SHA-256 of both downloads checked
     against the release's `checksums.sha256`; the configuration string inside
     `ffmpeg.exe` (read with `strings`, not run) has `--enable-libzmq

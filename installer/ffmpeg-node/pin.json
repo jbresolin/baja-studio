@@ -1,11 +1,11 @@
 {
-  "version": "n9.0.2-39-g7adfbe40dc",
+  "version": "n8.1.3-27-g8dca1586f4",
   "build": "BtbN FFmpeg-Builds autobuild-2026-10-31-12-59, win64, GPL, static (zmq, libsrt, NVENC, QSV/libvpl, AMF, libx264, DirectShow)",
-  "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-31-12-59/ffmpeg-n9.0.2-39-g7adfbe40dc-win64-gpl-9.0.zip",
-  "sha256": "693f3e224bc184b40524a62ca47526cfebaf2504414021b92fe75f677ad868b9",
-  "folder_in_zip": "ffmpeg-n9.0.2-39-g7adfbe40dc-win64-gpl-9.0",
+  "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-31-12-59/ffmpeg-n8.1.3-27-g8dca1586f4-win64-gpl-8.1.zip",
+  "sha256": "401dffcf14c301082e1fc03b0bc876b92ea676bfc521fc56e80a1537d137034f",
+  "folder_in_zip": "ffmpeg-n8.1.3-27-g8dca1586f4-win64-gpl-8.1",
   "license_in_zip": "LICENSE.txt",
-  "linux_url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-31-12-59/ffmpeg-n9.0.2-39-g7adfbe40dc-linux64-gpl-9.0.tar.xz",
-  "linux_sha256": "73e29a56974ae5a651133a04584c7483b21afe941e17dc91d79814a758b608d3",
-  "linux_folder_in_archive": "ffmpeg-n9.0.2-39-g7adfbe40dc-linux64-gpl-9.0"
+  "linux_url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-31-12-59/ffmpeg-n8.1.3-27-g8dca1586f4-linux64-gpl-8.1.tar.xz",
+  "linux_sha256": "41e9c565594c390622cf968d82fa4135d9e9a11d06c1515644288cbc844e3380",
+  "linux_folder_in_archive": "ffmpeg-n8.1.3-27-g8dca1586f4-linux64-gpl-8.1"
 }
