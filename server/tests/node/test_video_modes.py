@@ -191,12 +191,12 @@ def test_the_output_url_never_leaves_the_node(tmp_path: Path) -> None:
 
         assert password not in shown
         assert secret_url not in shown
-        # What the page does show (once a second): where the picture goes, without
-        # the secret parts.
+        # What the page does show (once a second): where the picture goes, which
+        # feed and the SRT latency, with the login (user and password) hidden.
         eventually(
             lambda: (
                 node.state("cameras.cam1.details.output")
-                == "srt://127.0.0.1:8890?streamid=***&latency=***"
+                == "srt://127.0.0.1:8890?streamid=publish:cam1:***&latency=200000"
             ),
             "the page is never shown where the picture goes",
         )

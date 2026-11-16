@@ -10,8 +10,8 @@ from dataclasses import replace
 
 from baja_studio.node.video.crop_commands import CropPixels
 from baja_studio.node.video.ffmpeg_command import (
-    DSHOW_BUFFER,
     build_ffmpeg_command,
+    capture_buffer_bytes,
     filter_graph,
     input_arguments,
     keyframe_interval_frames,
@@ -44,8 +44,34 @@ def test_a_webcam_is_read_through_directshow_in_mjpeg_at_its_mode() -> None:
     # `-vcodec mjpeg` asks the camera for MJPEG and decodes it on the CPU.
     assert value_after(arguments, "-vcodec") == "mjpeg"
     # A small real-time buffer: falling behind drops frames instead of adding delay.
-    assert value_after(arguments, "-rtbufsize") == DSHOW_BUFFER
+    assert value_after(arguments, "-rtbufsize") == str(capture_buffer_bytes(CAMERA))
+    # Frames read while ffmpeg starts are thrown away, not kept as a backlog,
+    # and it spends as little time as it can looking at the stream first.
+    assert value_after(arguments, "-fflags") == "nobuffer"
+    assert value_after(arguments, "-analyzeduration") == "0"
+    # The CPU decoder takes no extra options.
+    assert "-async_depth" not in arguments
     assert arguments[-2:] == ["-i", f"video={CAMERA.device}"]
+
+
+def test_the_capture_buffer_holds_about_a_quarter_second_of_4k_mjpeg() -> None:
+    # Whatever waits in DirectShow's buffer is delay. A 4K MJPEG frame is up
+    # to about 1 MB, so a quarter second at 30 fps is about 7.5 MB, far less
+    # than the 32 MB (one to two seconds) the node used before 16 Nov.
+    size = capture_buffer_bytes(CAMERA)
+    assert 7_000_000 < size < 8_000_000
+    one_frame = 3840 * 2160 * 0.12
+    assert size / one_frame == 7.5  # 0.25 s x 30 frames a second
+
+
+def test_a_smaller_or_slower_mode_gets_a_smaller_buffer_but_never_under_four_frames() -> None:
+    # 1080p is a quarter of the pixels of 4K: a quarter of the buffer.
+    full_hd = replace(CAMERA, input_width=1920, input_height=1080)
+    assert capture_buffer_bytes(full_hd) == round(capture_buffer_bytes(CAMERA) / 4)
+    # At 5 fps a quarter second is not even 2 frames; it still holds 4, so
+    # one late frame is not dropped.
+    slow = replace(CAMERA, input_fps=5)
+    assert capture_buffer_bytes(slow) == round(3840 * 2160 * 0.12 * 4)
 
 
 def test_a_hardware_mjpeg_decoder_is_named_in_place_of_mjpeg() -> None:
@@ -54,10 +80,22 @@ def test_a_hardware_mjpeg_decoder_is_named_in_place_of_mjpeg() -> None:
     )
 
 
+def test_quicksync_decodes_one_frame_at_a_time() -> None:
+    # By default QuickSync keeps 4 frames in flight, which is 4 frames of delay.
+    arguments = input_arguments(replace(CAMERA, decoder="mjpeg_qsv"))
+    assert value_after(arguments, "-async_depth") == "1"
+    # A decoder option goes before `-i`, with the decoder it is for.
+    assert arguments.index("-async_depth") < arguments.index("-i")
+
+
 def test_a_synthetic_camera_is_generated_in_real_time() -> None:
     arguments = input_arguments(replace(CAMERA, device="lavfi:testsrc2"))
-    # `-re` makes ffmpeg read it at 30 frames a second, like a real camera.
-    assert arguments == ["-re", "-f", "lavfi", "-i", "testsrc2=size=3840x2160:rate=30"]
+    # `-re` makes ffmpeg read it at 30 frames a second, like a real camera; it
+    # starts with the camera's start-up options, so the tests run those too.
+    assert arguments == [
+        *("-fflags", "nobuffer", "-analyzeduration", "0"),
+        *("-re", "-f", "lavfi", "-i", "testsrc2=size=3840x2160:rate=30"),
+    ]
 
 
 def test_the_zmq_address_has_its_colons_escaped_for_the_graph() -> None:

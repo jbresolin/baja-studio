@@ -89,3 +89,14 @@ def test_every_option_the_pipeline_gives_an_encoder_exists(encoder: str) -> None
 @pytest.mark.skipif(sys.platform != "win32", reason="DirectShow exists on Windows only")
 def test_on_windows_it_captures_with_directshow() -> None:
     assert "dshow" in ask("-devices").split()
+
+
+def test_the_capture_options_the_pipeline_gives_exist() -> None:
+    # DirectShow only exists on Windows, but these two are ffmpeg's general
+    # input options, listed by `-h full` on every system: the real-time
+    # buffer size, and the `nobuffer` flag (drop frames read while starting).
+    described = ask("-h", "full")
+    for option in ("-rtbufsize ", "-analyzeduration ", "nobuffer"):
+        assert option in described, option
+    # QuickSync's MJPEG decoder takes the in-flight depth the pipeline sets.
+    assert "-async_depth " in ask("-h", "decoder=mjpeg_qsv")
