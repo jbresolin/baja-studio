@@ -10,11 +10,12 @@ from typing import Any
 
 import pytest
 
-from baja_studio.agents.contract import Mode, ModeRequest
+from baja_studio.agents.contract import CameraKind, Mode, ModeRequest
 from baja_studio.agents.registry import AgentEntry, AgentRegistry
 from baja_studio.core.supervisor import HealthState
 from baja_studio.fakes.in_process import InProcessTransport
 from baja_studio.fakes.simulated_common import FakeTracker
+from baja_studio.fakes.simulated_ptz import SimulatedCamera
 from tests.conftest import FakeClock, eventually_async
 from tests.fake_agents import AGENT_HOST, StartAgent, advance_in_steps_async
 
@@ -133,4 +134,45 @@ async def test_an_event_replayed_on_reconnect_is_recorded_once(
 
     events = published.state["agents.laptop-a.events"]
     assert [event["detail"]["reason"] for event in events] == ["tracker_not_ready"]
+    await registry.close()
+
+
+async def test_a_camera_added_or_removed_on_a_running_agent_shows_in_its_camera_list(
+    start_agent: StartAgent,
+    registry: AgentRegistry,
+    published: Published,
+    fake_clock: FakeClock,
+) -> None:
+    # The camera list (what Camera setup offers under "Agent's camera") comes
+    # from the agent's info, read when the studio connects. The camera node
+    # lets you add or remove a camera while it runs, so the studio must notice
+    # without a reconnect. It does that from the state the agent keeps pushing:
+    # when the state names other cameras than the info, it reads the info again.
+    runner = start_agent(ptz_cameras=2)
+    registry.apply([laptop_a()])
+    await eventually_async(lambda: published.status_of("laptop-a") == "ok")
+
+    def listed() -> list[str]:
+        # The info comes with the agent's whole view at connect
+        # ("agents.laptop-a") and on its own ("agents.laptop-a.info") when read again.
+        whole = published.state.get("agents.laptop-a") or {}
+        info = published.state.get("agents.laptop-a.info") or whole.get("info") or {}
+        return [camera["id"] for camera in info.get("cameras", [])]
+
+    await eventually_async(lambda: listed() == ["cam1", "cam2"])
+
+    # Remove cam2 on the agent: within a few pushes the list has only cam1.
+    runner.run(lambda: runner.agent.cameras.pop("cam2"))
+    await advance_in_steps_async(fake_clock, 1)
+    await eventually_async(lambda: listed() == ["cam1"])
+
+    # Add a third camera (a crop camera, like a new one on a camera node). The
+    # studio waits a few seconds between re-reads, so let that time pass.
+    def add_crop_camera() -> None:
+        camera = SimulatedCamera("crop1", "Fake crop 1", CameraKind.CROP)
+        runner.agent.cameras[camera.id] = camera
+
+    runner.run(add_crop_camera)
+    await advance_in_steps_async(fake_clock, 4)
+    await eventually_async(lambda: listed() == ["cam1", "crop1"])
     await registry.close()
