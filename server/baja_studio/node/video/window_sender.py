@@ -25,11 +25,11 @@ One sender serves one ffmpeg run; the pipeline starts a new one with each run
 import logging
 import statistics
 import threading
-import time
 from collections import deque
 
 import zmq
 
+from baja_studio.core.clock import Clock
 from baja_studio.node.video.crop_commands import CropPixels, window_commands
 
 ANSWER_TIMEOUT_SECONDS = 1.0
@@ -47,12 +47,14 @@ class WindowSender:
         context: zmq.Context[zmq.Socket[bytes]],
         endpoint: str,
         starting_window: CropPixels,
+        clock: Clock,
         logger: Logger,
         name: str = "window-sender",
     ) -> None:
         """Ready to send to `endpoint`, where ffmpeg already shows `starting_window`."""
         self._context = context
         self._endpoint = endpoint
+        self._clock = clock
         self._logger = logger
         self._name = name
         self._lock = threading.Lock()
@@ -136,12 +138,12 @@ class WindowSender:
             socket.send_multipart([b"", command.encode("ascii")])
         self.commands_sent += len(commands)
         self._answers_due = len(commands)
-        self._waiting_since = time.monotonic()
+        self._waiting_since = self._clock.monotonic()
 
     def _answer_overdue(self) -> bool:
         return (
             self._waiting_since is not None
-            and time.monotonic() - self._waiting_since > ANSWER_TIMEOUT_SECONDS
+            and self._clock.monotonic() - self._waiting_since > ANSWER_TIMEOUT_SECONDS
         )
 
     def _read_answers(self, socket: zmq.Socket[bytes]) -> None:
@@ -158,7 +160,7 @@ class WindowSender:
                 continue  # a late answer to a change already given up on
             self._answers_due -= 1
             if self._answers_due == 0 and self._waiting_since is not None:
-                elapsed_ms = (time.monotonic() - self._waiting_since) * 1000
+                elapsed_ms = (self._clock.monotonic() - self._waiting_since) * 1000
                 with self._lock:
                     self._apply_times_ms.append(elapsed_ms)
                 self._waiting_since = None

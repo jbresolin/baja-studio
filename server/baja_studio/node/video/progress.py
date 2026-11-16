@@ -116,12 +116,16 @@ class ProgressTracker:
             total_bytes=_number(block.get("total_size", "")),
         )
         with self._lock:
-            if not self._samples or sample.frames_out > self._samples[-1].frames_out:
+            frames_before = self._samples[-1].frames_out if self._samples else 0
+            if sample.frames_out > frames_before:
                 self._frames_changed_at = sample.at
             self._samples.append(sample)
 
     def frames_changed_at(self) -> float | None:
-        """When (clock time) the output frame count last went up; None before any frame."""
+        """When (clock time) the output frame count last went up; None before the first frame.
+
+        ffmpeg reports `frame=0` before anything has come out: that is not a frame.
+        """
         with self._lock:
             return self._frames_changed_at
 

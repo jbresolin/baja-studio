@@ -100,7 +100,7 @@ class Failure:
 
 
 _CAMERA_MISSING = ("Could not find video device", "Could not enumerate video devices")
-_CAMERA_BUSY = ("Could not run graph", "already in use")
+_CAMERA_BUSY = ("Could not run graph", "device already in use")
 _CAMERA_MODE = ("Could not set video options",)
 _CAMERA_GONE = ("Error during demuxing", "Error retrieving a packet from demuxer")
 _RECEIVER_UNREACHABLE = ("Connection to srt", "Connection setup failure", "Error opening output")
@@ -116,6 +116,17 @@ _ENCODER = (
 )
 _CONTROL = ("ZMQ socket", "ZMQ context")
 _NO_DIRECTSHOW = ("Unknown input format",)
+
+
+def live_output_failed(lines: list[str]) -> bool:
+    """True once ffmpeg has written that the live output failed (the SRT receiver went away).
+
+    Measured with ffmpeg 6.1 (ADR 0023): ffmpeg then closes that output but
+    keeps running for the other one (the snapshots), so it never exits by
+    itself. The pipeline ends such a run at once instead of waiting for the
+    stall watchdog.
+    """
+    return _first_line_with(lines, _RECEIVER_LOST) is not None
 
 
 def _first_line_with(lines: list[str], markers: tuple[str, ...]) -> str | None:
@@ -134,11 +145,11 @@ def explain_failure(exit_code: int | None, lines: list[str], device: str, url: s
     """The operator-words reason a run with these last (scrubbed) lines ended."""
     where = receiver_address(url)
     checks: list[tuple[tuple[str, ...], FailureKind, str]] = [
+        (_CONTROL, FailureKind.CONTROL, "the window control port could not be opened"),
         (_CAMERA_MISSING, FailureKind.CAMERA, f"camera not found: {device}"),
         (_NO_DIRECTSHOW, FailureKind.CAMERA, "this ffmpeg cannot capture cameras (no DirectShow)"),
         (_CAMERA_BUSY, FailureKind.CAMERA, f"camera busy (is another program using it?): {device}"),
         (_CAMERA_MODE, FailureKind.CAMERA, f"camera refused the mode: {device}"),
-        (_CONTROL, FailureKind.CONTROL, "the window control port could not be opened"),
         (_ENCODER, FailureKind.ENCODER, "encoder failed"),
         (_RECEIVER_UNREACHABLE, FailureKind.RECEIVER, f"SRT receiver unreachable: {where}"),
         (_RECEIVER_LOST, FailureKind.RECEIVER, f"SRT receiver lost: {where}"),

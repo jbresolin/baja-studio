@@ -34,6 +34,7 @@ from baja_studio.node.video.ffmpeg_log import (
     FailureKind,
     LogTail,
     explain_failure,
+    live_output_failed,
     url_secrets,
 )
 from baja_studio.node.video.ffmpeg_process import FfmpegNotFoundError, RunningFfmpeg
@@ -226,7 +227,7 @@ class CameraPipeline:
         if self._parts.make_sender is not None:
             return self._parts.make_sender
         if self._zmq_senders is None:
-            self._zmq_senders = ZmqSenders()
+            self._zmq_senders = ZmqSenders(self._clock)
         return self._zmq_senders
 
     def _one_run(
@@ -296,7 +297,7 @@ class CameraPipeline:
         launched_at = self._clock.monotonic()
         running_since: float | None = None
         while not self._clock.wait(self._stop_requested, WATCH_INTERVAL_SECONDS):
-            if run.process.exited.is_set():
+            if run.process.exited.is_set() or live_output_failed(list(run.lines)):
                 return explain_failure(
                     run.process.exit_code,
                     list(run.lines),
