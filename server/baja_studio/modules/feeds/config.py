@@ -32,6 +32,10 @@ DEFAULT_RTMP_PORT = 1935
 DEFAULT_SRT_PORT = 8890
 DEFAULT_RTSP_PORT = 8554
 DEFAULT_API_PORT = 9997
+# WebRTC, for OBS Browser Sources (the lowest delay, ADR 0022 addendum): the page
+# and its signalling on 127.0.0.1 (TCP), the media on UDP.
+DEFAULT_WEBRTC_PORT = 8889
+DEFAULT_WEBRTC_MEDIA_PORT = 8189
 DEFAULT_SRT_LATENCY_MS = 200
 # Ports other programs of the streaming PC already use: the studio, Caddy (80/443 and its
 # admin API), OBS's WebSocket. A feed port on one of them would stop one of the two.
@@ -148,6 +152,24 @@ class FeedsSettings(ModuleSettings):
             "On: also allow TCP on the RTSP port in the Windows firewall by hand."
         ),
     )
+    webrtc_port: int = Field(
+        default=DEFAULT_WEBRTC_PORT,
+        ge=1,
+        le=65535,
+        description=(
+            "WebRTC page and signalling (TCP), on 127.0.0.1 only: OBS Browser Sources read "
+            "feeds here with the least delay."
+        ),
+    )
+    webrtc_media_port: int = Field(
+        default=DEFAULT_WEBRTC_MEDIA_PORT,
+        ge=1,
+        le=65535,
+        description=(
+            "WebRTC media (UDP), from this PC's own browser sources. No firewall rule: "
+            "other PCs cannot reach it."
+        ),
+    )
     api_port: int = Field(
         default=DEFAULT_API_PORT,
         ge=1,
@@ -213,13 +235,15 @@ class FeedsSettings(ModuleSettings):
             "srt_port": self.srt_port,
             "rtsp_port": self.rtsp_port,
             "api_port": self.api_port,
+            "webrtc_port": self.webrtc_port,
+            "webrtc_media_port": self.webrtc_media_port,
         }
         for field_name, port in ports.items():
             if port in STUDIO_PORTS:
                 raise ValueError(f"{field_name} {port} is used by {STUDIO_PORTS[port]}")
         values = list(ports.values())
         if len(set(values)) != len(values):
-            raise ValueError("the RTMP, SRT, RTSP and API ports must all be different")
+            raise ValueError("the RTMP, SRT, RTSP, API and WebRTC ports must all be different")
         return self
 
     def feed_named(self, name: str) -> Feed | None:

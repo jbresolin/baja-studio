@@ -1,7 +1,7 @@
 # Written by Baja Studio from the feeds settings (Feeds page). Edits here are overwritten.
 # The body is JSON, which MediaMTX reads as YAML.
 {
-  "sysLogPrefix": "baja-studio-20a8caed5c3263f3",
+  "sysLogPrefix": "baja-studio-fb0c98f840fde235",
   "logLevel": "info",
   "logDestinations": [
     "stdout"
@@ -12,7 +12,19 @@
   "pprof": false,
   "playback": false,
   "hls": false,
-  "webrtc": false,
+  "webrtc": true,
+  "webrtcAddress": "127.0.0.1:8889",
+  "webrtcEncryption": false,
+  "webrtcAllowOrigins": [
+    "http://127.0.0.1:8889"
+  ],
+  "webrtcLocalUDPAddress": ":8189",
+  "webrtcLocalTCPAddress": "",
+  "webrtcIPsFromInterfaces": true,
+  "webrtcAdditionalHosts": [
+    "127.0.0.1"
+  ],
+  "webrtcICEServers2": [],
   "moq": false,
   "rtsp": true,
   "rtspTransports": [

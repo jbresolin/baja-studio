@@ -57,7 +57,9 @@ class FakeObsRequests:
     transition_overrides: dict[str, tuple[str | None, int | None]]
     stuck_files: set[str]
     # Input kinds a CreateInput may use (a real OBS has many more).
-    creatable_input_kinds = frozenset({"ffmpeg_source", "dshow_input", "color_source_v3"})
+    creatable_input_kinds = frozenset(
+        {"ffmpeg_source", "browser_source", "dshow_input", "color_source_v3"}
+    )
 
     def next_scene_item_id(self) -> int:
         """Implemented by `FakeObs`."""

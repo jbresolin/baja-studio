@@ -67,6 +67,18 @@ def obs_read_url(feed_name: str, settings: FeedsSettings) -> str:
     return f"rtsp://{LOOPBACK}:{settings.rtsp_port}/{feed_name}"
 
 
+def obs_browser_url(feed_name: str, settings: FeedsSettings) -> str:
+    """What OBS's browser source opens: MediaMTX's WebRTC player page for the feed.
+
+    The page (MediaMTX's own) plays the feed muted and without controls, and
+    reconnects by itself when the sender comes back.
+    """
+    return (
+        f"http://{LOOPBACK}:{settings.webrtc_port}/{feed_name}/"
+        "?controls=false&muted=true&autoplay=true"
+    )
+
+
 def sender_addresses(settings: FeedsSettings, lan_addresses: list[str]) -> list[str]:
     """The address(es) shown in sender URLs: the setting, or every LAN address found."""
     if settings.lan_address:

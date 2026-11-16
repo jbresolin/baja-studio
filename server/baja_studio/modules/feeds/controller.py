@@ -199,6 +199,8 @@ def _ports_in(text: str | None) -> set[tuple[str, int]]:
         ("srtAddress", "UDP"),
         ("rtspAddress", "TCP"),
         ("apiAddress", "TCP"),
+        ("webrtcAddress", "TCP"),
+        ("webrtcLocalUDPAddress", "UDP"),
     ):
         port_text = str(document.get(key, "")).rpartition(":")[2]
         if port_text.isdigit():

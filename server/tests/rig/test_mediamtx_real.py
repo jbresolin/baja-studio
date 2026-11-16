@@ -12,6 +12,7 @@ skipped. Like the other rig tests they open loopback sockets and run in real
 time, waiting for each event with a deadline.
 """
 
+import json
 import os
 import shutil
 import socket
@@ -20,6 +21,7 @@ import time
 from collections.abc import Callable, Iterator
 from pathlib import Path
 
+import httpx2
 import pytest
 
 from baja_studio.modules.feeds.config import Feed, FeedKind, FeedsSettings
@@ -31,7 +33,7 @@ from baja_studio.modules.feeds.mediamtx_config import (
     render_config,
     write_config,
 )
-from baja_studio.modules.feeds.urls import obs_read_url, rtmp_url, srt_url
+from baja_studio.modules.feeds.urls import obs_browser_url, obs_read_url, rtmp_url, srt_url
 from baja_studio.rig.layout import LOOPBACK, free_tcp_port, free_udp_port
 
 pytestmark = pytest.mark.rig
@@ -105,6 +107,8 @@ def free_ports() -> FeedsSettings:
         srt_port=free_udp_port(),
         rtsp_port=free_tcp_port(),
         api_port=free_tcp_port(),
+        webrtc_port=free_tcp_port(),
+        webrtc_media_port=free_udp_port(),
     )
 
 
@@ -143,6 +147,7 @@ def test_mediamtx_loads_every_golden_config(golden: str, tmp_path: Path) -> None
     path = tmp_path / "mediamtx.yml"
     path.write_text((GOLDEN_DIRECTORY / golden).read_text(encoding="utf-8"), encoding="utf-8")
     api_port = free_tcp_port()
+    webrtc_port = free_tcp_port()
     running = RunningMediamtx(
         path,
         {
@@ -150,6 +155,8 @@ def test_mediamtx_loads_every_golden_config(golden: str, tmp_path: Path) -> None
             "MTX_RTMPADDRESS": f":{free_tcp_port()}",
             "MTX_SRTADDRESS": f":{free_udp_port()}",
             "MTX_RTSPADDRESS": f"{LOOPBACK}:{free_tcp_port()}",
+            "MTX_WEBRTCADDRESS": f"{LOOPBACK}:{webrtc_port}",
+            "MTX_WEBRTCLOCALUDPADDRESS": f":{free_udp_port()}",
         },
     )
     try:
@@ -161,8 +168,11 @@ def test_mediamtx_loads_every_golden_config(golden: str, tmp_path: Path) -> None
         assert client.info().version.startswith("v1.")
     finally:
         running.stop()
-    # Only RTSP (TCP), RTMP, SRT and the API were opened: no HLS on 8888.
-    assert "[HLS]" not in running.log() and "[WebRTC]" not in running.log()
+    # Only RTSP (TCP), RTMP, SRT, WebRTC and the API were opened: no HLS on 8888.
+    assert "[HLS]" not in running.log()
+    # WebRTC's page and signalling listen on 127.0.0.1 only.
+    listening = f"[WebRTC] started with listeners on {LOOPBACK}:{webrtc_port} (TCP/HTTP)"
+    assert listening in running.log()
 
 
 @needs_mediamtx
@@ -281,3 +291,74 @@ def _answers(client: MediamtxApiClient) -> bool:
 
 def _live(client: MediamtxApiClient) -> set[str]:
     return {path.name for path in client.paths() if path.online}
+
+
+@needs_mediamtx
+@needs_ffmpeg
+def test_a_feed_can_be_read_over_webrtc_on_this_pc(
+    tmp_path: Path, senders: list[subprocess.Popen[bytes]]
+) -> None:
+    # The lowest-delay way into OBS: a Browser Source playing MediaMTX's
+    # WebRTC player page. Here a second MediaMTX stands in for the browser:
+    # it reads the feed over WebRTC (WHEP, the same request the page makes)
+    # on loopback, with no STUN server, and ffprobe reads it back from that
+    # second MediaMTX. If it gets the picture, a WebRTC read on this PC works
+    # with the config the studio writes.
+    settings = free_ports().model_copy(
+        update={"feeds": [Feed(name="laptop1", kind=FeedKind.LAPTOP)]}
+    )
+    path = config_path(tmp_path)
+    write_config(path, render_config(settings, tmp_path, SALT))
+    studio = RunningMediamtx(path)
+    reader_folder = tmp_path / "reader"
+    reader_folder.mkdir()
+    reader_rtsp_port = free_tcp_port()
+    reader_config = reader_folder / "mediamtx.yml"
+    # JSON is YAML: the second MediaMTX only reads the feed over WHEP and serves RTSP.
+    reader_config.write_text(
+        json.dumps(
+            {
+                "api": False, "hls": False, "webrtc": False, "srt": False, "rtmp": False,
+                "moq": False, "playback": False, "metrics": False, "pprof": False,
+                "rtspTransports": ["tcp"],
+                "rtspAddress": f"{LOOPBACK}:{reader_rtsp_port}",
+                "paths": {
+                    "copy": {
+                        "source": f"whep://{LOOPBACK}:{settings.webrtc_port}/laptop1/whep",
+                    }
+                },
+            }
+        ),
+        encoding="utf-8",
+    )  # fmt: skip
+    reader: RunningMediamtx | None = None
+    client = MediamtxApiClient(f"{LOOPBACK}:{settings.api_port}")
+    try:
+        eventually_real(lambda: _answers(client), "MediaMTX answering")
+        senders.append(push(srt_url(settings.feeds[0], settings, LOOPBACK), "mpegts"))
+        eventually_real(lambda: _live(client) == {"laptop1"}, "the laptop feed live")
+
+        # The page a Browser Source opens is served, from 127.0.0.1 only.
+        page = httpx2.get(obs_browser_url("laptop1", settings), timeout=DEADLINE_SECONDS)
+        assert page.status_code == 200
+        assert "reader.js" in page.text
+
+        reader = RunningMediamtx(reader_config)
+
+        def read_back() -> str:
+            return subprocess.run(
+                [
+                    "ffprobe", "-v", "error", "-rtsp_transport", "tcp",
+                    "-show_entries", "stream=codec_name,width", "-of", "csv=p=0",
+                    f"rtsp://{LOOPBACK}:{reader_rtsp_port}/copy",
+                ],
+                capture_output=True, text=True, timeout=DEADLINE_SECONDS, check=False,
+            ).stdout  # fmt: skip
+
+        eventually_real(lambda: "h264,1280" in read_back(), "the picture read back over WebRTC")
+        # The studio's MediaMTX served it to a WebRTC reader.
+        assert "[WebRTC] [session" in studio.log()
+    finally:
+        if reader is not None:
+            reader.stop()
+        studio.stop()

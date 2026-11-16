@@ -192,3 +192,72 @@ results decided the design; each is modelled by the fake
 - **Windows-only paths are not exercised in CI**: `netstat` UDP parsing is
   tested on recorded-shaped output, and the installer's service and firewall
   steps are reviewed by hand (PR description) and by the release smoke test.
+
+## Addendum (16 Nov): delay into OBS, and WebRTC for Browser Sources
+
+**What the bench showed.** Camera to ffplay (`-fflags nobuffer`) on the
+streaming PC was about 0.9 s, and to OBS's Media Source about 1.3 s. Most
+of the 0.9 s was a start-up backlog in the node, fixed there (ADR 0023,
+"Delay"). This addendum is about the 0.4 s OBS added on top.
+
+**The Media Source's `ffmpeg_options` are now `rtsp_transport=tcp
+fflags=nobuffer`.**
+- OBS hands those words to `avformat_open_input` as space-separated
+  `key=value` pairs (obs-ffmpeg's media playback, `av_dict_parse_string`).
+  Only format options act there, which is why `flags=low_delay` (a decoder
+  option) is not added.
+- Without `nobuffer`, the frames OBS reads while it looks at a new stream
+  are queued and played later, so the picture runs that far behind for as
+  long as the source plays.
+- A reader without `nobuffer` measured 70 ms slower through MediaMTX on the
+  synthetic source (430 vs 362 ms). How much this changes in OBS is for the
+  bench.
+- Sources made before this change keep their old settings: the studio never
+  changes an existing source. Delete one in OBS and add it again to get the
+  new options; the Add to OBS form says so.
+
+**MediaMTX's WebRTC server is on, for OBS Browser Sources**
+(`add_to_obs {source: "browser"}`, "Browser Source (WebRTC, lowest delay)" on
+the Feeds page).
+- WebRTC plays each frame as it arrives, with no buffer to fill. vdo.ninja
+  gets its low delay the same way.
+- **The page and signalling** (`webrtcAddress`) are on 127.0.0.1:8889 only.
+  Only programs on this PC can start a stream, and `webrtcAllowOrigins` is
+  that address alone.
+- **The media** goes over UDP 8189 on every address (`webrtcLocalUDPAddress
+  :8189`). The browser connects to this PC's own address, and MediaMTX
+  offers the interfaces' addresses plus 127.0.0.1. There is no STUN or TURN
+  server and no TCP fallback, so nothing leaves the PC. The installer adds
+  no firewall rule for 8189, so other PCs are not let in. Without the
+  loopback-only signalling, the port is of no use to them anyway: a session
+  needs its ICE credentials.
+- **Ports.** Both ports are settings (`webrtc_port`, `webrtc_media_port`).
+  They are checked for collisions and for holders like the other feed
+  ports, because MediaMTX exits when one is taken.
+- **The browser source** is named `<label> (WebRTC)`, so a feed can have
+  both kinds side by side:
+  - URL `http://127.0.0.1:8889/<feed>/?controls=false&muted=true&autoplay=true`,
+    MediaMTX's own player page, which reconnects by itself;
+  - sized at the feed's live picture size, or 1920x1080 before it has been
+    live;
+  - a custom CSS makes the page transparent and hides its message text, so
+    an offline feed shows nothing, like an offline Media Source;
+  - `shutdown` and `restart_when_active` off: it keeps playing off program
+    and is not reloaded when cut to.
+- **What the rig checks.** With the real MediaMTX v1.21.3 and the config the
+  studio writes, a second MediaMTX reads the feed over WHEP on loopback (the
+  request the player page makes), and ffprobe gets the picture back from it
+  (`test_a_feed_can_be_read_over_webrtc_on_this_pc`). The player page is
+  served too.
+
+**Assumptions for the bench.**
+- OBS's browser (CEF) plays H.264 over WebRTC. It does for vdo.ninja's
+  usual setup. The node's feeds have no B-frames; a drone's stream usually
+  has none either.
+- Same-PC traffic to the PC's own address is not filtered by Windows
+  Firewall, as with any loopback traffic.
+- Decoding in OBS's browser costs more CPU on the streaming PC than the
+  Media Source's hardware decode. The bench sheet compares the two per feed.
+- Audio: AAC does not go over WebRTC, so the drone's audio does not reach a
+  browser source. The node's feeds have no audio, and OBS takes
+  the drone's sound from its Media Source if it is wanted.

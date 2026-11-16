@@ -43,12 +43,14 @@ def fake_run(arguments: list[str], timeout: float) -> "subprocess.CompletedProce
     return subprocess.CompletedProcess(arguments, 0, TASKLIST[pid].encode("utf-8"), b"")
 
 
-def test_mediamtx_needs_rtmp_srt_rtsp_and_its_api() -> None:
+def test_mediamtx_needs_rtmp_srt_rtsp_its_api_and_webrtc() -> None:
     assert [port.describe() for port in feed_ports(FeedsSettings())] == [
         "TCP 1935 (RTMP)",
         "UDP 8890 (SRT)",
         "TCP 8554 (RTSP)",
         "TCP 9997 (control API)",
+        "TCP 8889 (WebRTC)",
+        "UDP 8189 (WebRTC media)",
     ]
 
 

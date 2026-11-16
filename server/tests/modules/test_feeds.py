@@ -363,6 +363,46 @@ def test_add_to_obs_creates_the_feeds_media_source_in_the_chosen_scene(
         client.close()
 
 
+def test_add_to_obs_as_webrtc_creates_a_browser_source_at_the_live_feeds_size(
+    make_app: AppFactory, feeds_fakes: FeedsFakes, fake_clock: FakeClock
+) -> None:
+    # The lowest-delay way in: OBS's Browser Source showing MediaMTX's WebRTC
+    # player page for the feed, sized like the picture the drone sends.
+    obs = FakeObs(fake_clock)
+    obs.add_scene("Remote")
+    network = InProcessObsNetwork()
+    network.plug("obs", 4455, obs)
+    client = ObsWebsocketClient(fake_clock, network.connect)
+    client.connect(ObsAddress("obs", 4455), "")
+    module = FeedsModule(feeds_fakes.services, feeds_fakes.system(), ConnectedGateway(client))
+    app = make_app(lambda registry: [module])
+    services: StudioServices = app.state.services
+    try:
+        with TestClient(app):
+            services.settings.update("feeds", {"feeds": [DRONE]})
+            # The drone is live at 1280x720 (MediaMTX reports the size).
+            eventually(lambda: feeds_fakes.mediamtx.publish("drone", "RTMP", size=(1280, 720)))
+
+            def send(command: str, **args: Any) -> Any:
+                return services.registry.dispatch_command("feeds", command, args, "web:test")
+
+            result = send("add_to_obs", feed="drone", scene="Remote", source="browser")
+
+            assert result["source"] == "Drone (WebRTC)"
+            created = obs.inputs["Drone (WebRTC)"]
+            assert created.kind == "browser_source"
+            assert created.settings["url"] == (
+                "http://127.0.0.1:8889/drone/?controls=false&muted=true&autoplay=true"
+            )
+            assert (created.settings["width"], created.settings["height"]) == (1280, 720)
+            # Anything but "media" or "browser" is refused, and nothing is created.
+            with pytest.raises(CommandError, match="source must be 'media' or 'browser'"):
+                send("add_to_obs", feed="drone", scene="Remote", source="ndi")
+            assert len(obs.requests_of("CreateInput")) == 1
+    finally:
+        client.close()
+
+
 def test_a_refused_password_is_not_echoed_in_the_error(
     make_app: AppFactory, feeds_fakes: FeedsFakes
 ) -> None:
