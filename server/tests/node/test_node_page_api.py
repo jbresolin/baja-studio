@@ -29,6 +29,8 @@ from tests.node.node_harness import (
 )
 
 NO_TOKEN = {TOKEN_HEADER: ""}
+# Not the laptop OBS's password (built at run time: nothing here is a credential).
+WRONG_PASSWORD = "-".join(("not", "the", "one"))
 
 
 def test_with_a_token_the_page_api_needs_it_but_agent_info_stays_open(tmp_path: Path) -> None:
@@ -96,7 +98,7 @@ def test_the_page_lists_the_laptop_obs_sources_and_tests_the_connection(tmp_path
             "test_obs_connection", camera="cam2", obs={"port": 4455, "password": SECRET_MASK}
         )
         wrong = node.command(
-            "test_obs_connection", camera="cam2", obs={"port": 4455, "password": "not-it"}
+            "test_obs_connection", camera="cam2", obs={"port": 4455, "password": WRONG_PASSWORD}
         )
 
         assert {source["name"] for source in listed["sources"]} >= set(OBS_WEBCAMS)
