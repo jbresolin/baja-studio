@@ -125,7 +125,11 @@ reading its tests.
   another module owns (the cameras module needs OBS, which playout owns) is
   handed a small gateway the owner provides (`ObsGateway`, like
   `AgentGateway`), wired in `build_module_list`; it never opens a second
-  connection, and shows the owner's reason when the link is down.
+  connection, and shows the owner's reason when the link is down. A system
+  no other module owns (a laptop's OBS, ADR 0021) is opened by the module
+  that needs it, **once per address** however many of its devices use it
+  (a pool keyed by host and port), through the same adapter and gateway
+  interface, opened by the first device and closed with the last.
 - An adapter never opens its socket directly; it takes a transport factory,
   so tests plug in the fake's in-process transport and open no port.
 - Adapter event listeners run on the adapter's reader thread: they queue the
@@ -134,7 +138,9 @@ reading its tests.
 - **Pictures and other bulky data go over HTTP, on demand**, never into
   the shared state (which goes to every page): a route the page polls only
   while it shows them, with a short cache and one device request in flight
-  per item (camera previews, ADR 0020).
+  per item (camera previews, ADR 0020). With several devices of one kind
+  (several OBSes, ADR 0021) the cache and the request slots are per device,
+  so a slow one cannot hold up the others and same-named items never mix.
 - HTTP routes go under `/api/<module>` (`Module.routes`). Only a contract
   fixed by a device that cannot change goes at the root
   (`Module.root_routes`, e.g. the D200's `/action/...`); `/api` and `/ws`
@@ -172,6 +178,12 @@ reading its tests.
 - Any network client has explicit connect/read timeouts and a documented
   offline rule (e.g. the agent client: 2 s per request, `offline` after 5 s
   without hearing from the agent).
+- A long-lived connection to another PC over a link that can fail silently
+  (a pulled cable, a radio) over a protocol without pings (obs-websocket)
+  asks one cheap question every few seconds while idle and redials when it
+  goes unanswered (the remote OBS's `GetVersion` every 2 s, ADR 0021);
+  otherwise TCP keeps a dead socket for minutes. Whatever closes it, the
+  listeners are told it was lost.
 - Normalised units at API boundaries: `-1..1` velocities, `0..1` crops and
   zoom. Device-specific tables (VISCA speed steps, UVC ranges) live only
   inside drivers.

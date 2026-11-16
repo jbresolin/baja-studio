@@ -13,7 +13,7 @@ from baja_studio.adapters.obs_transport import (
     ObsUnreachableError,
 )
 from baja_studio.fakes.fake_obs import FakeObs
-from baja_studio.fakes.fake_obs_in_process import InProcessObsNetwork
+from baja_studio.fakes.fake_obs_in_process import InProcessObsNetwork, InProcessObsTransport
 from tests.conftest import FakeClock
 
 ADDRESS = ObsAddress("obs", 4455)
@@ -86,3 +86,32 @@ def test_closing_twice_is_harmless(network: InProcessObsNetwork) -> None:
 
 def test_unplugging_an_empty_address_does_nothing(network: InProcessObsNetwork) -> None:
     network.unplug("nobody", 1)
+
+
+def test_held_answers_wait_and_then_arrive_in_order(network: InProcessObsNetwork) -> None:
+    # A radio link that stops carrying what OBS sends (WP13): requests still
+    # reach OBS, but its answers wait until the link recovers.
+    transport = network.connect(ADDRESS, 3.0)
+    assert isinstance(transport, InProcessObsTransport)
+    transport.receive()  # Hello
+    network.hold_answers("obs", 4455)
+
+    transport.send(identify_message(None, EventSubscription.ALL))
+    # OBS got it (the session is identified) but its answer did not come back.
+    assert transport._incoming.empty()
+
+    network.release_answers("obs", 4455)
+    assert decode(transport.receive())[0] == OpCode.IDENTIFIED
+    transport.close()
+
+
+def test_a_connection_opened_while_answers_are_held_gets_nothing_not_even_hello(
+    network: InProcessObsNetwork,
+) -> None:
+    network.hold_answers("obs", 4455)
+    transport = network.connect(ADDRESS, 3.0)
+
+    network.release_answers("obs", 4455)
+
+    assert decode(transport.receive())[0] == OpCode.HELLO
+    transport.close()

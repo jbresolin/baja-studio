@@ -92,6 +92,14 @@ def _camera_fix(camera: CameraConfig) -> str:
             "its agent running (Agents page), and that it lists camera "
             f"{camera.address.remote_camera_id}."
         )
+    if camera.driver == DriverKind.OBS_CROP and camera.crop.obs.remote:
+        obs = camera.crop.obs
+        return (
+            f"Check the laptop at {obs.host} is on and on the network, that its OBS runs "
+            f"with the WebSocket server on port {obs.port} (and its password on Camera "
+            f"setup), and that its source '{camera.obs_source}' has the Crop/Pad filter "
+            f"'{camera.crop.filter_name}' (Camera setup → Create filter)."
+        )
     if camera.driver == DriverKind.OBS_CROP:
         return (
             f"Check OBS is running and connected (Playout setup), and that its source "

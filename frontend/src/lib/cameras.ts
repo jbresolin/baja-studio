@@ -62,6 +62,18 @@ export interface CropView {
   filter?: string;
 }
 
+/**
+ * Which OBS an `obs_crop` camera talks to (`state.cameras.cameras.<id>.obs`,
+ * WP13): `address` is null for this PC's OBS (playout's), "host:port" for a
+ * laptop's; `note` is what Camera setup should say (e.g. two cameras saved
+ * with different passwords for one laptop). Never a password.
+ */
+export interface ObsConnectionView {
+  remote: boolean;
+  address: string | null;
+  note: string;
+}
+
 /** `state.cameras.cameras.<id>`. */
 export interface CameraView {
   label: string;
@@ -85,6 +97,8 @@ export interface CameraView {
   control: CameraControl;
   /** Crop cameras only: where the window is. */
   crop?: CropView | null;
+  /** OBS crop cameras only: which OBS (WP13). */
+  obs?: ObsConnectionView | null;
 }
 
 /** One decoded frame on the controller's frame monitor. */
@@ -156,8 +170,24 @@ export interface CropPresetWindow {
   width: number;
 }
 
+/**
+ * Which OBS holds an `obs_crop` camera's source (WP13, server: crop_config.ObsConnection):
+ * this PC's (playout's, `remote` false) or another PC's at host:port. The
+ * password is write-only: the server sends "********" for a saved one, and
+ * that mask sent back means "keep it".
+ */
+export interface ObsConnection {
+  remote: boolean;
+  host: string;
+  port: number;
+  password: string;
+}
+
+export const OBS_WEBSOCKET_PORT = 4455;
+
 /** How an `obs_crop` camera moves its OBS Crop/Pad filter (server: cameras/crop_config.py). */
 export interface CropSettings {
+  obs: ObsConnection;
   filter_name: string;
   min_window: number;
   aspect: string;
@@ -248,6 +278,7 @@ export const VISCA_IP_PORT = 52381;
 /** The server's defaults for an `obs_crop` camera's settings. */
 export function defaultCropSettings(): CropSettings {
   return {
+    obs: { remote: false, host: "", port: OBS_WEBSOCKET_PORT, password: "" },
     filter_name: "Baja crop",
     min_window: 0.5,
     aspect: "16:9",
@@ -312,4 +343,11 @@ export function orderedCameraIds(state: CamerasState | undefined): string[] {
   const known = Object.keys(state.cameras ?? {});
   const ordered = (state.order ?? []).filter((id) => known.includes(id));
   return [...ordered, ...known.filter((id) => !ordered.includes(id))];
+}
+
+/** Where an OBS crop camera's source is, for the camera list: "this PC" or "host:port". */
+export function obsLocation(obs: ObsConnection): string {
+  if (!obs.remote) return "this PC";
+  const host = obs.host.includes(":") ? `[${obs.host}]` : obs.host;
+  return `${host}:${obs.port}`;
 }

@@ -189,9 +189,15 @@ class CameraConfig(StrictModel):
         return self
 
     def connection_key(self) -> tuple[object, ...]:
-        """What the driver is built from; a change here means a new driver."""
+        """What the driver is built from; a change here means a new driver.
+
+        An `obs_crop` camera's OBS (playout's, or a remote host and port) is
+        part of it: another OBS means another connection. Its password is not:
+        a new password reconnects the shared connection, the driver stays.
+        """
         usb = self.usb_device if self.driver in USB_DRIVERS else None
-        return (self.driver, self.address, self.direct_fallback, usb)
+        obs = self.crop.obs.key() if self.driver == DriverKind.OBS_CROP else None
+        return (self.driver, self.address, self.direct_fallback, usb, obs)
 
 
 class ControllerProtocol(StrEnum):

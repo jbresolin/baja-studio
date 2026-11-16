@@ -2,7 +2,10 @@
 
 The bench (obs_bench.py) has a fake OBS with one 4K webcam ("Cam 4K"), a
 real client connected to it, and the driver running its worker on the fake
-clock. We give the driver what the arbiter would (velocities, stops,
+clock. Every test here runs twice: once with the OBS on this PC (reached
+through playout's connection) and once with the OBS on a trackside laptop
+(the cameras module's own remote connection, WP13): a remote crop camera
+must behave exactly like a local one. We give the driver what the arbiter would (velocities, stops,
 presets) and then look at the Crop/Pad filter inside the fake OBS: that is
 what the projector windows and the stream show.
 
@@ -18,19 +21,19 @@ import pytest
 from baja_studio.cameras.crop_window import CropWindow, WindowTarget
 from baja_studio.cameras.driver import Velocity
 from baja_studio.core.supervisor import Supervisor
-from tests.cameras.drivers.obs_bench import CAMERA, FILTER, ObsBench, crop_camera
+from tests.cameras.drivers.obs_bench import CAMERA, FILTER, GATEWAY_KINDS, ObsBench, crop_camera
 from tests.conftest import FakeClock
 
 # Edges that leave the middle 1920x1080 of the 4K picture: the narrowest window, centred.
 CENTRE_1080P = {"left": 960, "right": 960, "top": 540, "bottom": 540}
 
 
-@pytest.fixture
-def bench(fake_clock: FakeClock) -> Iterator[ObsBench]:
+@pytest.fixture(params=GATEWAY_KINDS)
+def bench(fake_clock: FakeClock, request: pytest.FixtureRequest) -> Iterator[ObsBench]:
     supervisor = Supervisor(fake_clock)
     supervisor.register_module("cameras")
     supervisor.start_module("cameras", [])
-    bench = ObsBench(fake_clock, supervisor)
+    bench = ObsBench(fake_clock, supervisor, request.param)
     yield bench
     supervisor.stop_all()
     bench.close()
@@ -245,7 +248,9 @@ def test_obs_quitting_makes_the_camera_offline_and_it_measures_again_when_back(
 
     bench.quit_obs()
     bench.soon(lambda: bench.state.get("status") == "offline")
-    assert bench.state["status_reason"] == "OBS offline: OBS closed the connection"
+    # Playout's words for its OBS ("OBS offline: OBS closed the connection"), or
+    # the laptop's OBS named ("OBS at obs.test:4455 closed the connection ...").
+    assert bench.state["status_reason"].startswith(bench.obs_away_reason)
     # A move while OBS is away does nothing and is not replayed later.
     bench.driver.move(Velocity(pan=1.0), ttl_ms=300)
     bench.step(0.5)
@@ -349,7 +354,7 @@ def test_another_filter_that_changes_the_size_makes_the_camera_degraded(
     bench.add_filter(**CENTRE_1080P)
     running(bench)
 
-    bench.client.create_source_filter(CAMERA, "Scale", "scale_filter", {})
+    bench.operator.create_source_filter(CAMERA, "Scale", "scale_filter", {})
 
     bench.soon(lambda: bench.state.get("status") == "degraded")
     assert "another filter that changes its size ('Scale')" in bench.state["status_reason"]

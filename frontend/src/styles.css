@@ -2311,3 +2311,12 @@ button.small {
   font-size: 0.75rem;
   white-space: pre-wrap;
 }
+
+/* Camera setup's "Test connection" answer for a remote OBS (WP13). */
+.obs-test {
+  color: var(--offline);
+}
+
+.obs-test-ok {
+  color: var(--ok);
+}

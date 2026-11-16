@@ -13,7 +13,12 @@ from baja_studio.rig.fakes import FakePorts, build_fakes
 from baja_studio.rig.studio import studio_process
 
 PORTS = FakePorts(
-    obs=4455, xr18=10024, cameras=(52381, 52382), agents=(8890, 8891), orchestrator=8000
+    obs=4455,
+    xr18=10024,
+    cameras=(52381, 52382),
+    agents=(8890, 8891),
+    orchestrator=8000,
+    laptop_obs=4456,
 )
 
 
@@ -27,9 +32,11 @@ def host_argument(command: list[str]) -> str | None:
 def test_every_fake_the_rig_starts_listens_on_loopback_only(tmp_path: Path) -> None:
     fakes = build_fakes(PORTS, tmp_path / "delivery", tmp_path / "logs", 1, None)
 
-    # The rig starts all eight fakes (MediaMTX's since WP14) ...
+    # The rig starts all nine fakes (a trackside laptop's OBS since WP13, MediaMTX's
+    # since WP14) ...
     assert set(fakes) == {
         "obs",
+        "laptop-obs",
         "xr18",
         "camera1",
         "camera2",

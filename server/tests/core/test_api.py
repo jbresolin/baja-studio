@@ -115,6 +115,20 @@ def test_put_settings_with_an_invalid_value_returns_422(light_client: TestClient
     assert "input" not in response.json()["detail"][0]
 
 
+def test_a_refused_save_never_sends_the_submitted_values_back(light_client: TestClient) -> None:
+    # When a save is refused, the answer says which field is wrong and why, but
+    # it must not repeat what was typed: in other sections that can be a password
+    # (OBS, a laptop agent's token). Pydantic would copy it into an "input" key.
+    response = light_client.put(
+        "/api/settings/heartbeat", json={"version": 1, "values": {"interval_s": -1}}
+    )
+
+    assert response.status_code == 422
+    for error in response.json()["detail"]:
+        assert "input" not in error
+        assert error["msg"]  # the reason is still there for the page to show
+
+
 def test_settings_of_an_unknown_section_return_404(light_client: TestClient) -> None:
     assert light_client.get("/api/settings/nope").status_code == 404
     assert light_client.get("/api/settings/nope/schema").status_code == 404

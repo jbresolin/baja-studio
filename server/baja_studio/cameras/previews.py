@@ -11,6 +11,12 @@ nothing is asked of OBS while no page looks. For each OBS source and width:
 - at most `MAX_PREVIEWS_AT_ONCE` previews are served at once (each waits in
   one of the web server's threads), so a hung OBS cannot use them all up.
 
+A crop camera may live in a remote OBS on a trackside laptop (ADR 0021),
+reached over a slower link. Each OBS (playout's, and each remote one) has its
+own screenshot cache, so two laptops' sources of the same name are never
+mixed up, and its own `MAX_PREVIEWS_PER_OBS` slots, so a slow or hung laptop
+makes only its own previews wait, never the local OBS's or another laptop's.
+
 `GetSourceScreenshot` renders a source *with* its filters, so an `obs_crop`
 camera's screenshot is its window, not the whole picture. Unless the camera
 names a `preview_source` (an unfiltered view of the same camera), the answer
@@ -26,7 +32,8 @@ from typing import Any
 
 from baja_studio.adapters.obs_images import ImageData, ImageDataError, decode_data_uri
 from baja_studio.adapters.obs_transport import ObsError
-from baja_studio.cameras.config import CamerasSettings, DriverKind
+from baja_studio.cameras.config import CameraConfig, CamerasSettings, DriverKind
+from baja_studio.cameras.crop_config import ObsConnection
 from baja_studio.cameras.drivers.obs_gateway import ObsGateway
 from baja_studio.core.clock import Clock
 
@@ -36,11 +43,16 @@ FORGET_AFTER_SECONDS = 30.0
 # How long a page waits for another page's request to OBS (OBS's own timeout is 2 s).
 WAIT_FOR_OTHER_SECONDS = 5.0
 # Preview requests served at once. Each waits on OBS in one of the web server's
-# worker threads; with OBS hung, many phones must not take them all.
-MAX_PREVIEWS_AT_ONCE = 8
+# worker threads (40 by default); with OBS hung, many phones must not take them all.
+MAX_PREVIEWS_AT_ONCE = 12
+# Of those, how many may wait on one OBS (8, as for the one OBS before WP13): a
+# hung laptop leaves the rest to playout's OBS and the other laptops.
+MAX_PREVIEWS_PER_OBS = 8
 SHOWS_WINDOW, SHOWS_FULL = "window", "full"
 
 Fetch = Callable[[str, int], ImageData]
+# Which OBS an `obs_crop` camera's `crop.obs` names (playout's, or a remote one).
+GatewayFor = Callable[[ObsConnection], ObsGateway]
 
 
 class PreviewUnavailableError(Exception):
@@ -144,6 +156,14 @@ class PreviewCache:
             del self._entries[key]
 
 
+@dataclass
+class _ObsPreviews:
+    """One OBS's screenshot cache and its share of the preview slots."""
+
+    cache: PreviewCache
+    slots: threading.BoundedSemaphore
+
+
 class CameraPreviews:
     """Which source to show for a camera, and the preview of it (for the route)."""
 
@@ -153,31 +173,79 @@ class CameraPreviews:
         obs: ObsGateway,
         settings: Callable[[], CamerasSettings],
         camera_state: Callable[[str], dict[str, Any] | None],
+        gateway_for: GatewayFor | None = None,
     ) -> None:
-        """`camera_state(id)` reads `state.cameras.cameras.<id>` (its `crop` window)."""
+        """`camera_state(id)` reads `state.cameras.cameras.<id>` (its `crop` window).
+
+        `obs` is playout's OBS; `gateway_for(crop.obs)` finds a crop camera's
+        own OBS (the cameras module's remote pool); without it every camera
+        uses `obs`.
+        """
+        self._clock = clock
         self._obs = obs
+        self._gateway_for = gateway_for or (lambda _connection: obs)
         self._settings = settings
         self._camera_state = camera_state
-        self._cache = PreviewCache(clock, self._screenshot)
         self._slots = threading.BoundedSemaphore(MAX_PREVIEWS_AT_ONCE)
+        self._lock = threading.Lock()
+        self._per_obs: dict[object, _ObsPreviews] = {}
 
     def preview(self, camera_id: str, width: int) -> Preview:
         """The camera's preview, or `PreviewUnavailableError` saying why not.
 
-        At most `MAX_PREVIEWS_AT_ONCE` are served at a time; beyond that the
-        page is told to try again (it does, a second later).
+        At most `MAX_PREVIEWS_AT_ONCE` are served at a time, and at most
+        `MAX_PREVIEWS_PER_OBS` of them wait on one OBS; beyond that the page
+        is told to try again (it does, a second later).
         """
-        if not self._slots.acquire(blocking=False):
-            raise PreviewUnavailableError(503, "too many previews at once; trying again")
-        try:
-            return self._preview(camera_id, width)
-        finally:
-            self._slots.release()
-
-    def _preview(self, camera_id: str, width: int) -> Preview:
         camera = next((c for c in self._settings().cameras if c.id == camera_id), None)
         if camera is None:
             raise PreviewUnavailableError(404, f"no camera called {camera_id!r}")
+        gateway, previews = self._obs_of(camera)
+        if not self._slots.acquire(blocking=False):
+            raise PreviewUnavailableError(503, "too many previews at once; trying again")
+        try:
+            if not previews.slots.acquire(blocking=False):
+                raise PreviewUnavailableError(503, "this OBS is slow to answer; trying again")
+            try:
+                return self._preview(camera, width, gateway, previews.cache)
+            finally:
+                previews.slots.release()
+        finally:
+            self._slots.release()
+
+    def _obs_of(self, camera: CameraConfig) -> tuple[ObsGateway, _ObsPreviews]:
+        """The camera's OBS, and that OBS's cache and slots (made on first use)."""
+        is_obs_crop = camera.driver == DriverKind.OBS_CROP
+        key = camera.crop.obs.key() if is_obs_crop else None
+        gateway = self._gateway_for(camera.crop.obs) if key is not None else self._obs
+        with self._lock:
+            previews = self._per_obs.get(key)
+            if previews is None:
+                # The cache asks whichever gateway serves this OBS now (`gateway_for`
+                # is asked again on every preview, so a reconnected OBS is found).
+                fetch = self._fetcher(key, camera.crop.obs)
+                previews = _ObsPreviews(
+                    PreviewCache(self._clock, fetch),
+                    threading.BoundedSemaphore(MAX_PREVIEWS_PER_OBS),
+                )
+                self._per_obs[key] = previews
+        return gateway, previews
+
+    def _fetcher(self, key: object, connection: ObsConnection) -> Fetch:
+        def fetch(source: str, width: int) -> ImageData:
+            gateway = self._obs if key is None else self._gateway_for(connection)
+            try:
+                return self._screenshot(gateway, source, width)
+            except ObsError as error:
+                # "OBS: ..." for playout's OBS, as before; "OBS at <laptop>: ..." for a remote one.
+                raise PreviewUnavailableError(503, gateway.link().refused(error)) from None
+
+        return fetch
+
+    def _preview(
+        self, camera: CameraConfig, width: int, gateway: ObsGateway, cache: PreviewCache
+    ) -> Preview:
+        camera_id = camera.id
         is_obs_crop = camera.driver == DriverKind.OBS_CROP
         if is_obs_crop and camera.crop.preview_source:
             source, shows = camera.crop.preview_source, SHOWS_FULL
@@ -188,10 +256,10 @@ class CameraPreviews:
             source = camera.obs_source
         else:
             raise PreviewUnavailableError(404, "no OBS source set for this camera (Camera setup)")
-        link = self._obs.link()
+        link = gateway.link()
         if not link.connected:
-            raise PreviewUnavailableError(503, f"OBS offline: {link.reason}")
-        image, window = self._cache.get(source, width, lambda: self._window(camera_id))
+            raise PreviewUnavailableError(503, link.problem)
+        image, window = cache.get(source, width, lambda: self._window(camera_id))
         headers = {"X-Preview-Shows": shows, "Cache-Control": "no-store"}
         if window is not None:
             headers["X-Crop-Window"] = ",".join(
@@ -205,8 +273,9 @@ class CameraPreviews:
             return crop
         return None
 
-    def _screenshot(self, source: str, width: int) -> ImageData:
-        client = self._obs.client()
+    @staticmethod
+    def _screenshot(gateway: ObsGateway, source: str, width: int) -> ImageData:
+        client = gateway.client()
         if client is None:
-            raise PreviewUnavailableError(503, f"OBS offline: {self._obs.link().reason}")
+            raise PreviewUnavailableError(503, gateway.link().problem)
         return decode_data_uri(client.get_source_screenshot(source, "jpg", width))

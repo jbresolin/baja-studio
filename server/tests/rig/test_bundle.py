@@ -26,7 +26,12 @@ from baja_studio.rig.bundle import (
 
 # Made-up ports: the bundle only writes them down.
 PORTS = fakes.FakePorts(
-    obs=4455, xr18=10024, cameras=(52381, 52382), agents=(8890, 8891), orchestrator=8000
+    obs=4455,
+    xr18=10024,
+    cameras=(52381, 52382),
+    agents=(8890, 8891),
+    orchestrator=8000,
+    laptop_obs=4456,
 )
 CLIPS = Path("/rig/clips")
 
@@ -86,8 +91,15 @@ def test_the_bundle_points_every_module_at_the_fakes() -> None:
     ]
     assert fallbacks == [52381, 52382]
     # And a digital PTZ on the fake OBS's webcam, whose filter the fake starts with.
-    crop = values["cameras"]["cameras"][-1]
+    crop = next(c for c in values["cameras"]["cameras"] if c["id"] == "rig-crop")
     assert (crop["driver"], crop["obs_source"]) == ("obs_crop", "Rig webcam 4K")
+    # And two on the trackside laptop's fake OBS: both name the same OBS, so the
+    # studio opens one connection for them (WP13).
+    laptop = [c for c in values["cameras"]["cameras"] if c["id"].startswith("rig-laptop-crop")]
+    assert [c["obs_source"] for c in laptop] == list(fakes.LAPTOP_WEBCAMS)
+    assert {(c["crop"]["obs"]["host"], c["crop"]["obs"]["port"]) for c in laptop} == {
+        ("127.0.0.1", 4456)
+    }
     assert values["gateway"] == {"enabled": False}
 
 
