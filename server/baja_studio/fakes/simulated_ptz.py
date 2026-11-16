@@ -30,7 +30,7 @@ from baja_studio.agents.contract import (
     Preset,
     Status,
 )
-from baja_studio.fakes.blocky_jpeg import test_card_jpeg
+from baja_studio.fakes.blocky_jpeg import card_jpeg
 from baja_studio.fakes.simulated_common import (
     FIXED_LIMITS,
     MOVABLE_KINDS,
@@ -242,7 +242,7 @@ class SimulatedCamera:
         """
         self._require_kind(CameraKind.CROP)
         self._require_online()
-        return test_card_jpeg(width, width * 9 // 16, shade=int(now.seconds) * 16)
+        return card_jpeg(width, width * 9 // 16, shade=int(now.seconds) * 16)
 
     def resync(self, now: Moment) -> CommandReply:
         """Re-read the device (the fake's device never drifts, so nothing changes)."""

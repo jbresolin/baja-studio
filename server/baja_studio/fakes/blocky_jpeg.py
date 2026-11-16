@@ -160,7 +160,7 @@ def encode_blocks(
 QUADRANT_COLOURS: tuple[Colour, ...] = ((200, 40, 40), (40, 160, 60), (40, 80, 200), (210, 170, 30))
 
 
-def test_card_jpeg(width: int, height: int, shade: int = 0) -> bytes:
+def card_jpeg(width: int, height: int, shade: int = 0) -> bytes:
     """A test card about `width` x `height` pixels (rounded to whole blocks).
 
     Four coloured quadrants with a checkerboard of 32-pixel squares on them, so

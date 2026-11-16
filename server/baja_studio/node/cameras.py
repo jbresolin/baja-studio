@@ -31,6 +31,15 @@ from baja_studio.node import backends
 from baja_studio.node.camera import Backend, NodeCamera
 from baja_studio.node.settings import NodeCameraSettings, NodeSettings, VideoMode
 
+# A camera's published fields while it has no driver.
+_NO_DRIVER_STATE = {
+    "status": "offline",
+    "status_reason": "switching video mode",
+    "crop": None,
+    "position": None,
+    "moving": False,
+}
+
 
 @dataclass
 class _Served:
@@ -182,7 +191,10 @@ class NodeCameras:
         backend = served.camera.backend
         if backend is None:
             return
-        served.camera.use(None)
+        served.camera.use(None, "switching video mode")
+        # What the page shows of the old driver goes at once: the new one publishes its own.
+        for key, value in _NO_DRIVER_STATE.items():
+            self._context.update_state(f"cameras.{served.settings.id}.{key}", value)
         backend.driver.disconnect()  # waits for the driver's worker (and its pipeline)
         if backend.mode == VideoMode.OBS.value:
             self._pool.release(served.settings.id)

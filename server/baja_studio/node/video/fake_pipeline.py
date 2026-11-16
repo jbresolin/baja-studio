@@ -23,7 +23,7 @@ from collections import deque
 
 from baja_studio.cameras.driver import Logger
 from baja_studio.core.clock import Clock
-from baja_studio.fakes.blocky_jpeg import test_card_jpeg
+from baja_studio.fakes.blocky_jpeg import card_jpeg
 from baja_studio.node.video.pipeline_types import (
     ENCODER_AUTO,
     CaptureDevice,
@@ -89,7 +89,7 @@ class FakeCameraPipeline:
             return None
         height = SNAPSHOT_WIDTH * self.spec.input_height // self.spec.input_width
         second = int(self._clock.monotonic())
-        return test_card_jpeg(SNAPSHOT_WIDTH, height, shade=second * 16)
+        return card_jpeg(SNAPSHOT_WIDTH, height, shade=second * 16)
 
     def status(self) -> PipelineStatus:
         """The scripted state; while running, the spec's frame rate in and out."""

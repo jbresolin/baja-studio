@@ -45,6 +45,8 @@ OBS_PORT = 4455
 # The laptop's OBS password: built from parts, so it reads as the placeholder it is.
 OBS_PASSWORD = "-".join(("laptop", "obs", "test"))
 OBS_WEBCAMS = ("S600 A", "S600 B")
+# A third webcam in the laptop's OBS with no crop filter yet (for Create filter).
+OBS_BARE_WEBCAM = "S600 bare"
 CROP_FILTER = "Baja crop"
 NODE_TOKEN = "-".join(("node", "test", "token"))
 STUDIO_ID = "node-tests"
@@ -128,6 +130,7 @@ def laptop_obs(clock: Clock) -> FakeObs:
     for webcam in OBS_WEBCAMS:
         obs.add_video_input(webcam, 3840, 2160)
         obs.add_crop_filter(webcam, CROP_FILTER)
+    obs.add_video_input(OBS_BARE_WEBCAM, 3840, 2160)
     return obs
 
 
