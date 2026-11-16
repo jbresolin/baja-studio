@@ -25,8 +25,12 @@ jobs:
           ruff check .
           ruff format --check .
       - name: Type-check (mypy --strict)
+        # Twice, so the Windows-only code (sys.platform == "win32") is checked
+        # on every runner, not just on Windows.
         working-directory: server
-        run: mypy
+        run: |
+          mypy
+          mypy --platform win32
       - name: Test (pytest)
         working-directory: server
         run: pytest
@@ -54,6 +58,31 @@ jobs:
           mkdir -p "$RUNNER_TEMP/mediamtx"
           tar xzf "$RUNNER_TEMP/mediamtx.tar.gz" -C "$RUNNER_TEMP/mediamtx"
           echo "BAJA_STUDIO_TEST_MEDIAMTX=$RUNNER_TEMP/mediamtx/mediamtx" >> "$GITHUB_ENV"
+      # The camera node's video tests run the pinned node ffmpeg (WP15, ADR 0023):
+      # on Windows the very build the node installer bundles, on Linux the build
+      # of the same version for Linux. Both are checked against their SHA-256;
+      # tests/rig/test_node_ffmpeg_pin.py then checks the features the node needs.
+      - name: Download the pinned node ffmpeg (camera node video rig tests)
+        shell: bash
+        run: |
+          pin=installer/ffmpeg-node/pin.json
+          field() { python -c "import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])" $pin "$1"; }
+          mkdir -p "$RUNNER_TEMP/ffmpeg-node"
+          cd "$RUNNER_TEMP/ffmpeg-node"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            curl -fsSL --retry 5 -o ffmpeg.zip "$(field url)"
+            echo "$(field sha256)  ffmpeg.zip" | sha256sum -c -
+            python -m zipfile -e ffmpeg.zip .
+            folder="$(field folder_in_zip)"
+            binary="$(cygpath -w "$PWD/$folder/bin/ffmpeg.exe")"
+          else
+            curl -fsSL --retry 5 -o ffmpeg.tar.xz "$(field linux_url)"
+            echo "$(field linux_sha256)  ffmpeg.tar.xz" | sha256sum -c -
+            tar xJf ffmpeg.tar.xz
+            binary="$PWD/$(field linux_folder_in_archive)/bin/ffmpeg"
+          fi
+          "$binary" -hide_banner -version | head -1
+          echo "BAJA_STUDIO_TEST_NODE_FFMPEG=$binary" >> "$GITHUB_ENV"
       - name: Test the rehearsal rig (pytest -m rig)
         working-directory: server
         run: pytest -m rig
