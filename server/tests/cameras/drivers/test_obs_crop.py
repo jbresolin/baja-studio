@@ -213,10 +213,11 @@ def test_a_source_obs_does_not_have_makes_the_camera_offline(bench: ObsBench) ->
     bench.config.obs_source = "Typo cam"
     bench.driver.connect()
 
-    bench.soon(lambda: bench.state.get("status") == "offline")
-    assert bench.state["status_reason"] == (
-        "OBS has no source 'Typo cam' (check the name on Camera setup)"
-    )
+    # Through a remote OBS the camera is first offline "connecting to OBS at ...":
+    # wait for the reason that names the missing source, not just for "offline".
+    missing = "OBS has no source 'Typo cam' (check the name on Camera setup)"
+    bench.soon(lambda: bench.state.get("status_reason") == missing)
+    assert bench.state["status"] == "offline"
 
 
 def test_a_filter_with_relative_unticked_is_degraded_and_left_alone(bench: ObsBench) -> None:
