@@ -15,6 +15,11 @@ starts that direct driver, stops the camera (it may have been left moving),
 and routes every command to it. When the agent is
 back, it stops the direct driver (after a stop, if it was moving), routes to
 the agent again and asks it to `/resync`.
+
+An agent's crop camera keeps no presets of its own: the studio stores its
+windows instead (`agent_crop_presets.py`, ADR 0023), and recalls them with
+`PUT /crop`. Agents that list `snapshot` (contract 1.1) say so in the
+camera's capabilities, for the preview.
 """
 
 import threading
@@ -22,7 +27,15 @@ from collections.abc import Callable
 from concurrent.futures import Future
 from typing import Any
 
-from baja_studio.agents.contract import CameraKind, Mode, ModeReply, Position, Preset, Status
+from baja_studio.agents.contract import (
+    CAMERA_CAPABILITY_SNAPSHOT,
+    CameraKind,
+    Mode,
+    ModeReply,
+    Position,
+    Preset,
+    Status,
+)
 from baja_studio.cameras.config import DirectFallback
 from baja_studio.cameras.crop_window import WindowTarget
 from baja_studio.cameras.driver import (
@@ -34,6 +47,12 @@ from baja_studio.cameras.driver import (
 )
 from baja_studio.cameras.drivers.agent_commands import MOVE, STOP, AgentCommandQueue
 from baja_studio.cameras.drivers.agent_crop import AgentCropMirror
+from baja_studio.cameras.drivers.agent_crop_presets import (
+    STUDIO_CROP_PRESET_MAX,
+    AgentCropPresets,
+    CropPresetError,
+    keeps_studio_presets,
+)
 from baja_studio.cameras.drivers.agent_gateway import AgentCall, AgentGateway, AgentLinkView
 from baja_studio.core.supervisor import HealthState, WorkerContext, WorkerSpec
 
@@ -62,8 +81,10 @@ class AgentProxyDriver(ModeCapableDriver):
         remote_camera_id: str,
         fallback: DirectFallback | None,
         make_fallback: Callable[[DirectFallback], CameraDriver],
+        crop_presets: AgentCropPresets | None = None,
     ) -> None:
-        """`make_fallback` builds the direct driver used while the agent is away."""
+        """`make_fallback` builds the direct driver used while the agent is away;
+        `crop_presets` keeps a crop camera's windows in its settings (None: no presets)."""
         self._host = host
         self._gateway = gateway
         self._agent_id = agent_id
@@ -75,6 +96,7 @@ class AgentProxyDriver(ModeCapableDriver):
         self._commands = AgentCommandQueue(gateway, agent_id, self._command_failed)
         # A `kind=crop` camera's window, for the preview (WP6b).
         self._crop = AgentCropMirror(gateway, agent_id, remote_camera_id, host.publish)
+        self._crop_presets = crop_presets
         self._view: AgentLinkView | None = None
         self._offline_since: float | None = None
         self._fallback: CameraDriver | None = None
@@ -122,19 +144,28 @@ class AgentProxyDriver(ModeCapableDriver):
         self._forward(STOP, lambda client: client.stop(remote))
 
     def recall_preset(self, n: int) -> None:
-        """Forward a preset recall."""
+        """Forward a preset recall (a stored window's `PUT /crop` for a crop camera)."""
         target = self._direct_target()
         if target is not None:
             target.recall_preset(n)
+            return
+        if self._crop_presets is not None and self.studio_keeps_presets:
+            self._recall_window(self._crop_presets, n)
             return
         remote = self._remote_id
         self._forward("recall_preset", lambda client: client.recall_preset(remote, n))
 
     def store_preset(self, n: int) -> None:
-        """Forward a preset store."""
+        """Forward a preset store (a crop camera's window is stored in its settings, now)."""
         target = self._direct_target()
         if target is not None:
             target.store_preset(n)
+            return
+        if self._crop_presets is not None and self.studio_keeps_presets:
+            try:
+                self._crop_presets.store(n, self._crop.rect)
+            except CropPresetError as error:
+                self._host.publish("last_error", str(error))
             return
         remote = self._remote_id
         self._forward("store_preset", lambda client: client.store_preset(remote, n))
@@ -166,6 +197,22 @@ class AgentProxyDriver(ModeCapableDriver):
         result: Future[Any] = Future()
         result.add_done_callback(self._crop.accept_answer)
         self._forward("set_crop", call, result)
+
+    @property
+    def studio_keeps_presets(self) -> bool:
+        """True for a crop camera whose presets the studio stores (its agent keeps none)."""
+        return self._crop_presets is not None and keeps_studio_presets(self._info())
+
+    def _recall_window(self, presets: AgentCropPresets, n: int) -> None:
+        try:
+            rect = presets.recall(n, self._crop.rect)
+        except CropPresetError as error:
+            self._host.publish("last_error", str(error))
+            return
+        result: Future[Any] = Future()
+        result.add_done_callback(self._crop.accept_answer)
+        remote = self._remote_id
+        self._forward("set_crop", lambda client: client.set_crop(remote, rect), result)
 
     def _refused_in_fallback(self, result: "Future[Any]") -> bool:
         if self._route != ROUTE_FALLBACK:
@@ -201,12 +248,16 @@ class AgentProxyDriver(ModeCapableDriver):
         """From the agent's `/agent/info`; a PTZ with no presets until it has been read."""
         camera = self._info()
         if camera is not None:
+            preset_max = camera["limits"]["preset_max"]
+            if self._crop_presets is not None and keeps_studio_presets(camera):
+                preset_max = STUDIO_CROP_PRESET_MAX
             return DriverCapabilities(
                 kind=CameraKind(camera["kind"]),
                 has_position_feedback=camera["has_position_feedback"],
                 has_zoom=camera["has_zoom"],
                 supports_auto=camera["supports_auto"],
-                preset_max=camera["limits"]["preset_max"],
+                preset_max=preset_max,
+                snapshot=CAMERA_CAPABILITY_SNAPSHOT in camera.get("capabilities", []),
             )
         return DriverCapabilities(CameraKind.PTZ, False, True, True, None)
 
@@ -318,8 +369,11 @@ class AgentProxyDriver(ModeCapableDriver):
             "status_reason": reason,
             "route": self._route,
             "capabilities": self.capabilities().as_state(),
-            # The agent keeps this camera's preset names; they stay listed in fallback.
-            "presets": (self._info() or {}).get("presets", []),
+            # The agent keeps this camera's preset names (they stay listed in
+            # fallback), unless the studio keeps a crop camera's windows.
+            "presets": self._crop_presets.names()
+            if self._crop_presets is not None and self.studio_keeps_presets
+            else (self._info() or {}).get("presets", []),
         }
         target = self._fallback if self._route == ROUTE_FALLBACK else None
         if target is not None:

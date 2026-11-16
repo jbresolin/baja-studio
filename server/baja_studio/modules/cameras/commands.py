@@ -147,7 +147,8 @@ class CameraCommands:
         return reply.model_dump(mode="json")
 
     def _rename_preset(self, arbiter: MotionArbiter, args: dict[str, Any], source: str) -> Any:
-        """Agent cameras: the agent keeps the names. Direct cameras: the registry does.
+        """Agent cameras: the agent keeps the names. Direct cameras (and agent crop
+        cameras, whose windows the studio stores): the registry does.
 
         An empty label removes a direct camera's name (the page then shows
         "Preset n+1"); the agent API has no such thing, so it is refused there.
@@ -156,7 +157,9 @@ class CameraCommands:
         if len(label) > 60:
             raise CommandError("a preset name is at most 60 characters")
         camera = next(c for c in self._settings().cameras if c.id == arbiter.camera_id)
-        if camera.owner == Owner.AGENT:
+        # An agent crop camera's presets are windows the studio stores, named here too.
+        studio_keeps = getattr(arbiter.driver, "studio_keeps_presets", False)
+        if camera.owner == Owner.AGENT and not studio_keeps:
             if not label:
                 raise CommandError("a preset name cannot be empty")
             return _agent_answer(arbiter.label_preset(source, n, label)).model_dump(mode="json")

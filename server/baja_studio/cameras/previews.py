@@ -28,7 +28,7 @@ page can place it on the whole frame and remember what it saw around it.
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Protocol
 
 from baja_studio.adapters.obs_images import ImageData, ImageDataError, decode_data_uri
 from baja_studio.adapters.obs_transport import ObsError
@@ -51,6 +51,15 @@ MAX_PREVIEWS_PER_OBS = 8
 SHOWS_WINDOW, SHOWS_FULL = "window", "full"
 
 Fetch = Callable[[str, int], ImageData]
+
+
+class AgentSnapshotSource(Protocol):
+    """Agent cameras' previews from their snapshots (`agent_previews.AgentSnapshots`)."""
+
+    def preview(self, camera: CameraConfig, width: int) -> "Preview":
+        """The camera's snapshot as a preview, or `PreviewUnavailableError`."""
+
+
 # Which OBS an `obs_crop` camera's `crop.obs` names (playout's, or a remote one).
 GatewayFor = Callable[[ObsConnection], ObsGateway]
 
@@ -174,18 +183,21 @@ class CameraPreviews:
         settings: Callable[[], CamerasSettings],
         camera_state: Callable[[str], dict[str, Any] | None],
         gateway_for: GatewayFor | None = None,
+        agent_snapshots: "AgentSnapshotSource | None" = None,
     ) -> None:
         """`camera_state(id)` reads `state.cameras.cameras.<id>` (its `crop` window).
 
         `obs` is playout's OBS; `gateway_for(crop.obs)` finds a crop camera's
         own OBS (the cameras module's remote pool); without it every camera
-        uses `obs`.
+        uses `obs`. `agent_snapshots` serves agent cameras that list
+        snapshots (contract 1.1, `agent_previews.py`); they need no OBS.
         """
         self._clock = clock
         self._obs = obs
         self._gateway_for = gateway_for or (lambda _connection: obs)
         self._settings = settings
         self._camera_state = camera_state
+        self._agent_snapshots = agent_snapshots
         self._slots = threading.BoundedSemaphore(MAX_PREVIEWS_AT_ONCE)
         self._lock = threading.Lock()
         self._per_obs: dict[object, _ObsPreviews] = {}
@@ -200,10 +212,14 @@ class CameraPreviews:
         camera = next((c for c in self._settings().cameras if c.id == camera_id), None)
         if camera is None:
             raise PreviewUnavailableError(404, f"no camera called {camera_id!r}")
+        from_agent = self._agent_snapshots is not None and self._agent_has_snapshots(camera)
         gateway, previews = self._obs_of(camera)
         if not self._slots.acquire(blocking=False):
             raise PreviewUnavailableError(503, "too many previews at once; trying again")
         try:
+            if from_agent:
+                assert self._agent_snapshots is not None
+                return self._agent_snapshots.preview(camera, width)
             if not previews.slots.acquire(blocking=False):
                 raise PreviewUnavailableError(503, "this OBS is slow to answer; trying again")
             try:
@@ -212,6 +228,13 @@ class CameraPreviews:
                 previews.slots.release()
         finally:
             self._slots.release()
+
+    def _agent_has_snapshots(self, camera: CameraConfig) -> bool:
+        """An agent camera whose agent serves its snapshots (preferred to any OBS source)."""
+        state = self._camera_state(camera.id) or {}
+        return camera.driver == DriverKind.AGENT and bool(
+            (state.get("capabilities") or {}).get("snapshot")
+        )
 
     def _obs_of(self, camera: CameraConfig) -> tuple[ObsGateway, _ObsPreviews]:
         """The camera's OBS, and that OBS's cache and slots (made on first use)."""

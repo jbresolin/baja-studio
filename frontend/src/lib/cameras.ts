@@ -41,6 +41,8 @@ export interface CameraCapabilities {
   has_zoom: boolean;
   supports_auto: boolean;
   preset_max: number | null;
+  /** Contract 1.1: an agent camera that serves snapshots of its whole frame (ADR 0023). */
+  snapshot?: boolean;
 }
 
 /**

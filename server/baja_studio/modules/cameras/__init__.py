@@ -31,6 +31,7 @@ from pydantic import BaseModel
 
 from baja_studio.adapters.obs_transport import TransportFactory, open_websocket_transport
 from baja_studio.cameras import health
+from baja_studio.cameras.agent_previews import AgentSnapshots
 from baja_studio.cameras.config import CamerasSettings
 from baja_studio.cameras.crop_config import with_crop_window
 from baja_studio.cameras.crop_window import CropWindow
@@ -147,6 +148,7 @@ class CamerasModule(Module):
                 self._settings,
                 lambda camera_id: context.state.get(self.name, f"cameras.{camera_id}"),
                 gateway_for=pool.gateway_for,
+                agent_snapshots=AgentSnapshots(context.clock, self._agents),
             )
             self._obs_commands = ObsCameraCommands(
                 pool, self._settings, context.clock, self._remote_obs_transport

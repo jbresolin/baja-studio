@@ -7,6 +7,8 @@
  * - Any camera with an OBS source shows a still of that source.
  * - A crop camera (an OBS crop filter, or a laptop agent's crop camera)
  *   shows the whole frame with its window drawn on it, and the zoom ("1.6×").
+ * - An agent camera that serves snapshots (contract 1.1: a camera node's)
+ *   needs no OBS source: the agent's picture of its whole frame is shown.
  *   OBS can only send the window itself (a screenshot is taken after the
  *   filter), so the window's picture is placed where the window is, and
  *   the last windows seen around it stay, dimmed: a fixed camera's
@@ -51,9 +53,15 @@ function placed(rect: PreviewRect): CSSProperties {
 }
 
 /** The whole frame's width over height, from what is known about the camera. */
-function frameAspect(view: CameraView | undefined, imageAspect: number | null): number {
+function frameAspect(
+  view: CameraView | undefined,
+  imageAspect: number | null,
+  shows: "window" | "full" | null,
+): number {
   const crop = view?.crop;
   if (crop?.source_width && crop.source_height) return crop.source_width / crop.source_height;
+  // A picture of the whole frame (an agent's snapshot) has the frame's shape.
+  if (shows === "full" && imageAspect) return imageAspect;
   // An agent crop camera: the picture is the window, whose shape is known in fractions.
   if (crop && imageAspect) return (imageAspect * crop.h) / crop.w;
   return imageAspect ?? DEFAULT_ASPECT;
@@ -76,7 +84,8 @@ export function CameraPreview({
   const element = useRef<HTMLDivElement>(null);
   const [imageAspect, setImageAspect] = useState<number | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const hasSource = Boolean(view?.obs_source);
+  const hasSnapshots = view?.capabilities?.snapshot === true;
+  const hasSource = Boolean(view?.obs_source) || hasSnapshots;
   const images = usePreviewImages({ camera, width, wanted: hasSource, element });
   const crop = view?.crop ?? null;
   const isCrop = view?.capabilities?.kind === "crop";
@@ -105,7 +114,7 @@ export function CameraPreview({
     <div
       ref={element}
       className={`camera-preview${clickToCentre && isCrop ? " camera-preview-clickable" : ""}`}
-      style={{ aspectRatio: String(frameAspect(view, imageAspect)) }}
+      style={{ aspectRatio: String(frameAspect(view, imageAspect, images.shows)) }}
       onClick={onClick}
       data-testid={`preview-${camera}`}
       title={clickToCentre && isCrop ? "Click to centre the window there" : undefined}
