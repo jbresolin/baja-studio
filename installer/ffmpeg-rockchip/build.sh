@@ -28,7 +28,7 @@ export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends \
   build-essential cmake meson ninja-build pkg-config git ca-certificates jq xz-utils \
-  nasm patchelf libdrm-dev libsrt-openssl-dev libzmq3-dev libx264-dev
+  nasm patchelf libdrm-dev libsrt-openssl-dev libssl-dev libzmq3-dev libx264-dev
 
 pinned() { jq -r "$1" "$pin"; }
 
@@ -62,12 +62,15 @@ for patch in $(pinned '.ffmpeg.patches[]'); do
 done
 (
   cd "$work/ffmpeg"
+  # SRT's pkg-config file needs OpenSSL's (libssl-dev); on a failure, show why.
+  trap 'tail -n 40 ffbuild/config.log' ERR
   PKG_CONFIG_PATH="$prefix/lib/pkgconfig" ./configure \
     --prefix="$prefix" \
     --enable-gpl --enable-version3 \
     --enable-libdrm --enable-rkmpp --enable-rkrga \
     --enable-libzmq --enable-libsrt --enable-libx264 \
     --disable-doc --disable-ffplay --disable-debug
+  trap - ERR
   make -j "$jobs"
   make install
 )
