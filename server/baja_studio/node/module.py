@@ -47,6 +47,7 @@ from baja_studio.node.cameras import NodeCameras
 from baja_studio.node.image_controls import NodeImageControls
 from baja_studio.node.parts import NodeParts
 from baja_studio.node.settings import LOCAL_OBS_HOST, NodeSettings, VideoMode
+from baja_studio.node.tray_status import tray_status_router
 
 APPLY_WORKER, PUSH_WORKER, SYSTEM_WORKER = "apply", "push", "system"
 # The apply worker also looks again this often, in case a wake was missed.
@@ -145,6 +146,10 @@ class NodeModule(Module):
             WorkerSpec(PUSH_WORKER, self._run_push),
             WorkerSpec(SYSTEM_WORKER, self._run_system),
         ]
+
+    def routes(self) -> APIRouter:
+        """Under /api/node: the tray icon's status (`tray_status.py`), from this laptop only."""
+        return tray_status_router(self)
 
     def root_routes(self) -> APIRouter:
         """The agent contract, at the root (its paths are fixed by its clients)."""
