@@ -18,7 +18,8 @@ State (`state.feeds`):
 - `addresses[]`: the LAN addresses the sender URLs use
 - `recordings`: {folder, free_bytes, any_feed_records}
 
-Commands: `apply`, `obs_scenes`, `add_to_obs {feed, scene}`. Feeds are
+Commands: `apply`, `obs_scenes`, `add_to_obs {feed, scene, source}` (`source`
+`media`, the default, or `browser` for WebRTC). Feeds are
 edited through the settings (Feeds page), never by command, so a password
 never reaches the command log. Readiness checks: `readiness.py`.
 """
@@ -46,11 +47,16 @@ from baja_studio.modules.feeds.mediamtx_config import (
     recordings_root,
     write_default_config,
 )
-from baja_studio.modules.feeds.obs_media_source import add_media_source, obs_scene_names
+from baja_studio.modules.feeds.obs_media_source import (
+    DEFAULT_PICTURE_SIZE,
+    add_browser_source,
+    add_media_source,
+    obs_scene_names,
+)
 from baja_studio.modules.feeds.publisher import FeedsStatePublisher
 from baja_studio.modules.feeds.readiness import feeds_checks
 from baja_studio.modules.feeds.system import FeedsSystem
-from baja_studio.modules.feeds.urls import obs_read_url
+from baja_studio.modules.feeds.urls import obs_browser_url, obs_read_url
 
 __all__ = ["FeedsModule", "FeedsSystem"]
 
@@ -58,6 +64,9 @@ MEDIAMTX_WORKER = "mediamtx"
 POLL_SECONDS = 2.0
 # A refused config (a port taken) is tried again this often, and at every settings change.
 CONFIG_RETRY_SECONDS = 30.0
+# What `add_to_obs` creates: OBS's Media Source over RTSP, or a Browser Source over WebRTC.
+MEDIA_SOURCE = "media"
+BROWSER_SOURCE = "browser"
 
 
 class FeedsModule(Module):
@@ -132,7 +141,7 @@ class FeedsModule(Module):
         return [WorkerSpec(MEDIAMTX_WORKER, self._run_watcher, starts_offline=True)]
 
     def handle_command(self, command: str, args: dict[str, Any], source: str) -> Any:
-        """`apply` (write the config now), `obs_scenes`, `add_to_obs {feed, scene}`."""
+        """`apply` (write the config now), `obs_scenes`, `add_to_obs {feed, scene, source}`."""
         if command == "apply":
             self._retry_apply_at = None
             self._apply_requested.set()
@@ -245,11 +254,38 @@ class FeedsModule(Module):
         scene = str(args.get("scene", "")).strip()
         if not scene:
             raise CommandError("pick the OBS scene the source goes into")
-        result = add_media_source(
-            self._obs, scene, feed.obs_source_name, obs_read_url(feed.name, settings)
+        source = str(args.get("source", MEDIA_SOURCE)).strip() or MEDIA_SOURCE
+        if source == MEDIA_SOURCE:
+            result = add_media_source(
+                self._obs, scene, feed.obs_source_name, obs_read_url(feed.name, settings)
+            )
+        elif source == BROWSER_SOURCE:
+            result = add_browser_source(
+                self._obs,
+                scene,
+                feed.obs_source_name,
+                obs_browser_url(feed.name, settings),
+                self._picture_size(feed.name, settings),
+            )
+        else:
+            raise CommandError(f"source must be {MEDIA_SOURCE!r} or {BROWSER_SOURCE!r}")
+        self.context.logger.info(
+            "added feed %s to OBS scene %s as a %s source", feed.name, scene, source
         )
-        self.context.logger.info("added feed %s to OBS scene %s", feed.name, scene)
         return result
+
+    def _picture_size(self, feed_name: str, settings: FeedsSettings) -> tuple[int, int]:
+        """The feed's picture size while it is live (MediaMTX says), else 1920x1080."""
+        client = MediamtxApiClient(f"127.0.0.1:{settings.api_port}", self._system.api_transport)
+        try:
+            paths = client.paths()
+        except MediamtxUnreachableError:
+            return DEFAULT_PICTURE_SIZE
+        for path in paths:
+            video = path.video
+            if path.name == feed_name and video is not None and video.width and video.height:
+                return video.width, video.height
+        return DEFAULT_PICTURE_SIZE
 
     def _settings(self) -> FeedsSettings:
         settings = self.context.current_settings()

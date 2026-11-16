@@ -96,12 +96,37 @@ def test_every_server_the_studio_does_not_use_is_off() -> None:
     # HLS's default port is 8888, the studio's own: it must never be on. The
     # others are off so MediaMTX opens no port nobody needs.
     config = document(FeedsSettings())
-    for server in ("hls", "webrtc", "moq", "playback", "metrics", "pprof"):
+    for server in ("hls", "moq", "playback", "metrics", "pprof"):
         assert config[server] is False, server
     # RTSP over TCP only: no RTP/RTCP UDP ports (8000/8001) are opened.
     assert config["rtspTransports"] == ["tcp"]
     assert config["rtspEncryption"] == "no"
     assert config["rtmpEncryption"] == "no"
+
+
+def test_webrtc_is_on_for_obs_browser_sources_and_only_this_pc_can_ask_for_a_stream() -> None:
+    # WebRTC is what an OBS Browser Source reads with the least delay. Its
+    # page and its "signalling" (the HTTP request that starts a stream) only
+    # answer on 127.0.0.1, so only programs on this PC can start one.
+    config = document(FeedsSettings())
+    assert config["webrtc"] is True
+    assert config["webrtcAddress"] == "127.0.0.1:8889"
+    # The browser's page comes from that same address; no other web page may call in.
+    assert config["webrtcAllowOrigins"] == ["http://127.0.0.1:8889"]
+    # The picture itself goes over UDP. The browser connects to this PC's own
+    # addresses (or 127.0.0.1), never through a server on the internet: no
+    # STUN or TURN servers, no TCP fallback.
+    assert config["webrtcLocalUDPAddress"] == ":8189"
+    assert config["webrtcLocalTCPAddress"] == ""
+    assert config["webrtcIPsFromInterfaces"] is True
+    assert config["webrtcAdditionalHosts"] == ["127.0.0.1"]
+    assert config["webrtcICEServers2"] == []
+
+
+def test_the_webrtc_ports_come_from_the_settings() -> None:
+    config = document(FeedsSettings(webrtc_port=2004, webrtc_media_port=2005))
+    assert config["webrtcAddress"] == "127.0.0.1:2004"
+    assert config["webrtcLocalUDPAddress"] == ":2005"
 
 
 def test_the_ports_come_from_the_settings_and_the_api_stays_on_loopback() -> None:

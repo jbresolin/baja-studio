@@ -13,7 +13,13 @@ YAML-only.
 What the config always does, whatever the settings say:
 
 - turns off every server the studio does not use: HLS (its default port is
-  8888, the studio's!), WebRTC, MoQ, playback, metrics, pprof;
+  8888, the studio's!), MoQ, playback, metrics, pprof;
+- WebRTC, for OBS Browser Sources (`add_to_obs` with `source: browser`): its
+  page and signalling on 127.0.0.1 only, so only this PC can ask for a
+  stream; the media on a UDP port of every address, because the browser
+  connects to this PC's own address, and with no firewall rule for it (the
+  installer opens none) no other PC reaches it. No STUN or TURN server:
+  nothing leaves the PC;
 - RTSP over TCP only, so MediaMTX opens no RTP/RTCP UDP ports, and on
   127.0.0.1 unless the settings open it to the LAN;
 - the control API on 127.0.0.1 only;
@@ -112,7 +118,17 @@ def _document_without_fingerprint(
         "pprof": False,
         "playback": False,
         "hls": False,
-        "webrtc": False,
+        "webrtc": True,
+        "webrtcAddress": f"{LOOPBACK}:{settings.webrtc_port}",
+        "webrtcEncryption": False,
+        # The player page is served from the same address, so no other origin needs in.
+        "webrtcAllowOrigins": [f"http://{LOOPBACK}:{settings.webrtc_port}"],
+        "webrtcLocalUDPAddress": f":{settings.webrtc_media_port}",
+        "webrtcLocalTCPAddress": "",
+        # Offer this PC's own addresses (and 127.0.0.1), never a public one.
+        "webrtcIPsFromInterfaces": True,
+        "webrtcAdditionalHosts": [LOOPBACK],
+        "webrtcICEServers2": [],
         "moq": False,
         "rtsp": True,
         "rtspTransports": ["tcp"],

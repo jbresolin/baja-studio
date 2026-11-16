@@ -54,6 +54,8 @@ def feed_ports(settings: FeedsSettings) -> list[FeedPort]:
         FeedPort("UDP", settings.srt_port, "SRT", "srt_port"),
         FeedPort("TCP", settings.rtsp_port, "RTSP", "rtsp_port"),
         FeedPort("TCP", settings.api_port, "control API", "api_port"),
+        FeedPort("TCP", settings.webrtc_port, "WebRTC", "webrtc_port"),
+        FeedPort("UDP", settings.webrtc_media_port, "WebRTC media", "webrtc_media_port"),
     ]
 
 

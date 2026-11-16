@@ -231,10 +231,34 @@ describe("Feeds page", () => {
     await user.click(within(card).getByRole("button", { name: 'Add "Drone"' }));
     expect(answerLast(server, { source: "Drone" })).toMatchObject({
       command: "add_to_obs",
-      args: { feed: "drone", scene: "Remote" },
+      // A Media Source unless the operator picks otherwise.
+      args: { feed: "drone", scene: "Remote", source: "media" },
     });
     expect(
       await within(card).findByText(/Added "Drone" to the scene "Remote"/),
+    ).toBeInTheDocument();
+  });
+
+  it("adds a feed as a WebRTC browser source, named so it can sit next to the media source", async () => {
+    const user = userEvent.setup();
+    const server = showFeedsPage(feedsState());
+    const card = screen.getByTestId("feed-drone");
+
+    await user.click(within(card).getByRole("button", { name: "Add to OBS" }));
+    answerLast(server, { scenes: ["Main"] });
+
+    // The operator picks the lowest-delay kind; the button names the new source.
+    await user.selectOptions(
+      await within(card).findByLabelText("OBS source type for drone"),
+      "browser",
+    );
+    await user.click(within(card).getByRole("button", { name: 'Add "Drone (WebRTC)"' }));
+    expect(answerLast(server, { source: "Drone (WebRTC)" })).toMatchObject({
+      command: "add_to_obs",
+      args: { feed: "drone", scene: "Main", source: "browser" },
+    });
+    expect(
+      await within(card).findByText(/Added "Drone \(WebRTC\)" to the scene "Main"/),
     ).toBeInTheDocument();
   });
 

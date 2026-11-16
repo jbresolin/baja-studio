@@ -106,8 +106,10 @@ laptop benchmark ("Video pipeline (node mode)" below).
 
 14. The **token**, each **output URL** (a Feeds URL carries the feed's publish
     password) and the **OBS password** are `secret` settings: masked in the
-    API, left out of exports. The page shows an output URL as
-    `srt://host:port?streamid=***` (`node/redact.py`); every reason that came
+    API, left out of exports. The page shows an output URL with only its
+    login hidden, `srt://host:port?streamid=publish:cam1:***&latency=200000`
+    (`node/redact.py`; until 16 Nov every parameter was hidden, which hid
+    the SRT latency too); every reason that came
     from a pipeline or OBS is scrubbed of the URL and its parts; `PipelineSpec`
     keeps `output_url` out of its `repr`. A test checks none of it appears in
     info, health, state, the settings API or the log.
@@ -326,9 +328,11 @@ and on Windows (`tests/rig/test_node_*`).
 1. **One ffmpeg per camera** (`ffmpeg_command.py`):
    `[0:v] split → (zmq → crop@window → null → scale=1920:1080 → setsar=1 →
    format) → encoder → MPEG-TS → output URL` and `(fps=1 → scale=320:-2 →
-   JPEG) → stdout`. DirectShow input: `-f dshow -rtbufsize 32M -video_size
-   WxH -framerate F -vcodec <decoder> -i video=<device>`. Output at constant
-   rate (`-r F -fps_mode cfr`).
+   JPEG) → stdout`. DirectShow input: `-f dshow -rtbufsize <0.25 s of
+   MJPEG> -fflags nobuffer -analyzeduration 0 -video_size WxH -framerate F
+   -vcodec <decoder> [-async_depth 1 for mjpeg_qsv] -i video=<device>`
+   (32 MB and no start-up options until 16 Nov: see "Delay" below). Output
+   at constant rate (`-r F -fps_mode cfr`).
 2. **The window moves through the `zmq` filter, as the brief expected**,
    with the `null` of measurement 2. The crop's options are written so any
    part of a change is a correct window: height `ow*1080/1920` (never
@@ -454,7 +458,7 @@ Unverified on Windows hardware, from the video pipeline (the bench,
 `python -m baja_studio.node.video.bench`, answers each):
 
 - **DirectShow capture** of the S600 at 3840x2160 MJPEG 30 fps: mode
-  negotiation, the 32 MB real-time buffer (drops vs. delay), the
+  negotiation, the real-time buffer (drops vs. delay; see "Delay"), the
   alternative-name device string. The device/mode parsers follow ffmpeg's
   source, not a recorded laptop listing; `bench --raw` prints the real one.
 - **Encoders**: NVENC on the XPS's GTX 1050 Ti, QuickSync (libvpl) on the
@@ -468,3 +472,89 @@ Unverified on Windows hardware, from the video pipeline (the bench,
   encoders work, per camera fps in/out, drops, encoder, bitrate, window
   apply time and move latency, the laptop's CPU for one and two cameras,
   and the two hardware decoders on 20-second passes.
+
+### Delay (16 Nov, first laptop bench)
+
+**What the bench showed.** Camera to ffplay on the streaming PC was about
+0.9 s, and to OBS's Media Source about 1.3 s. That was with SRT latency
+200 ms and QuickSync encoding, while the node showed 30 fps in and out, 0
+dropped, and the window applied in 16 ms. Two more results narrowed it down:
+- SRT latency 80 vs 200 ms made no visible difference;
+- the camera alone in the laptop's OBS was "effectively instant".
+
+So about 0.7–0.8 s sat inside the node's ffmpeg.
+
+**What it was.** While ffmpeg starts, the camera keeps sending:
+- `avformat_find_stream_info` reads frames to look at the stream, and keeps
+  them queued;
+- DirectShow buffers what arrives while the encoder opens.
+
+That backlog is delay. A laptop with headroom eats it down within seconds.
+A laptop that only just manages 30 fps never does, and with no frame dropped
+nothing says so.
+
+**How it was measured.** `glass_to_output.py` was a scratch tool, not kept.
+- **The stand-in camera:** an ffmpeg writing the wall clock's milliseconds
+  into each frame as a 4x4 black and white grid, scaled to 4K and sent as
+  MJPEG over local UDP in real time. Like DirectShow, frames keep arriving
+  whether or not anyone reads them, and wait in the UDP input's FIFO, the
+  `rtbufsize` stand-in.
+- **The node:** the node's own `CameraPipeline`, x264, on that input, with
+  output to local UDP.
+- **The reader:** decodes, averages each cell, reads the time back and
+  compares it with the clock.
+- **The machine:** a 2-core Linux VM, BtbN ffmpeg 8.1.3.
+- **The floor:** the measuring chain alone (camera stand-in straight to the
+  reader) reads 155 ms.
+
+Results, camera to output, median:
+
+- **Before** (32 MB buffer, no start-up options):
+  - 1.8 s for the first frames;
+  - 1.6 s at 2–5 s;
+  - 0.9 s at 5–10 s;
+  - about 255 ms from 10 s on, once this VM had eaten the backlog.
+- **After** (0.25 s buffer, `-fflags nobuffer -analyzeduration 0`):
+  - 0.26 s from the first frames;
+  - 250 ms throughout.
+- **Each change alone:**
+  - only the start-up options: first frames 0.24 s;
+  - only the smaller buffer: first frames 1.9 s.
+
+  So the start-up options remove the backlog. The smaller buffer caps what a
+  later hiccup can add: DirectShow starts dropping (counted) at 62 % full,
+  so about 0.15–0.25 s at most, where 32 MB allowed 1–2 s.
+- **The node's own share** is about 100 ms (250 minus the 155 ms floor),
+  close to the 125 ms move latency measured on 15 Nov.
+- **SRT → MediaMTX → RTSP**, measured with the window-move probe on the
+  synthetic source:
+  - 362 ms (SRT latency 200) and 287 ms (80) with low-delay reading;
+  - 430 ms when the reader does not use `nobuffer`.
+
+**Decisions.**
+- **The real-time buffer is about 0.25 s of MJPEG**
+  (`capture_buffer_bytes`): 0.12 bytes a pixel, the high end of 4K MJPEG
+  frames, at least 4 frames, about 7.5 MB at 4K30.
+- **`-fflags nobuffer -analyzeduration 0`** on the camera input, and on the
+  synthetic input too, so the rig and CI run them with the real ffmpeg.
+  - `-probesize 32` was tried as well. On raw MJPEG it left ffmpeg unable to
+    work out the frame rate, and the pipeline never produced a frame. It is
+    not used: DirectShow gives the size and rate itself, so the default
+    probe size costs only the frames `nobuffer` drops anyway.
+- **QuickSync's MJPEG decoder at `-async_depth 1`** (its default of 4 is 4
+  frames of delay, per its own help). If that costs throughput, it shows as
+  input fps below 30 on the node's page. To bench.
+- **`-muxdelay 0 -muxpreload 0 -flush_packets 1`** on the MPEG-TS output
+  were tried and made no measurable difference with MediaMTX in between
+  (354 vs 362 ms, within noise), so they are not used.
+- **The snapshot branch cannot hold up the live one**: its stdout is read
+  continuously by its own thread (`ffmpeg_process.py`), as the child-process
+  convention requires.
+- **Encoders** were already at their lowest-latency settings: no B-frames,
+  NVENC `-tune ll -zerolatency 1`, QuickSync `-look_ahead 0 -async_depth 1`,
+  x264 `zerolatency`. QuickSync's `-low_delay_brc` exists in 8.1.3 but is
+  not set. It is untried on these iGPUs, and an option the encoder refuses
+  would fail its test encode and lose QuickSync altogether.
+
+**Still to measure on the laptops:** the same stopwatch photo, before and
+after, per camera (bench sheet step 2b).
