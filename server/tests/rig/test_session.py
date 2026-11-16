@@ -194,6 +194,7 @@ def test_no_fake_can_be_reached_from_another_pc(session: RigSession) -> None:
         "agent1": (ports.agents[0], None),
         "agent2": (ports.agents[1], None),
         "orchestrator": (ports.orchestrator, None),
+        "laptop-obs": (ports.laptop_obs, None),
     }
     assert set(listening) == set(session.fakes)
 
@@ -216,4 +217,6 @@ def test_stopping_the_rig_leaves_no_child_running(tmp_path: Path) -> None:
 
     assert not any(process.running for process in processes)
     # Their ports are free again: nothing answers on any of them.
-    assert not any(fakes.tcp_answers(port) for port in (rig.ports.obs, *rig.ports.agents))
+    assert not any(
+        fakes.tcp_answers(port) for port in (rig.ports.obs, rig.ports.laptop_obs, *rig.ports.agents)
+    )

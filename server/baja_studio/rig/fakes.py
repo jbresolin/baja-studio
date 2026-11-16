@@ -32,6 +32,10 @@ OBS_PASSWORD = "rig-obs-password"
 # A 4K webcam input in the fake OBS, with its Crop/Pad filter: the rig's OBS crop camera.
 OBS_WEBCAM = "Rig webcam 4K"
 OBS_CROP_FILTER = "Baja crop"
+# A trackside laptop's OBS (WP13, ADR 0021): a second fake OBS with two 4K webcams,
+# each with its Crop/Pad filter, driven by the studio's remote crop cameras.
+LAPTOP_OBS_PASSWORD = "rig-laptop-obs-password"
+LAPTOP_WEBCAMS = ("Laptop webcam A", "Laptop webcam B")
 AGENT_TOKEN = "rig-agent-token"
 ORCHESTRATOR_TOKEN = "rig-orchestrator-token"
 XR18_NAME = "XR18-RIG"
@@ -56,6 +60,7 @@ class FakePorts:
     cameras: tuple[int, int]
     agents: tuple[int, int]
     orchestrator: int
+    laptop_obs: int
 
     @classmethod
     def pick(cls) -> "FakePorts":
@@ -66,6 +71,7 @@ class FakePorts:
             cameras=(free_udp_port(), free_udp_port()),
             agents=(free_tcp_port(), free_tcp_port()),
             orchestrator=free_tcp_port(),
+            laptop_obs=free_tcp_port(),
         )
 
 
@@ -121,6 +127,18 @@ def build_fakes(
         obs_arguments,
         f"ws://{LOOPBACK}:{ports.obs} (password {OBS_PASSWORD}, {timing})",
         lambda: tcp_answers(ports.obs),
+    )
+    laptop_arguments = ["--host", LOOPBACK, "--port", str(ports.laptop_obs)]
+    laptop_arguments += ["--password", LAPTOP_OBS_PASSWORD, "--crop-filter", OBS_CROP_FILTER]
+    for webcam in LAPTOP_WEBCAMS:
+        laptop_arguments += ["--video-source", f"{webcam}=3840x2160"]
+    add(
+        "laptop-obs",
+        "fake_obs",
+        laptop_arguments,
+        f"ws://{LOOPBACK}:{ports.laptop_obs} (a trackside laptop's OBS, password "
+        f"{LAPTOP_OBS_PASSWORD}, two 4K webcams)",
+        lambda: tcp_answers(ports.laptop_obs),
     )
     add(
         "xr18",

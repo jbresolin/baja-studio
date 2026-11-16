@@ -1,8 +1,9 @@
 /**
- * The part of the camera form for an `obs_crop` camera (WP6b brief §3): the
- * OBS source (picked from OBS's inputs while OBS is connected, typed
- * otherwise), the filter's name, the window's limits and speeds, and, once
- * the camera is saved, "Create filter", "Reset crop" and a live preview.
+ * The part of the camera form for an `obs_crop` camera (WP6b brief §3): which
+ * OBS (this PC's or a laptop's, WP13: ObsConnectionFields.tsx), the OBS
+ * source (picked from that OBS's inputs while it answers, typed otherwise),
+ * the filter's name, the window's limits and speeds, and, once the camera is
+ * saved, "Create filter", "Reset crop" and a live preview.
  *
  * Creating the Crop/Pad filter is always this button: the studio never adds
  * or changes a filter in OBS by itself (ADR 0020).
@@ -10,9 +11,10 @@
 
 import { useEffect, useState } from "react";
 
-import type { CameraConfig, CropSettings } from "../../lib/cameras";
+import type { CameraConfig, CropSettings, ObsConnection } from "../../lib/cameras";
 import { CameraPreview } from "../cameras/CameraPreview";
 import { CheckField, NumberField, SelectField, TextField } from "./fields";
+import { ObsConnectionFields, type ObsTestResult } from "./ObsConnectionFields";
 
 export interface ObsSourceList {
   connected: boolean;
@@ -26,7 +28,12 @@ interface ObsCropFieldsProps {
   errors: Record<string, string>;
   /** True once the camera is saved and running (it can then be tested). */
   saved: boolean;
-  listSources: () => Promise<ObsSourceList>;
+  /** The inputs of the OBS the form names (`list_obs_sources`). */
+  listSources: (obs: ObsConnection) => Promise<ObsSourceList>;
+  /** `test_obs_connection` for the OBS the form names. */
+  testConnection: (obs: ObsConnection) => Promise<ObsTestResult>;
+  /** What the studio says about the saved camera's OBS connection, if anything. */
+  connectionNote?: string;
   run: (command: string, args: Record<string, unknown>) => void;
 }
 
@@ -36,21 +43,34 @@ export function ObsCropFields({
   errors,
   saved,
   listSources,
+  testConnection,
+  connectionNote,
   run,
 }: ObsCropFieldsProps) {
-  const [sources, setSources] = useState<ObsSourceList | null>(null);
+  // The last list, with the OBS it came from (an old one is not shown for another OBS).
+  const [listed, setListed] = useState<{ remote: boolean; list: ObsSourceList | null }>({
+    remote: false,
+    list: null,
+  });
+  // Bumped to ask the chosen OBS for its inputs again (after a successful test).
+  const [listing, setListing] = useState(0);
   const crop = draft.crop;
   const setCrop = (change: Partial<CropSettings>) => onChange({ crop: { ...crop, ...change } });
+  const remote = crop.obs.remote;
+  const sources = listed.remote === remote ? listed.list : null;
 
+  // The inputs are asked for when the form opens, when "this PC / remote" changes
+  // and after Test connection succeeded; not on every keystroke in the address.
   useEffect(() => {
     let current = true;
-    listSources()
-      .then((list) => current && setSources(list))
-      .catch(() => current && setSources(null));
+    listSources(crop.obs)
+      .then((list) => current && setListed({ remote, list }))
+      .catch(() => current && setListed({ remote, list: null }));
     return () => {
       current = false;
     };
-  }, [listSources]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- see the comment above
+  }, [listSources, remote, listing]);
 
   const sourceHelp = sources?.connected
     ? "The OBS input with the 4K camera; its Crop/Pad filter is moved."
@@ -59,6 +79,14 @@ export function ObsCropFields({
   return (
     <>
       <h3>OBS crop</h3>
+      <ObsConnectionFields
+        value={crop.obs}
+        onChange={(obs) => setCrop({ obs })}
+        errors={errors}
+        test={testConnection}
+        onConnected={() => setListing((count) => count + 1)}
+        note={connectionNote}
+      />
       <div className="form-grid">
         {sources?.connected ? (
           <SelectField

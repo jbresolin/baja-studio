@@ -33,7 +33,16 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from baja_studio.core.clock import Clock
 
 Action = Literal["console", "switch", "stop", "start", "lossy"]
-FAKE_NAMES = ("obs", "xr18", "camera1", "camera2", "agent1", "agent2", "orchestrator")
+FAKE_NAMES = (
+    "obs",
+    "xr18",
+    "camera1",
+    "camera2",
+    "agent1",
+    "agent2",
+    "orchestrator",
+    "laptop-obs",
+)
 DEFAULT_SCENARIO = "calm"
 DEFAULT_LOSSY_SLOT_SECONDS = 0.5
 

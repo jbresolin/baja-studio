@@ -6,7 +6,7 @@
 
 import { useState } from "react";
 
-import type { CameraConfig, CamerasState } from "../../lib/cameras";
+import { obsLocation, type CameraConfig, type CamerasState } from "../../lib/cameras";
 import { HealthBadge } from "../HealthBadge";
 
 interface CameraTableProps {
@@ -71,7 +71,7 @@ export function CameraTable({ cameras, live, onSave, onEdit }: CameraTableProps)
                 {camera.owner === "agent"
                   ? `agent ${camera.address.agent_id}/${camera.address.remote_camera_id}`
                   : camera.driver === "obs_crop"
-                    ? `OBS crop ${camera.obs_source ?? ""}`
+                    ? `OBS crop ${camera.obs_source ?? ""} @ ${obsLocation(camera.crop.obs)}`
                     : `${camera.address.host}:${camera.address.port}`}
                 {camera.controller_address !== null && ` · addr ${camera.controller_address}`}
               </td>

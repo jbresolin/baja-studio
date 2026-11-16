@@ -5,8 +5,9 @@ motor-free moves. The filter (not a scene item's transform) is moved so that
 projector windows, which show sources with their filters, show the crop too.
 
 The arbiter's calls only record what is wanted and wake the worker
-(`camera:<id>:obs`). The worker, through playout's OBS connection
-(`obs_gateway.py`):
+(`camera:<id>:obs`). The worker, through its OBS's connection
+(`obs_gateway.py`: playout's, or a remote OBS's from the cameras module's
+pool, ADR 0021):
 
 1. reads the filter (`obs_crop_sync.read_filter`) when it starts, after OBS
    comes back, and when OBS says the filter or source changed, and takes the
@@ -22,7 +23,8 @@ The arbiter's calls only record what is wanted and wake the worker
 
 Echoes of its own writes are told from edits made in OBS by `obs_crop_edits.py`.
 
-Health: OBS away is `offline` with playout's reason; a missing source is
+Health: OBS away is `offline` with its connection's reason (a remote OBS
+that refused the password: `degraded`); a missing source is
 `offline`; a missing, wrong-kind or disabled filter, or another filter that
 changes the size, is `degraded`, with what to do. Filters are never created
 or changed except by moving the crop (Camera setup's "Create filter" is an
@@ -171,7 +173,8 @@ class ObsCropDriver(CameraDriver):
         client, link = self._gateway.client(), self._gateway.link()
         pause = IDLE_SECONDS
         if client is None or not link.connected:
-            session.unavailable(Status.OFFLINE, f"OBS offline: {link.reason}", lost=True)
+            # offline, or degraded when a remote OBS refused the password (ADR 0021).
+            session.unavailable(link.status, link.problem, lost=True)
         else:
             while self._inbox:
                 kind, data = self._inbox.popleft()
@@ -181,9 +184,9 @@ class ObsCropDriver(CameraDriver):
             except CropUnavailableError as unavailable:
                 session.unavailable(unavailable.status, str(unavailable))
             except (ObsNotConnectedError, ObsRequestTimeoutError) as error:
-                session.unavailable(Status.OFFLINE, f"OBS offline: {error}", lost=True)
+                session.unavailable(Status.OFFLINE, link.lost(error), lost=True)
             except ObsError as error:
-                session.unavailable(Status.DEGRADED, f"OBS: {error}")
+                session.unavailable(Status.DEGRADED, link.refused(error))
         self._publish(config, now)
         return pause
 

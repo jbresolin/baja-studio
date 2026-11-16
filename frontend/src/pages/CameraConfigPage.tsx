@@ -16,6 +16,7 @@ import { CameraTable, RemoveButton } from "../components/config/CameraTable";
 import { ControllerForm, type SerialPortChoice } from "../components/config/ControllerForm";
 import { FrameMonitor } from "../components/config/FrameMonitor";
 import { MotionForm } from "../components/config/MotionForm";
+import type { ObsTestResult } from "../components/config/ObsConnectionFields";
 import type { ObsSourceList } from "../components/config/ObsCropFields";
 import { PresetTable } from "../components/config/PresetTable";
 import { HealthBadge } from "../components/HealthBadge";
@@ -27,6 +28,7 @@ import {
   type CameraConfig,
   type CamerasState,
   type ControllerConfig,
+  type ObsConnection,
 } from "../lib/cameras";
 import { useModuleState, useSendCommand } from "../lib/stateHooks";
 import { errorsUnder, useCamerasSettings } from "../lib/useCamerasSettings";
@@ -58,8 +60,21 @@ export function CameraConfigPage() {
     [sendCommand, settings],
   );
 
+  // This PC's OBS is asked as before (no arguments); a remote OBS with the form's
+  // address and password (WP13). Neither command is kept in the command log.
   const listObsSources = useCallback(
-    async () => (await sendCommand("cameras", "list_obs_sources")) as ObsSourceList,
+    async (obs: ObsConnection, camera: string) =>
+      (await sendCommand(
+        "cameras",
+        "list_obs_sources",
+        obs.remote ? { obs, camera } : {},
+      )) as ObsSourceList,
+    [sendCommand],
+  );
+
+  const testObsConnection = useCallback(
+    async (obs: ObsConnection, camera: string) =>
+      (await sendCommand("cameras", "test_obs_connection", { obs, camera })) as ObsTestResult,
     [sendCommand],
   );
 
@@ -180,6 +195,12 @@ export function CameraConfigPage() {
           onCancel={() => setEditing(null)}
           run={(command, args) => void run(command, args)}
           listObsSources={listObsSources}
+          testObsConnection={testObsConnection}
+          obsConnectionNote={
+            editingCamera === "new"
+              ? undefined
+              : live?.cameras[cameras[editingCamera]!.id]?.obs?.note || undefined
+          }
           listUsbDevices={listUsbDevices}
         />
       )}
