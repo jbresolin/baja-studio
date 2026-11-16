@@ -114,6 +114,13 @@ reading its tests.
   plain logger, pass `extra={"studio_module": name}` — `module` is reserved
   by Python's `LogRecord`.
 
+- **A second program from the same package** (the camera node, ADR 0023) is
+  the studio's `create_app` with its own module list, never a fork of
+  `core/`: settings, secrets, supervisor, logging and the core API come with
+  it. Code both programs need is moved to a shared place (the crop motion to
+  `cameras/crop_motion.py`, the agent server pieces to `agents/server.py`),
+  keeping the studio's behaviour and tests as they were.
+
 ## Adapters
 
 - Adapters are shared, modules own policy. A client for an external system
@@ -320,6 +327,14 @@ reading its tests.
   generated config files name the variable (`{env.CLOUDFLARE_API_TOKEN}`).
   Secrets are never logged, never in state, never in a command result, and
   never in an error message (NSSM errors name the verb and service only).
+- **A secret inside a URL** (a Feeds URL carries a publish password) is a
+  secret setting like a password: the page shows the URL redacted
+  (`node/redact.py`: scheme, host, port, parameter names only), every reason
+  that came from a library is scrubbed of it before it reaches state, the API
+  or the log, and dataclasses carrying it keep it out of their `repr`.
+- **A program's own page protected by a token** takes it as a header on
+  HTTP and as `?token=` on its WebSocket (browsers cannot set WebSocket
+  headers), kept in the tab's sessionStorage, never in the page's address.
 - **A password a program only checks is given as a hash.** MediaMTX checks
   feed publish passwords; its config gets a salted argon2id hash
   (`argon2:...`), never the password, and the hash is the same at every write
