@@ -8,7 +8,7 @@ Each `step`:
    wrote, so connecting never moves the picture;
 2. measures the source when its size may have changed (`obs_crop_size.py`);
    motion waits while the size is not known or not confirmed;
-3. applies the pending jump and the held velocity (`obs_crop_motion.py`),
+3. applies the pending jump and the held velocity (`cameras/crop_motion.py`),
    and sends `SetSourceFilterSettings` only when the pixel edges changed.
    Settings edits (a narrower `min_window`, another aspect) apply at the next
    move, never by themselves; only a new source size re-expresses the crop.
@@ -22,15 +22,13 @@ from typing import Any
 from baja_studio.adapters.obs_requests import ObsRequestsMixin
 from baja_studio.agents.contract import Status
 from baja_studio.cameras.config import CameraConfig
+from baja_studio.cameras.crop_motion import CropCommands, next_window
 from baja_studio.cameras.crop_window import (
     CropFrame,
-    CropSpeeds,
     CropWindow,
     PixelCrop,
-    WindowTarget,
 )
 from baja_studio.cameras.drivers.obs_crop_edits import EditWatch
-from baja_studio.cameras.drivers.obs_crop_motion import CropCommands
 from baja_studio.cameras.drivers.obs_crop_size import Measured, SourceSize
 from baja_studio.cameras.drivers.obs_crop_sync import (
     CropUnavailableError,
@@ -202,28 +200,10 @@ class CropSession:
         """The window after this step's jump and motion, or None if nothing moved it."""
         assert self.window is not None
         jump, step = self._commands.take(now)
-        window = self.window
-        if isinstance(jump, WindowTarget):
-            if jump.whole:
-                window = frame.whole()
-            else:
-                window = frame.centred_on(window, jump.centre_x, jump.centre_y)
-        elif jump is not None:
-            stored = config.crop.window(jump)
-            if stored is None:
-                self.last_error = f"preset {jump + 1} is not stored"
-                jump = None
-            else:
-                window = CropWindow(stored.centre_x, stored.centre_y, stored.width)
-        if step.seconds > 0:
-            crop = config.crop
-            speeds = CropSpeeds(crop.pan_speed, crop.tilt_speed, crop.zoom_speed)
-            window = frame.drive(
-                window, step.velocity, step.seconds, speeds, crop.speed_follows_zoom
-            )
-        if jump is None and step.seconds <= 0:
-            return None
-        return frame.clamp(window)
+        window, error = next_window(frame, self.window, jump, step, config.crop)
+        if error:
+            self.last_error = error
+        return window
 
 
 def _resolution(settings: object) -> tuple[int, int] | None:

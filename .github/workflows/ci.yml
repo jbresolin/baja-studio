@@ -25,11 +25,22 @@ jobs:
           ruff check .
           ruff format --check .
       - name: Type-check (mypy --strict)
+        # Twice, so the Windows-only code is checked on every runner (as for the tray).
         working-directory: server
-        run: mypy
+        run: |
+          mypy
+          mypy --platform win32
       - name: Test (pytest)
         working-directory: server
         run: pytest
+      # The agent conformance suite against an in-process camera node with fake
+      # video (WP15): cam1 in node mode (fake pipeline), cam2 in OBS mode (fake OBS).
+      - name: Conformance of the camera node, node mode
+        working-directory: server
+        run: pytest tests/agent_contract --agent-impl node --agent-camera cam1
+      - name: Conformance of the camera node, OBS mode
+        working-directory: server
+        run: pytest tests/agent_contract --agent-impl node --agent-camera cam2
       # The rehearsal rig's integration tests (ADR 0016): every fake on loopback
       # ports, and playout's readiness wants ffmpeg/ffprobe on PATH.
       - name: Install ffmpeg (rig tests)
@@ -54,6 +65,36 @@ jobs:
           mkdir -p "$RUNNER_TEMP/mediamtx"
           tar xzf "$RUNNER_TEMP/mediamtx.tar.gz" -C "$RUNNER_TEMP/mediamtx"
           echo "BAJA_STUDIO_TEST_MEDIAMTX=$RUNNER_TEMP/mediamtx/mediamtx" >> "$GITHUB_ENV"
+      # The camera node's video tests run the pinned node ffmpeg (WP15, ADR 0023):
+      # on Windows the very build the node installer bundles, on Linux the build
+      # of the same version for Linux. Both are checked against their SHA-256;
+      # tests/rig/test_node_ffmpeg_pin.py then checks the features the node needs.
+      - name: Download the pinned node ffmpeg (camera node video rig tests)
+        shell: bash
+        run: |
+          pin=installer/ffmpeg-node/pin.json
+          field() { python -c "import json,sys; print(json.load(open(sys.argv[1]))[sys.argv[2]])" $pin "$1"; }
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            url=$(field url); sha=$(field sha256); folder=$(field folder_in_zip)
+          else
+            url=$(field linux_url); sha=$(field linux_sha256); folder=$(field linux_folder_in_archive)
+          fi
+          mkdir -p "$RUNNER_TEMP/ffmpeg-node"
+          cd "$RUNNER_TEMP/ffmpeg-node"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            curl -fsSL --retry 5 -o ffmpeg.zip "$url"
+            echo "$sha  ffmpeg.zip" | sha256sum -c -
+            python -m zipfile -e ffmpeg.zip .
+            "$PWD/$folder/bin/ffmpeg.exe" -hide_banner -version | head -1
+            binary="$(cygpath -w "$PWD/$folder/bin/ffmpeg.exe")"
+          else
+            curl -fsSL --retry 5 -o ffmpeg.tar.xz "$url"
+            echo "$sha  ffmpeg.tar.xz" | sha256sum -c -
+            tar xJf ffmpeg.tar.xz
+            binary="$PWD/$folder/bin/ffmpeg"
+            "$binary" -hide_banner -version | head -1
+          fi
+          echo "BAJA_STUDIO_TEST_NODE_FFMPEG=$binary" >> "$GITHUB_ENV"
       - name: Test the rehearsal rig (pytest -m rig)
         working-directory: server
         run: pytest -m rig

@@ -8,6 +8,7 @@ agent → `offline`). Every network call has explicit timeouts (transport.py).
 
 import logging
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
 import httpx2
@@ -15,7 +16,9 @@ from pydantic import TypeAdapter
 
 from baja_studio.agents.contract import (
     CONTRACT_VERSION,
+    DEFAULT_SNAPSHOT_WIDTH,
     DEFAULT_TTL_MS,
+    SNAPSHOT_MEDIA_TYPE,
     STUDIO_ID_HEADER,
     TOKEN_HEADER,
     AgentHealth,
@@ -45,6 +48,37 @@ logger = logging.getLogger(__name__)
 
 _IMAGE_CONTROLS = TypeAdapter(dict[str, ImageControlValue])
 _LOG_ENTRIES = TypeAdapter(list[LogEntry])
+
+
+@dataclass(frozen=True)
+class AgentSnapshot:
+    """A snapshot as an agent sent it: the picture, and what it shows (contract 1.1).
+
+    `shows` is "frame" (the whole source frame, the usual case) or "window"
+    (an agent that can only picture the window, e.g. a camera node in OBS
+    mode without an uncropped preview source); `window` is where the window
+    was then, as fractions (x, y, w, h).
+    """
+
+    content: bytes
+    media_type: str
+    shows: str = "frame"
+    window: tuple[float, float, float, float] | None = None
+
+    @classmethod
+    def from_response(cls, response: httpx2.Response) -> "AgentSnapshot":
+        """Read the picture and its `X-Snapshot-Shows` / `X-Crop-Window` headers."""
+        media_type = response.headers.get("content-type", SNAPSHOT_MEDIA_TYPE).split(";")[0]
+        shows = "window" if response.headers.get("x-snapshot-shows") == "window" else "frame"
+        window = None
+        parts = response.headers.get("x-crop-window", "").split(",")
+        if len(parts) == 4:
+            try:
+                x, y, w, h = (float(part) for part in parts)
+                window = (x, y, w, h)
+            except ValueError:
+                window = None
+        return cls(response.content, media_type, shows, window)
 
 
 class AgentError(Exception):
@@ -231,6 +265,21 @@ class AgentClient:
         body = rect.model_dump()
         return CropRect.model_validate(await self._command(camera_id, "PUT", "/crop", body))
 
+    async def snapshot(self, camera_id: str, width: int = DEFAULT_SNAPSHOT_WIDTH) -> AgentSnapshot:
+        """The camera's picture (contract 1.1; only if it lists `snapshot`).
+
+        Raises `AgentError` (e.g. `no_snapshot` while the agent has no picture yet).
+        """
+        if self._incompatible_reason is None:
+            await self.info()
+        if self._incompatible_reason:
+            raise IncompatibleAgentError(self._incompatible_reason)
+        path = f"/cameras/{camera_id}/snapshot"
+        response = await self._request("GET", path, params={"width": width})
+        if response.is_success:
+            return AgentSnapshot.from_response(response)
+        raise _error_of(response)
+
     async def resync(self, camera_id: str) -> CommandReply:
         """Ask the agent to re-read the device after the studio drove it directly."""
         return CommandReply.model_validate(await self._command(camera_id, "POST", "/resync"))
@@ -249,6 +298,15 @@ class AgentClient:
         self, method: str, path: str, body: Any = None, params: dict[str, Any] | None = None
     ) -> Any:
         """One HTTP request; returns the decoded JSON or raises `AgentError`."""
+        response = await self._request(method, path, body, params)
+        if response.is_success:
+            return response.json()
+        raise _error_of(response)
+
+    async def _request(
+        self, method: str, path: str, body: Any = None, params: dict[str, Any] | None = None
+    ) -> httpx2.Response:
+        """Send one request and note that the agent answered; `AgentUnreachableError` if not."""
         try:
             response = await self._http.request(method, path, json=body, params=params)
         except httpx2.TransportError as error:
@@ -256,10 +314,13 @@ class AgentClient:
                 f"{self.base_url} did not answer {method} {path}: {error!r}"
             ) from error
         self.heard_from_agent()
-        if response.is_success:
-            return response.json()
-        try:
-            error_body = ErrorBody.model_validate(response.json())
-        except ValueError:
-            raise AgentError(response.status_code, "unexpected_answer", response.text) from None
-        raise AgentError(response.status_code, error_body.error, error_body.detail)
+        return response
+
+
+def _error_of(response: httpx2.Response) -> AgentError:
+    """The `AgentError` for an error answer (`{error, detail}`, or whatever else came)."""
+    try:
+        error_body = ErrorBody.model_validate(response.json())
+    except ValueError:
+        return AgentError(response.status_code, "unexpected_answer", response.text)
+    return AgentError(response.status_code, error_body.error, error_body.detail)

@@ -12,6 +12,8 @@ is set up exactly as the rig sets up its own studio, over the same HTTP API.
 """
 
 import socket
+import subprocess
+import sys
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -36,6 +38,9 @@ from tests.core.fake_system_probes import FakeSystemProbes
 from tests.modules.gateway_studio import GatewayFakes
 
 pytestmark = pytest.mark.rig
+
+# server/, where `pytest tests/agent_contract` is run from.
+SERVER_FOLDER = Path(__file__).resolve().parents[2]
 
 # Two short clips are enough to fill a library group and the receiver root.
 SHORT_PLAN = (
@@ -63,12 +68,12 @@ def session(tmp_path: Path) -> Iterator[RigSession]:
 
 
 @pytest.fixture
-def studio(
+def studio_client(
     session: RigSession,
     tmp_path: Path,
     gateway_fakes: GatewayFakes,
     monkeypatch: pytest.MonkeyPatch,
-) -> Iterator[StudioApi]:
+) -> Iterator[TestClient]:
     """A real studio (real clock, real network clients) with the fake PC probes."""
     # The studio's MIDI child picks the fake M-VAVE from its environment, as the rig sets it.
     for name, value in fakes.STUDIO_ENVIRONMENT.items():
@@ -90,10 +95,18 @@ def studio(
         module_list_builder=modules,
     )
     with TestClient(app) as client:
-        yield StudioApi(client)
+        yield client
 
 
-def test_the_studio_set_up_by_the_rig_is_all_green(session: RigSession, studio: StudioApi) -> None:
+@pytest.fixture
+def studio(studio_client: TestClient) -> StudioApi:
+    """The rig's setup steps, on that studio."""
+    return StudioApi(studio_client)
+
+
+def test_the_studio_set_up_by_the_rig_is_all_green(
+    session: RigSession, studio: StudioApi, studio_client: TestClient
+) -> None:
     # Set the studio up as the rig does: import the bundle, restore the audio
     # defaults, choose the return scene.
     results = studio.import_bundle(session.layout.bundle.read_bytes())
@@ -120,6 +133,13 @@ def test_the_studio_set_up_by_the_rig_is_all_green(session: RigSession, studio: 
             break
         time.sleep(1.0)
     assert problems == []
+    # The laptop camera node's cameras (WP15) are agent crop cameras (green above)
+    # whose previews are the node's own snapshots of the whole frame.
+    for number in (1, 2):
+        preview = studio_client.get(f"/api/cameras/preview/rig-node-cam{number}")
+        assert preview.status_code == 200, preview.text
+        assert preview.headers["x-preview-shows"] == "full"
+        assert preview.content.startswith(b"\xff\xd8")
 
 
 def test_a_compressed_flaky_agent_flips_the_fakes_switches_and_back(session: RigSession) -> None:
@@ -141,6 +161,35 @@ def test_a_compressed_flaky_agent_flips_the_fakes_switches_and_back(session: Rig
         "state_frozen": False,
         "delay_ms": 0,
     }
+
+
+def test_the_laptop_camera_node_passes_the_conformance_suite_over_loopback(
+    session: RigSession, tmp_path: Path
+) -> None:
+    # The node runs as its own process, as on a laptop, and the agent
+    # conformance suite checks it over a real socket, black-box: the same
+    # command João runs against a real node (`--agent-url`).
+    url = f"http://{LOOPBACK}:{session.ports.node}"
+    command = [
+        sys.executable,
+        "-m",
+        "pytest",
+        "-q",
+        "-p",
+        "no:cacheprovider",
+        "tests/agent_contract",
+        "--agent-url",
+        url,
+        "--agent-token",
+        fakes.AGENT_TOKEN,
+    ]
+
+    finished = subprocess.run(
+        command, cwd=SERVER_FOLDER, capture_output=True, text=True, timeout=300, check=False
+    )
+
+    assert finished.returncode == 0, finished.stdout[-4000:] + finished.stderr[-2000:]
+    assert " passed" in finished.stdout
 
 
 def this_pcs_network_address() -> str | None:
@@ -198,6 +247,7 @@ def test_no_fake_can_be_reached_from_another_pc(session: RigSession) -> None:
         "orchestrator": (ports.orchestrator, None),
         "laptop-obs": (ports.laptop_obs, None),
         "mediamtx": (ports.mediamtx_api, None),
+        "node": (ports.node, None),
     }
     assert set(listening) == set(session.fakes)
 

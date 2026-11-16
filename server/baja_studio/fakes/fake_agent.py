@@ -1,4 +1,4 @@
-"""A complete fake camera-laptop agent, speaking contract 1.0 (docs/agent-api.md).
+"""A complete fake camera-laptop agent, speaking contract 1.1 (docs/agent-api.md).
 
 Run it on the bench, with no laptop or camera:
 
@@ -14,7 +14,6 @@ import argparse
 import asyncio
 import contextlib
 import logging
-from collections import deque
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from typing import Any
@@ -35,6 +34,7 @@ from baja_studio.agents.contract import (
     StateMessage,
     Status,
 )
+from baja_studio.agents.server import AgentCommandLog, StateHub
 from baja_studio.core.clock import Clock, SystemClock
 from baja_studio.fakes.fake_agent_routes import add_fake_agent_routes
 from baja_studio.fakes.simulated_common import CameraCommandError, Moment
@@ -45,11 +45,7 @@ logger = logging.getLogger(__name__)
 # Four pushes a second: twice the contract's minimum, so a slow test machine
 # still comfortably meets it.
 PUSH_INTERVAL_SECONDS = 0.25
-LOG_LENGTH = 500
-SOFTWARE_VERSION = "fake-agent 1.0"
-
-# What a subscriber's queue carries: a message to send, or None for "close now".
-SubscriberQueue = asyncio.Queue[dict[str, Any] | None]
+SOFTWARE_VERSION = "fake-agent 1.1"
 
 
 class FakeAgent:
@@ -86,8 +82,9 @@ class FakeAgent:
         self.silent = False
         self.state_frozen = False
         self.delay_seconds = 0.0
-        self._subscribers: set[SubscriberQueue] = set()
-        self._log: deque[LogEntry] = deque(maxlen=LOG_LENGTH)
+        # The open state WebSockets, and the command log (shared with the camera node).
+        self.hub = StateHub()
+        self._log = AgentCommandLog(lambda: self.now().iso)
         self._started_at = clock.monotonic()
         self._push_task: asyncio.Task[None] | None = None
 
@@ -147,21 +144,13 @@ class FakeAgent:
 
     def log_tail(self, limit: int) -> list[LogEntry]:
         """The newest `limit` command log entries, newest first."""
-        return list(reversed(self._log))[:limit]
+        return self._log.tail(limit)
 
     def record_command(
         self, camera_id: str, source: str, command: str, args: dict[str, Any], result: str
     ) -> None:
         """Add one entry to the agent's own command log."""
-        entry = LogEntry(
-            ts=self.now().iso,
-            module=camera_id,
-            source=source,
-            command=command,
-            args=args,
-            result=result,
-        )
-        self._log.append(entry)
+        self._log.record(camera_id, source, command, args, result)
 
     def state_message(self) -> dict[str, Any]:
         """The state of every camera, as sent on the WebSocket."""
@@ -211,24 +200,12 @@ class FakeAgent:
                 self._broadcast(message.model_dump(mode="json"))
             camera.pending_events.clear()
 
-    def add_subscriber(self) -> SubscriberQueue:
-        """A queue that will receive every message for one new WebSocket."""
-        queue: SubscriberQueue = asyncio.Queue()
-        self._subscribers.add(queue)
-        return queue
-
-    def remove_subscriber(self, queue: SubscriberQueue) -> None:
-        """Forget a WebSocket that has closed."""
-        self._subscribers.discard(queue)
-
     def drop_websockets(self) -> None:
         """Failure switch: close every open WebSocket, as if the agent's network blipped."""
-        for queue in list(self._subscribers):
-            queue.put_nowait(None)
+        self.hub.close_all()
 
     def _broadcast(self, message: dict[str, Any]) -> None:
-        for queue in list(self._subscribers):
-            queue.put_nowait(message)
+        self.hub.broadcast(message)
 
     async def _push_state_forever(self) -> None:
         while True:

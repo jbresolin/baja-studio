@@ -1,0 +1,85 @@
+"""What a camera node is made of where it runs: real parts on a laptop, fakes in tests and the rig.
+
+- `pipelines`: makes a camera's video pipeline (`node` mode): the ffmpeg
+  pipeline (`node/video/pipeline.py`) on a laptop, a fake with `--fake-video`
+  (the rig, CI);
+- `capture_devices`: the video capture devices and their modes, for the page
+  (DirectShow through ffmpeg on a laptop);
+- `uvc_child`: starts the UVC child for image controls (`BAJA_STUDIO_UVC_BACKEND=fake`
+  makes the child use its fake library, as on the studio's rig);
+- `obs_transport`: how OBS-mode cameras reach this laptop's OBS (tests pass
+  the fake OBS's in-process network);
+- `ffmpeg_path`: the one resolver for the ffmpeg the pipeline and the device
+  list run: the setting, else the copy the node installer bundles
+  (`<program folder>\\ffmpeg\\ffmpeg.exe`), else PATH (`playout/tools.resolve_tool`,
+  the studio's own resolver).
+"""
+
+from collections.abc import Callable
+from dataclasses import dataclass, field
+
+from baja_studio.adapters.obs_transport import TransportFactory, open_websocket_transport
+from baja_studio.core.childproc import EventCallback
+from baja_studio.core.module import ModuleContext
+from baja_studio.core.system_services import InstallLayout
+from baja_studio.imaging.uvc_link import ChildHost
+from baja_studio.node.settings import NodeSettings
+from baja_studio.node.video import capture_devices as dshow_devices
+from baja_studio.node.video.capture_devices import CaptureDevice, CaptureMode
+from baja_studio.node.video.fake import FakeCaptureDevices, FakePipelines
+from baja_studio.node.video.pipeline import CameraPipeline
+from baja_studio.node.video.pipeline_types import CaptureDevices, PipelineFactory
+from baja_studio.playout.tools import FFMPEG, resolve_tool
+
+UvcChildFactory = Callable[[ModuleContext, str, EventCallback], ChildHost]
+
+
+def real_uvc_child(
+    context: ModuleContext, python_module: str, on_event: EventCallback
+) -> ChildHost:
+    """The UVC child process (duvc-ctl, or its fake library with BAJA_STUDIO_UVC_BACKEND=fake)."""
+    return context.new_child_process(python_module, on_event)
+
+
+def bundled_ffmpeg(settings: NodeSettings) -> str:
+    """The ffmpeg to run: the setting, else the installer's copy, else PATH."""
+    return resolve_tool(FFMPEG, settings.ffmpeg_path, InstallLayout.from_environment()).command
+
+
+@dataclass
+class NodeParts:
+    """Everything the node module is made of, chosen once at startup."""
+
+    pipelines: PipelineFactory
+    capture_devices: CaptureDevices
+    uvc_child: UvcChildFactory = real_uvc_child
+    obs_transport: TransportFactory = open_websocket_transport
+    ffmpeg_path: Callable[[NodeSettings], str] = field(default=bundled_ffmpeg)
+
+
+def fake_parts(
+    pipelines: FakePipelines | None = None, capture_devices: FakeCaptureDevices | None = None
+) -> NodeParts:
+    """Fake video (`--fake-video`: the rig, CI's conformance run): no camera is opened."""
+    return NodeParts(
+        pipelines=pipelines or FakePipelines(),
+        capture_devices=capture_devices or FakeCaptureDevices(),
+        ffmpeg_path=lambda settings: "ffmpeg",
+    )
+
+
+def real_parts() -> NodeParts:
+    """A laptop's parts: the ffmpeg pipeline, and DirectShow's device list."""
+    return NodeParts(pipelines=CameraPipeline, capture_devices=DshowCaptureDevices())
+
+
+class DshowCaptureDevices:
+    """The laptop's cameras and their modes, as ffmpeg lists them (synthetic ones off Windows)."""
+
+    def list_capture_devices(self, ffmpeg_path: str) -> list[CaptureDevice]:
+        """Every video capture device plugged in now."""
+        return dshow_devices.list_capture_devices(ffmpeg_path)
+
+    def capture_modes(self, device: str, ffmpeg_path: str) -> list[CaptureMode]:
+        """The modes `device` offers."""
+        return dshow_devices.capture_modes(device, ffmpeg_path)

@@ -15,7 +15,7 @@ pool, ADR 0021):
    wrote, so connecting never moves the picture;
 2. measures the source's size when it may have changed (`obs_crop_size.py`);
    motion waits while the size is unknown;
-3. integrates the held velocity at `crop.update_hz` (`obs_crop_motion.py`),
+3. integrates the held velocity at `crop.update_hz` (`cameras/crop_motion.py`),
    applies preset recalls and click-to-centre jumps, and sends
    `SetSourceFilterSettings` only when the pixel edges changed. Settings
    edits (a narrower `min_window`, another aspect) apply at the next move,
@@ -42,9 +42,9 @@ from baja_studio.adapters.obs_transport import (
 )
 from baja_studio.agents.contract import CameraKind, Position, Status
 from baja_studio.cameras.config import CameraConfig
+from baja_studio.cameras.crop_motion import CropCommands
 from baja_studio.cameras.crop_window import CropWindow, WindowTarget
 from baja_studio.cameras.driver import CameraDriver, DriverCapabilities, DriverHost, Velocity
-from baja_studio.cameras.drivers.obs_crop_motion import CropCommands
 from baja_studio.cameras.drivers.obs_crop_session import IDLE_SECONDS, CropSession, crop_frame
 from baja_studio.cameras.drivers.obs_crop_state import CropPublisher, crop_state
 from baja_studio.cameras.drivers.obs_crop_sync import CropUnavailableError

@@ -191,7 +191,7 @@ def test_a_disabled_agent_is_listed_but_not_linked(
     run(services, "update", id="laptop-a", enabled=False)
 
     assert status_of(services, "laptop-a") == "disabled"
-    eventually(lambda: runner.run(lambda: len(runner.agent._subscribers)) == 0)
+    eventually(lambda: runner.run(lambda: runner.agent.hub.subscriber_count) == 0)
 
 
 def test_adding_the_same_id_twice_is_refused(services: StudioServices) -> None:

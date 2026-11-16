@@ -133,20 +133,66 @@ class AgentUnderTest:
         chosen = self.token if token is None else token
         return self.open_socket({TOKEN_HEADER: chosen} if chosen else {})
 
+    def chosen(self) -> dict[str, Any] | None:
+        """CameraInfo of the camera `--agent-camera` names, if it names one."""
+        for camera in self.info()["cameras"]:
+            if camera["id"] == self.camera_option:
+                return dict(camera)
+        if self.camera_option is not None:
+            pytest.fail(f"the agent has no camera {self.camera_option!r} (--agent-camera)")
+        return None
+
     def ptz(self) -> dict[str, Any]:
         """CameraInfo of the PTZ under test (`--agent-camera`, else the first PTZ)."""
-        for camera in self.info()["cameras"]:
-            if camera["id"] == self.camera_option or (
-                self.camera_option is None and camera["kind"] == "ptz"
-            ):
-                return dict(camera)
-        pytest.skip("the agent has no PTZ camera to test (or not the one --agent-camera names)")
+        return self.camera_of_kind("ptz")
 
     def camera_of_kind(self, kind: str) -> dict[str, Any]:
+        """The camera `--agent-camera` names if it is of `kind`, else the first of `kind`.
+
+        A test of one kind is skipped when the chosen camera is of another
+        kind, so `--agent-camera crop1` runs the crop and generic checks on
+        crop1 and skips the PTZ-only ones.
+        """
+        chosen = self.chosen()
+        if chosen is not None:
+            if chosen["kind"] == kind:
+                return chosen
+            pytest.skip(f"--agent-camera {chosen['id']} is a {chosen['kind']} camera, not {kind}")
         for camera in self.info()["cameras"]:
             if camera["kind"] == kind:
                 return dict(camera)
         pytest.skip(f"the agent has no {kind} camera")
+
+    def movable(self) -> dict[str, Any]:
+        """A camera that moves, for the checks every moving camera must pass.
+
+        `--agent-camera` if given, else the first PTZ, else the first crop
+        camera (a camera node has only crop cameras).
+        """
+        chosen = self.chosen()
+        if chosen is not None:
+            if chosen["kind"] in ("ptz", "crop"):
+                return chosen
+            pytest.skip(f"--agent-camera {chosen['id']} is a {chosen['kind']} camera")
+        cameras = self.info()["cameras"]
+        for kind in ("ptz", "crop"):
+            for camera in cameras:
+                if camera["kind"] == kind:
+                    return dict(camera)
+        pytest.skip("the agent has no camera that moves")
+
+    def with_capability(self, capability: str, present: bool = True) -> dict[str, Any]:
+        """A camera that lists (or, with `present` False, does not list) a 1.1 capability.
+
+        `--agent-camera` if given and it qualifies, else the first that does.
+        """
+        chosen = self.chosen()
+        candidates = [chosen] if chosen is not None else self.info()["cameras"]
+        for camera in candidates:
+            if (capability in camera.get("capabilities", [])) == present:
+                return dict(camera)
+        what = "lists" if present else "lacks"
+        pytest.skip(f"no camera under test {what} the {capability!r} capability")
 
     def free_preset_number(self, camera: dict[str, Any]) -> int:
         """The highest preset number the camera can store and has not, so real presets survive."""

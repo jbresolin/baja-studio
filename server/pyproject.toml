@@ -24,6 +24,8 @@ dependencies = [
     "python-rtmidi==1.5.8",
     # Feed publish passwords reach MediaMTX as argon2id hashes, never in clear (WP14, ADR 0022).
     "argon2-cffi==25.1.0",
+    # The camera node moves its crop window live through ffmpeg's zmq filter (WP15, ADR 0023).
+    "pyzmq==27.2.0",
     # USB cameras' UVC controls (WP6a): Windows-only, wheels up to Python 3.12; only ever
     # imported inside the UVC child process, by name (it ships no type information).
     "duvc-ctl>=2.1,<3; sys_platform == \"win32\"",
@@ -51,6 +53,8 @@ include = ["baja_studio*"]
 "baja_studio.rig" = ["scenarios/*.json"]
 # The D200 profile's button images (Audio setup → D200, `audio/d200_profile.py`).
 "baja_studio.audio" = ["d200_images/*.png", "d200_images/*.svg"]
+# The fake camera pipeline's snapshot (`node/video/fake.py`).
+"baja_studio.node.video" = ["fake_snapshot.jpg"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

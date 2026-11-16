@@ -49,9 +49,9 @@ def test_health_reports_every_camera(agent: AgentUnderTest) -> None:
 
 
 def test_the_log_lists_our_commands_newest_first_with_our_studio_id(
-    agent: AgentUnderTest, ptz: dict[str, object]
+    agent: AgentUnderTest, movable: dict[str, object]
 ) -> None:
-    agent.http.post(f"/cameras/{ptz['id']}/stop")
+    agent.http.post(f"/cameras/{movable['id']}/stop")
 
     entries = agent.http.get("/agent/log", params={"limit": 1}).json()
 
@@ -86,10 +86,10 @@ def test_errors_are_json_with_a_code_and_a_detail(agent: AgentUnderTest) -> None
 
 
 def test_a_malformed_body_is_a_400_bad_request(
-    agent: AgentUnderTest, ptz: dict[str, object]
+    agent: AgentUnderTest, movable: dict[str, object]
 ) -> None:
     answer = agent.http.post(
-        f"/cameras/{ptz['id']}/move",
+        f"/cameras/{movable['id']}/move",
         content=b"{not json",
         headers={"Content-Type": "application/json"},
     )

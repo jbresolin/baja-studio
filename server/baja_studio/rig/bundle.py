@@ -8,7 +8,8 @@ Settings → Export / import when the rig runs with `--no-studio`. What it sets:
   cameras, cam1 with a fake VISCA camera as its direct fallback, the fake
   USB cameras (two fixed S600s and the Pixy as a `uvc` PTZ), an OBS crop
   camera on the fake OBS's 4K webcam (which has its Crop/Pad filter), and two
-  crop cameras on a trackside laptop's fake OBS (WP13);
+  crop cameras on a trackside laptop's fake OBS (WP13), and the laptop camera
+  node (WP15) as an agent with its two crop cameras;
 - playout: the fake OBS, the fake orchestrator, the delivery folder as the
   receiver root and the "Patrocinadores" folder;
 - audio: the fake XR18, every channel visible that the default link matrix
@@ -118,6 +119,14 @@ def section_values(ports: fakes.FakePorts, clips_folder: Path) -> dict[str, dict
         {"id": agent_id, "host": LOOPBACK, "port": port, "token": fakes.AGENT_TOKEN}
         for agent_id, port in zip(fakes.AGENT_IDS, ports.agents, strict=True)
     ]
+    agents.append(
+        {
+            "id": fakes.NODE_AGENT_ID,
+            "host": LOOPBACK,
+            "port": ports.node,
+            "token": fakes.AGENT_TOKEN,
+        }
+    )
     cameras = []
     for agent_number, agent_id in enumerate(fakes.AGENT_IDS, start=1):
         for camera_number in range(1, fakes.CAMERAS_PER_AGENT + 1):
@@ -136,6 +145,17 @@ def section_values(ports: fakes.FakePorts, clips_folder: Path) -> dict[str, dict
                 }
             cameras.append(camera)
     cameras.extend(usb_cameras())
+    # The laptop camera node's crop cameras (WP15): presets are the studio's stored windows.
+    for number in range(1, fakes.NODE_CAMERAS + 1):
+        cameras.append(
+            {
+                "id": f"rig-node-cam{number}",
+                "label": f"Node webcam {number}",
+                "owner": "agent",
+                "driver": "agent",
+                "address": {"agent_id": fakes.NODE_AGENT_ID, "remote_camera_id": f"cam{number}"},
+            }
+        )
     # A digital PTZ on the fake OBS's 4K webcam (WP6b).
     cameras.append(
         {

@@ -146,14 +146,15 @@ def parse_proc_meminfo(text: str) -> float | None:
 
 def read_system_load(clock: Clock) -> SystemLoad:
     """Sample the CPU twice, half a second apart, and read memory use."""
-    before = _cpu_times()
+    before = read_cpu_times()
     clock.wait(threading.Event(), CPU_SAMPLE_SECONDS)
-    after = _cpu_times()
+    after = read_cpu_times()
     cpu = cpu_busy_percent(before, after) if before and after else None
     return SystemLoad(cpu, _memory_percent())
 
 
-def _cpu_times() -> tuple[int, int] | None:
+def read_cpu_times() -> tuple[int, int] | None:
+    """(idle, total) CPU time counters since boot, all cores; None where unreadable."""
     if sys.platform == "win32":
         idle, kernel, user = (ctypes.c_ulonglong() for _ in range(3))
         if not ctypes.windll.kernel32.GetSystemTimes(

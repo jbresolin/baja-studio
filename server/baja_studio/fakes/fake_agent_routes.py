@@ -2,7 +2,10 @@
 
 Contract routes (docs/agent-api.md) check `X-Agent-Token` when a token is
 set, except `GET /agent/info`, which a subnet scan must be able to read.
-Errors are always `{error, detail}`. The `/_fake` routes never need a token:
+Errors are always `{error, detail}` (the rules shared with the camera node
+live in `agents/server.py`). Crop cameras serve contract 1.1's
+`GET /cameras/{id}/snapshot` (a test card, `blocky_jpeg.py`). The `/_fake`
+routes never need a token:
 
     GET  /_fake                              current switches
     POST /_fake/silence {silent}             stop pushing and answering pings
@@ -14,27 +17,24 @@ Errors are always `{error, detail}`. The `/_fake` routes never need a token:
     POST /_fake/cameras/{id}/tracker {tracker: not_ready|ready|tracking}
 """
 
-import asyncio
-import contextlib
-import json
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Annotated, Any, TypeVar
 
-from fastapi import FastAPI, Path, Query, Request, WebSocket, WebSocketDisconnect
-from fastapi.exceptions import RequestValidationError
-from fastapi.responses import JSONResponse, Response
+from fastapi import FastAPI, Path, Query, Request, WebSocket
+from fastapi.responses import Response
 from pydantic import BaseModel, Field
-from starlette.exceptions import HTTPException as StarletteHTTPException
 
 from baja_studio.agents.contract import (
-    ERROR_HTTP_STATUS,
+    DEFAULT_SNAPSHOT_WIDTH,
+    MAX_SNAPSHOT_WIDTH,
+    MIN_SNAPSHOT_WIDTH,
+    SNAPSHOT_MEDIA_TYPE,
     STUDIO_ID_HEADER,
     TOKEN_HEADER,
     AgentHealth,
     AgentInfo,
     CommandReply,
     CropRect,
-    ErrorCode,
     ImageControlChange,
     ImageControlValue,
     LogEntry,
@@ -45,6 +45,11 @@ from baja_studio.agents.contract import (
     Preset,
     PresetLabelRequest,
 )
+from baja_studio.agents.server import (
+    add_contract_error_handlers,
+    serve_state_socket,
+    token_refusal,
+)
 from baja_studio.fakes.simulated_common import CameraCommandError, FakeTracker
 from baja_studio.fakes.simulated_ptz import SimulatedCamera
 
@@ -53,11 +58,7 @@ if TYPE_CHECKING:
 
 Result = TypeVar("Result")
 PresetNumber = Annotated[int, Path(ge=0, le=255)]
-
-
-def error_response(status_code: int, code: str, detail: str) -> JSONResponse:
-    """The contract's error body."""
-    return JSONResponse({"error": code, "detail": detail}, status_code=status_code)
+SnapshotWidth = Annotated[int, Query(ge=MIN_SNAPSHOT_WIDTH, le=MAX_SNAPSHOT_WIDTH)]
 
 
 class SilenceSwitch(BaseModel):
@@ -82,7 +83,7 @@ class TrackerSwitch(BaseModel):
 
 def add_fake_agent_routes(app: FastAPI, agent: "FakeAgent") -> None:
     """Attach every route, the error handlers and the token/delay middleware to `app`."""
-    _add_error_handlers(app)
+    add_contract_error_handlers(app)
 
     @app.middleware("http")
     async def check_token_and_delay(
@@ -92,13 +93,8 @@ def add_fake_agent_routes(app: FastAPI, agent: "FakeAgent") -> None:
             return await call_next(request)
         if agent.delay_seconds > 0:
             await agent.clock.sleep(agent.delay_seconds)
-        if (
-            agent.token
-            and request.url.path != "/agent/info"
-            and request.headers.get(TOKEN_HEADER) != agent.token
-        ):
-            return error_response(401, ErrorCode.UNAUTHORIZED, f"missing or wrong {TOKEN_HEADER}")
-        return await call_next(request)
+        refusal = token_refusal(request.url.path, request.headers.get(TOKEN_HEADER), agent.token)
+        return refusal if refusal is not None else await call_next(request)
 
     def run_command(
         request: Request,
@@ -135,7 +131,13 @@ def add_fake_agent_routes(app: FastAPI, agent: "FakeAgent") -> None:
 
     @app.websocket("/agent/ws")
     async def state_socket(websocket: WebSocket) -> None:
-        await _serve_state_socket(agent, websocket)
+        await serve_state_socket(
+            websocket,
+            agent.hub,
+            agent.token,
+            greeting=agent.greeting,
+            answers_pings=lambda: not agent.silent,
+        )
 
     # --- per camera --------------------------------------------------------------------
 
@@ -227,6 +229,13 @@ def add_fake_agent_routes(app: FastAPI, agent: "FakeAgent") -> None:
             lambda cam, src: cam.set_crop(agent.now(), body, src),
         )
 
+    @app.get("/cameras/{camera_id}/snapshot")
+    def get_snapshot(camera_id: str, width: SnapshotWidth = DEFAULT_SNAPSHOT_WIDTH) -> Response:
+        picture = agent.camera(camera_id).snapshot(agent.now(), width)
+        return Response(
+            picture, media_type=SNAPSHOT_MEDIA_TYPE, headers={"Cache-Control": "no-store"}
+        )
+
     @app.post("/cameras/{camera_id}/resync")
     def resync(camera_id: str, request: Request) -> CommandReply:
         return run_command(
@@ -279,64 +288,3 @@ def add_fake_agent_routes(app: FastAPI, agent: "FakeAgent") -> None:
         agent.camera(camera_id).set_tracker(body.tracker)
         agent.send_pending_events()
         return {"tracker": body.tracker}
-
-
-def _add_error_handlers(app: FastAPI) -> None:
-    """Every error leaves as `{error, detail}` with the contract's status code."""
-
-    @app.exception_handler(CameraCommandError)
-    async def camera_refused(request: Request, refused: CameraCommandError) -> JSONResponse:
-        return error_response(ERROR_HTTP_STATUS[refused.code], refused.code, refused.detail)
-
-    @app.exception_handler(RequestValidationError)
-    async def bad_body(request: Request, invalid: RequestValidationError) -> JSONResponse:
-        problems = "; ".join(
-            f"{'.'.join(str(part) for part in problem['loc'])}: {problem['msg']}"
-            for problem in invalid.errors()
-        )
-        return error_response(400, ErrorCode.BAD_REQUEST, problems)
-
-    @app.exception_handler(StarletteHTTPException)
-    async def http_error(request: Request, error: StarletteHTTPException) -> JSONResponse:
-        code = "not_found" if error.status_code == 404 else "http_error"
-        return error_response(error.status_code, code, str(error.detail))
-
-
-async def _serve_state_socket(agent: "FakeAgent", websocket: WebSocket) -> None:
-    """One studio's state WebSocket: pushes out, pings in, until either side closes."""
-    if agent.token and websocket.headers.get(TOKEN_HEADER) != agent.token:
-        refusal = error_response(401, ErrorCode.UNAUTHORIZED, f"missing or wrong {TOKEN_HEADER}")
-        try:
-            await websocket.send_denial_response(refusal)
-        except RuntimeError:  # the server cannot send an HTTP answer; refuse plainly
-            await websocket.close(code=4401)
-        return
-    await websocket.accept()
-    queue = agent.add_subscriber()
-    for message in agent.greeting():
-        queue.put_nowait(message)
-
-    async def send_messages() -> None:
-        while (message := await queue.get()) is not None:
-            await websocket.send_json(message)
-        await websocket.close()
-
-    async def answer_pings() -> None:
-        while True:
-            try:
-                message = json.loads(await websocket.receive_text())
-            except json.JSONDecodeError:
-                continue
-            if isinstance(message, dict) and message.get("type") == "ping" and not agent.silent:
-                queue.put_nowait({"type": "pong"})
-
-    tasks = [asyncio.create_task(send_messages()), asyncio.create_task(answer_pings())]
-    try:
-        await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
-    finally:
-        agent.remove_subscriber(queue)
-        for task in tasks:
-            task.cancel()
-        for task in tasks:
-            with contextlib.suppress(asyncio.CancelledError, WebSocketDisconnect, RuntimeError):
-                await task

@@ -177,6 +177,32 @@ describe("Camera preview", () => {
     expect(revoked).toContain("blob:preview-" + urlCount);
   });
 
+  it("shows an agent camera's own snapshot of the whole frame, with no OBS source", async () => {
+    // A camera node's crop camera (contract 1.1): the agent serves a picture of
+    // its whole frame, so the studio needs no OBS source for its preview.
+    nextAnswer = () => picture({ "X-Preview-Shows": "full" });
+    const agentCrop = cropView();
+    show(
+      view({
+        ...agentCrop,
+        owner: "agent",
+        driver: "agent",
+        obs_source: null,
+        capabilities: { ...agentCrop.capabilities!, snapshot: true },
+        // An agent does not say its source's pixel size.
+        crop: { ...agentCrop.crop!, source_width: undefined, source_height: undefined },
+      }),
+    );
+    await wait(0);
+
+    // It is asked for, and fills the whole box (not placed on the window) ...
+    expect(fetchCalls).toEqual(["/api/cameras/preview/cam?width=320"]);
+    const image = screen.getByRole("img", { name: "Finish preview" });
+    expect(image.style.left).toBe("");
+    // ... with the window's outline drawn on it.
+    expect(screen.getByTestId("preview-window").style.left).toBe("25%");
+  });
+
   it("asks for nothing when the camera has no OBS source", async () => {
     show(view({ obs_source: null }));
     await wait(3000);

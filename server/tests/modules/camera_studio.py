@@ -50,6 +50,8 @@ class Studio:
     serial_ports: list[SerialPortInfo] = field(default_factory=list)
     # The USB cameras (WP6a): two S600s and a Pixy, through an in-process UVC child.
     usb: FakeUsb = field(default_factory=FakeUsb)
+    # The service's HTTP side (previews), through Starlette's test client.
+    http: TestClient | None = None
 
     def command(self, command: str, source: str = "api:test", **args: Any) -> Any:
         return self.services.registry.dispatch_command("cameras", command, args, source)
@@ -103,8 +105,8 @@ def studio(
         return [cameras, agents]
 
     app = make_app(modules)
-    with TestClient(app):
-        yield Studio(app.state.services, network, ports, fake_clock, listed, usb)
+    with TestClient(app) as http:
+        yield Studio(app.state.services, network, ports, fake_clock, listed, usb, http)
 
 
 def smtav(**overrides: Any) -> dict[str, Any]:

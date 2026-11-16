@@ -1,4 +1,7 @@
-"""The velocity an OBS crop camera's window is moving at, and its dead-man (told the time).
+"""The velocity a crop camera's window is moving at, and its dead-man (told the time).
+
+Shared by the studio's OBS crop driver (`drivers/obs_crop.py`) and the camera
+node's drivers (`node/`, ADR 0023), which move a window the same way.
 
 `CropCommands` wraps it, with a pending jump (preset recall, click-to-centre),
 behind one lock: the arbiter's thread writes, the driver's worker takes.
@@ -16,7 +19,8 @@ moment it arrived; the difference is at most one update (40 ms at 25 Hz).
 import threading
 from dataclasses import dataclass
 
-from baja_studio.cameras.crop_window import WindowTarget
+from baja_studio.cameras.crop_config import ObsCropSettings
+from baja_studio.cameras.crop_window import CropFrame, CropSpeeds, CropWindow, WindowTarget
 from baja_studio.cameras.driver import AT_REST, Velocity
 from baja_studio.core.clock import Clock
 
@@ -143,3 +147,42 @@ class CropCommands:
         """No velocity and no jump waiting."""
         with self._lock:
             return not self._motion.moving and self._jump is None
+
+
+def next_window(
+    frame: CropFrame,
+    window: CropWindow,
+    jump: Jump | None,
+    step: MotionStep,
+    crop: ObsCropSettings,
+) -> tuple[CropWindow | None, str]:
+    """The window after one worker step's jump and motion, and an error for the operator.
+
+    Returns (None, error) when nothing moved it: no jump, no motion, or a
+    recalled preset that is not stored ("preset 3 is not stored"). A jump
+    first (the whole picture, a point to centre on, keeping the width unless
+    the target names one, or stored preset `n` from `crop.windows`), then the
+    held velocity for `step.seconds` at the camera's speeds; the result is
+    clamped inside the frame.
+    """
+    error = ""
+    if isinstance(jump, WindowTarget):
+        if jump.whole:
+            window = frame.whole()
+        elif jump.width is not None:
+            window = frame.clamp(CropWindow(jump.centre_x, jump.centre_y, jump.width))
+        else:
+            window = frame.centred_on(window, jump.centre_x, jump.centre_y)
+    elif jump is not None:
+        stored = crop.window(jump)
+        if stored is None:
+            error = f"preset {jump + 1} is not stored"
+            jump = None
+        else:
+            window = CropWindow(stored.centre_x, stored.centre_y, stored.width)
+    if step.seconds > 0:
+        speeds = CropSpeeds(crop.pan_speed, crop.tilt_speed, crop.zoom_speed)
+        window = frame.drive(window, step.velocity, step.seconds, speeds, crop.speed_follows_zoom)
+    if jump is None and step.seconds <= 0:
+        return None, error
+    return frame.clamp(window), error

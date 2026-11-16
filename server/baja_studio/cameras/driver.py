@@ -49,6 +49,8 @@ class DriverCapabilities:
     has_zoom: bool
     supports_auto: bool
     preset_max: int | None
+    # Contract 1.1: an agent camera serves whole-frame snapshots (the preview uses them).
+    snapshot: bool = False
 
     def as_state(self) -> dict[str, Any]:
         """JSON form for the camera's state entry."""
@@ -58,6 +60,7 @@ class DriverCapabilities:
             "has_zoom": self.has_zoom,
             "supports_auto": self.supports_auto,
             "preset_max": self.preset_max,
+            "snapshot": self.snapshot,
         }
 
 

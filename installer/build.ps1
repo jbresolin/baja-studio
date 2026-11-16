@@ -1,6 +1,7 @@
 <#
 .SYNOPSIS
-    Assembles dist\app, the folder the installer installs to %ProgramFiles%\BajaStudio.
+    Assembles dist\app, the folder the installer installs to %ProgramFiles%\BajaStudio;
+    with -Node, dist\node\app for the camera node's installer (%ProgramFiles%\BajaCameraNode).
 
 .DESCRIPTION
     dist\app\python     python.org embeddable Python, with the service, the tray
@@ -20,10 +21,19 @@
     Needs Windows, Python 3.12 (64-bit) and, unless -SkipCaddy, Go at the pinned
     version. Run with -WhatIf for a dry run that lists the steps.
 
+    -Node assembles the slim camera node instead (WP15, ADR 0023), in dist\node\app:
+    dist\node\app\python     embeddable Python with the service package (no tray)
+    dist\node\app\frontend   the node's own page (frontend\dist-node)
+    dist\node\app\nssm       NSSM, which runs the BajaCameraNode service
+    dist\node\app\ffmpeg     the node's ffmpeg, from installer\ffmpeg-node\pin.json
+    and the icon, VERSION and wheelhouse-manifest.json. No Caddy, MediaMTX or
+    playout's ffmpeg.
+
 .EXAMPLE
     pwsh installer\build.ps1
     pwsh installer\build.ps1 -SkipCaddy        # dist\ only, to check the wheelhouse
     pwsh installer\build.ps1 -WhatIf
+    pwsh installer\build.ps1 -Node            # dist\node\app, for BajaCameraNode.iss
 #>
 [CmdletBinding(SupportsShouldProcess)]
 param(
@@ -32,7 +42,9 @@ param(
     # Leave Caddy out (no Go needed); the result cannot become an installer.
     [switch] $SkipCaddy,
     # Use frontend\dist as it is instead of running npm ci and npm run build.
-    [switch] $SkipFrontendBuild
+    [switch] $SkipFrontendBuild,
+    # Assemble the camera node (dist\node\app) instead of the studio.
+    [switch] $Node
 )
 
 $ErrorActionPreference = 'Stop'
@@ -41,9 +53,11 @@ $server = Join-Path $repository 'server'
 $tray = Join-Path $repository 'tray'
 $frontend = Join-Path $repository 'frontend'
 $output = [System.IO.Path]::GetFullPath($OutputDirectory)
-$app = Join-Path $output 'app'
 $cache = Join-Path $output 'downloads'
-$wheelhouse = Join-Path $output 'wheelhouse'
+# The node's folders sit under dist\node; downloads are shared with the studio's build.
+$product = if ($Node) { Join-Path $output 'node' } else { $output }
+$app = Join-Path $product 'app'
+$wheelhouse = Join-Path $product 'wheelhouse'
 
 function Invoke-Native {
     <# Run a program; stop the build if it fails (PowerShell would carry on). #>
@@ -79,7 +93,8 @@ function Get-PinnedDownload($Pin, [string] $FileName) {
 }
 
 $version = (Invoke-Native python @('-m', 'baja_studio.release_tools', 'version') $server | Select-Object -Last 1).Trim()
-Write-Host "Building Baja Studio $version into $app"
+$productName = if ($Node) { 'the Baja camera node' } else { 'Baja Studio' }
+Write-Host "Building $productName $version into $app"
 
 if ($PSCmdlet.ShouldProcess($app, 'Start from an empty app folder')) {
     if (Test-Path $app) { Remove-Item $app -Recurse -Force }
@@ -104,26 +119,37 @@ if ($PSCmdlet.ShouldProcess($wheelhouse, 'Build the wheelhouse')) {
     $hostVersion = (Invoke-Native python @('-c', 'import sys; print(sys.version_info[:2] == (3, 12) and sys.maxsize > 2**32)'))
     if ($hostVersion.Trim() -ne 'True') { throw 'build.ps1 needs a 64-bit Python 3.12 on PATH' }
     Invoke-Native python @('-m', 'pip', 'wheel', '--no-deps', '--wheel-dir', $wheelhouse, $server)
-    Invoke-Native python @('-m', 'pip', 'wheel', '--no-deps', '--wheel-dir', $wheelhouse, $tray)
     $requirements = @(Invoke-Native python @('-m', 'baja_studio.release_tools', 'requirements') $server)
-    # The tray's pins, read from its pyproject (it has no release tools of its own).
-    # (No double quotes in the script: PowerShell would have to escape them for python.exe.)
-    $requirements += Invoke-Native python @('-c',
-        'import sys, tomllib; print(chr(10).join(tomllib.load(open(sys.argv[1], ''rb''))[''project''][''dependencies'']))',
-        (Join-Path $tray 'pyproject.toml'))
+    if (-not $Node) {
+        # The tray is the studio's only (the node's status is its own page).
+        Invoke-Native python @('-m', 'pip', 'wheel', '--no-deps', '--wheel-dir', $wheelhouse, $tray)
+        # The tray's pins, read from its pyproject (it has no release tools of its own).
+        # (No double quotes in the script: PowerShell would have to escape them for python.exe.)
+        $requirements += Invoke-Native python @('-c',
+            'import sys, tomllib; print(chr(10).join(tomllib.load(open(sys.argv[1], ''rb''))[''project''][''dependencies'']))',
+            (Join-Path $tray 'pyproject.toml'))
+    }
     Invoke-Native python (@('-m', 'pip', 'download', '--dest', $wheelhouse, '--only-binary=:all:',
             '--platform', 'win_amd64', '--python-version', '3.12', '--implementation', 'cp') + $requirements)
     Invoke-Native python @('-m', 'baja_studio.release_tools', 'wheelhouse-manifest',
         '--wheelhouse', $wheelhouse, '--output', (Join-Path $app 'wheelhouse-manifest.json')) $server
     # Offline install from the wheelhouse only: what was downloaded and listed is what ships.
-    Invoke-Native python @('-m', 'pip', 'install', '--no-index', '--find-links', $wheelhouse,
-        '--target', (Join-Path $pythonDirectory 'Lib\site-packages'), "baja_studio==$version", 'baja_studio_tray')
+    $packages = if ($Node) { @("baja_studio==$version") } else { @("baja_studio==$version", 'baja_studio_tray') }
+    Invoke-Native python (@('-m', 'pip', 'install', '--no-index', '--find-links', $wheelhouse,
+        '--target', (Join-Path $pythonDirectory 'Lib\site-packages')) + $packages)
     $installed = Invoke-Native (Join-Path $pythonDirectory 'python.exe') @('-c',
         'import baja_studio, fastapi, uvicorn, serial, rtmidi, argon2; print(baja_studio.__version__)')
     if ($installed.Trim() -ne $version) { throw "the embedded Python reports $installed, not $version" }
-    # The tray, with its icon frames (pystray itself only loads on a desktop).
-    Invoke-Native (Join-Path $pythonDirectory 'python.exe') @('-c',
-        'from baja_studio_tray.icons import load_frames; print(sorted(load_frames()))') | Out-Host
+    if ($Node) {
+        # The node's entry point imports (the whole node package, its fakes left aside).
+        Invoke-Native (Join-Path $pythonDirectory 'python.exe') @('-c',
+            'import baja_studio.node.__main__, baja_studio.node.app; print(''node ok'')') | Out-Host
+    }
+    else {
+        # The tray, with its icon frames (pystray itself only loads on a desktop).
+        Invoke-Native (Join-Path $pythonDirectory 'python.exe') @('-c',
+            'from baja_studio_tray.icons import load_frames; print(sorted(load_frames()))') | Out-Host
+    }
 }
 
 # --- The icon: the tray's, also the installer's and the shortcuts' --------------------
@@ -133,7 +159,7 @@ if ($PSCmdlet.ShouldProcess((Join-Path $app 'baja-studio.ico'), 'Copy the icon')
 
 # --- ffmpeg and ffprobe for playout (durations, thumbnails) ------------------------------
 $ffmpegPin = Read-Pin 'ffmpeg'
-if ($PSCmdlet.ShouldProcess((Join-Path $app 'ffmpeg'), "Unpack ffmpeg $($ffmpegPin.version)")) {
+if (-not $Node -and $PSCmdlet.ShouldProcess((Join-Path $app 'ffmpeg'), "Unpack ffmpeg $($ffmpegPin.version)")) {
     $zip = Get-PinnedDownload $ffmpegPin "ffmpeg-$($ffmpegPin.version)-essentials.zip"
     $unpacked = Join-Path $cache 'ffmpeg'
     if (Test-Path $unpacked) { Remove-Item $unpacked -Recurse -Force }
@@ -148,14 +174,15 @@ if ($PSCmdlet.ShouldProcess((Join-Path $app 'ffmpeg'), "Unpack ffmpeg $($ffmpegP
     if ($reported -notmatch [regex]::Escape($ffmpegPin.version)) { throw "ffprobe reports '$reported'" }
 }
 
-# --- Frontend -------------------------------------------------------------------------
+# --- Frontend (the studio's pages, or the node's page: one `npm run build` makes both) --
+$pages = if ($Node) { 'dist-node' } else { 'dist' }
 if ($PSCmdlet.ShouldProcess((Join-Path $app 'frontend'), 'Build and copy the web pages')) {
     if (-not $SkipFrontendBuild) {
         Invoke-Native npm @('ci') $frontend
         Invoke-Native npm @('run', 'build') $frontend
     }
-    if (-not (Test-Path (Join-Path $frontend 'dist\index.html'))) { throw 'frontend\dist is not built' }
-    Copy-Item (Join-Path $frontend 'dist') (Join-Path $app 'frontend') -Recurse
+    if (-not (Test-Path (Join-Path $frontend "$pages\index.html"))) { throw "frontend\$pages is not built" }
+    Copy-Item (Join-Path $frontend $pages) (Join-Path $app 'frontend') -Recurse
 }
 
 # --- NSSM -----------------------------------------------------------------------------
@@ -171,7 +198,7 @@ if ($PSCmdlet.ShouldProcess((Join-Path $app 'nssm'), "Unpack NSSM $($nssmPin.ver
 
 # --- MediaMTX for the feeds service (WP14): the pinned Windows release, checked ---------
 $mediamtxPin = Read-Pin 'mediamtx'
-if ($PSCmdlet.ShouldProcess((Join-Path $app 'mediamtx'), "Unpack MediaMTX $($mediamtxPin.version)")) {
+if (-not $Node -and $PSCmdlet.ShouldProcess((Join-Path $app 'mediamtx'), "Unpack MediaMTX $($mediamtxPin.version)")) {
     $zip = Get-PinnedDownload $mediamtxPin "mediamtx_$($mediamtxPin.version)_windows_amd64.zip"
     $unpacked = Join-Path $cache 'mediamtx'
     if (Test-Path $unpacked) { Remove-Item $unpacked -Recurse -Force }
@@ -188,7 +215,10 @@ if ($PSCmdlet.ShouldProcess((Join-Path $app 'mediamtx'), "Unpack MediaMTX $($med
 # --- Caddy: built with xcaddy from pinned versions, then checked ------------------------
 $caddyPin = Read-Pin 'caddy'
 $caddy = Join-Path $app 'caddy\caddy.exe'
-if ($SkipCaddy) {
+if ($Node) {
+    # The node has no gateway.
+}
+elseif ($SkipCaddy) {
     Write-Warning 'Caddy left out (-SkipCaddy): this dist\ cannot become an installer.'
 }
 elseif ($PSCmdlet.ShouldProcess($caddy, "Build Caddy $($caddyPin.caddy_version) with xcaddy")) {
@@ -220,6 +250,29 @@ elseif ($PSCmdlet.ShouldProcess($caddy, "Build Caddy $($caddyPin.caddy_version) 
     foreach ($golden in Get-ChildItem (Join-Path $server 'tests\modules\gateway_golden') -Filter *.Caddyfile) {
         Invoke-Native $caddy @('adapt', '--config', $golden.FullName, '--adapter', 'caddyfile') | Out-Null
         Write-Host "Caddy accepts $($golden.Name)"
+    }
+}
+
+# --- The camera node's ffmpeg (WP15, ADR 0023) ---------------------------------------
+# installer\ffmpeg-node\pin.json: BtbN's win64 GPL static build, with zmq (the live
+# crop), libsrt, NVENC, QuickSync and AMF. Its .zip holds `folder_in_zip\bin\ffmpeg.exe`
+# and the licence (`license_in_zip`); the pin's linux_* fields are for CI's rig tests.
+# It goes to {app}\ffmpeg\ffmpeg.exe, where the node looks first (playout/tools.py).
+if ($Node) {
+    $nodeFfmpegPin = Read-Pin 'ffmpeg-node'
+    if ($PSCmdlet.ShouldProcess((Join-Path $app 'ffmpeg'), "Unpack the node's ffmpeg $($nodeFfmpegPin.version)")) {
+        $zip = Get-PinnedDownload $nodeFfmpegPin "ffmpeg-node-$($nodeFfmpegPin.version).zip"
+        $unpacked = Join-Path $cache 'ffmpeg-node'
+        if (Test-Path $unpacked) { Remove-Item $unpacked -Recurse -Force }
+        Expand-Archive $zip -DestinationPath $unpacked
+        $source = Join-Path $unpacked $nodeFfmpegPin.folder_in_zip
+        $target = New-Item -ItemType Directory -Force (Join-Path $app 'ffmpeg')
+        Copy-Item (Join-Path $source 'bin\ffmpeg.exe') $target
+        # GPL: its licence goes along.
+        Copy-Item (Join-Path $source $nodeFfmpegPin.license_in_zip) (Join-Path $target 'LICENSE.txt')
+        $reported = Invoke-Native (Join-Path $target 'ffmpeg.exe') @('-hide_banner', '-version') | Select-Object -First 1
+        if ($reported -notmatch [regex]::Escape($nodeFfmpegPin.version)) { throw "the node's ffmpeg reports '$reported'" }
+        Write-Host "The node's ffmpeg: $reported"
     }
 }
 

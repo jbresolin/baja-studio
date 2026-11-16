@@ -12,6 +12,16 @@ The status icon appears in the taskbar at the next logon.
 
 After installing, open **Readiness** and run all checks.
 
+**New: the camera node (trackside laptops).** `BajaCameraNode-{version}.exe`,
+also below, installs on a laptop with one or two 4K webcams and offers them to
+the studio as crop cameras (a digital pan, tilt and zoom), with no OBS needed
+on the laptop, or with the laptop's OBS doing the video if you prefer. It runs
+as the *Baja camera node* service, opens TCP 8891 (private and domain
+networks) and has its own page at `http://<laptop>:8891/`: paste each camera's
+SRT URL from the studio's **Feeds** page there, then add the laptop on the
+studio's **Agents** page (port 8891). Its cameras' presets are kept by the
+studio, and their previews show the whole picture with the window on it.
+
 **New: Feeds (drone and trackside laptops).** The installer now also runs
 MediaMTX as a third service, *Baja Studio feeds*, and (with the firewall
 option ticked) opens TCP 1935 for RTMP and UDP 8890 for SRT on private and

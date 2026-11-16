@@ -1,4 +1,4 @@
-"""The agent API contract 1.0 as Pydantic models and constants.
+"""The agent API contract 1.1 as Pydantic models and constants.
 
 docs/agent-api.md is the normative text; this file is its machine-readable
 twin, used by the studio's client, by the fake agent and by the conformance
@@ -13,7 +13,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-CONTRACT_VERSION = "1.0"
+CONTRACT_VERSION = "1.1"
 AGENT_PORT = 8890
 TOKEN_HEADER = "X-Agent-Token"
 STUDIO_ID_HEADER = "X-Studio-Id"
@@ -30,6 +30,15 @@ INFO_ANSWER_WITHIN_SECONDS = 0.3
 MAX_PRESET_NUMBER = 255
 # The `reason` of the mode_changed an agent sends when it cannot restore auto after a restart.
 RESTORE_REASON_TRACKER_NOT_READY = "tracker_not_ready"
+
+# Contract 1.1: a camera listing this in its `capabilities` serves
+# `GET /cameras/{id}/snapshot`, a JPEG of its whole source frame.
+CAMERA_CAPABILITY_SNAPSHOT = "snapshot"
+SNAPSHOT_MEDIA_TYPE = "image/jpeg"
+# `?width=` of a snapshot: a hint, in pixels; the agent answers at most about this wide.
+DEFAULT_SNAPSHOT_WIDTH = 320
+MIN_SNAPSHOT_WIDTH = 16
+MAX_SNAPSHOT_WIDTH = 3840
 
 
 def contract_major(version: str) -> int | None:
@@ -83,6 +92,7 @@ class ErrorCode(StrEnum):
     UNAUTHORIZED = "unauthorized"  # 401
     UNKNOWN_CAMERA = "unknown_camera"  # 404
     UNKNOWN_PRESET = "unknown_preset"  # 404
+    NO_SNAPSHOT = "no_snapshot"  # 404 (1.1): the camera has no picture yet
     TRACKER_NOT_READY = "tracker_not_ready"  # 409
     DEVICE_OFFLINE = "device_offline"  # 503
 
@@ -94,6 +104,7 @@ ERROR_HTTP_STATUS = {
     ErrorCode.UNAUTHORIZED: 401,
     ErrorCode.UNKNOWN_CAMERA: 404,
     ErrorCode.UNKNOWN_PRESET: 404,
+    ErrorCode.NO_SNAPSHOT: 404,
     ErrorCode.TRACKER_NOT_READY: 409,
     ErrorCode.DEVICE_OFFLINE: 503,
 }
@@ -143,7 +154,11 @@ class CameraLimits(ContractModel):
 
 
 class CameraInfo(ContractModel):
-    """What a camera is and can do; changes only on reconnect or `presets_changed`."""
+    """What a camera is and can do; changes only on reconnect or `presets_changed`.
+
+    `capabilities` (1.1) are per-camera feature flags, e.g. `snapshot`; a 1.0
+    agent sends none, which reads as an empty list.
+    """
 
     id: str
     label: str
@@ -155,6 +170,12 @@ class CameraInfo(ContractModel):
     image_controls: list[str]
     presets: list[Preset]
     limits: CameraLimits
+    capabilities: list[str] = Field(default_factory=list)
+
+    @property
+    def has_snapshot(self) -> bool:
+        """True when the camera serves `GET /cameras/{id}/snapshot` (contract 1.1)."""
+        return CAMERA_CAPABILITY_SNAPSHOT in self.capabilities
 
 
 class AgentInfo(ContractModel):

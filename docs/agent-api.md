@@ -1,4 +1,4 @@
-# Camera-laptop agent API — contract 1.0
+# Camera-laptop agent API — contract 1.1
 
 Status: **draft for review** (LIVESTACK-33). Implemented by the studio service
 (client, `server/baja_studio/agents/`) and by the AUTOPTZ hub app (server,
@@ -15,7 +15,9 @@ The key words MUST, MUST NOT, SHOULD and MAY mean what RFC 2119 says.
   connects to the studio.
 - The **studio** (the studio service on the Streaming PC) connects to agents,
   reads their state and sends commands. Several studios MAY talk to one agent.
-- The contract is versioned `MAJOR.MINOR`. This document is **1.0**. A MINOR
+- The contract is versioned `MAJOR.MINOR`. This document is **1.1** (1.0 plus
+  snapshots, §6; see §11). An agent on 1.0 (the MV app's zone agent pins it)
+  is a fine 1.1 agent: everything 1.1 adds is optional and advertised. A MINOR
   release only adds (fields, endpoints, events, error codes); anything else is
   a MAJOR release. The studio refuses to command an agent whose MAJOR differs
   from its own, and shows that agent as `degraded` with the reason.
@@ -28,7 +30,7 @@ The key words MUST, MUST NOT, SHOULD and MAY mean what RFC 2119 says.
 |---|---|
 | Commands and configuration | HTTP/1.1, JSON bodies (`Content-Type: application/json`) |
 | Live state | one WebSocket per studio, `GET /agent/ws`, agent → studio |
-| Port | **8890**, on all interfaces |
+| Port | **8890**, on all interfaces (the camera node, ADR 0023, uses **8891**, so both can run on one laptop) |
 | TLS | none (LAN only) |
 | Discovery | static addresses in the studio's settings, plus a subnet scan that calls `GET /agent/info` on port 8890 of every address in a CIDR |
 
@@ -95,7 +97,8 @@ have no side effects: the subnet scan calls it on every address. Needs no token.
       "image_controls": ["exposure", "gain", "white_balance", "focus"],
       "presets": [{"n": 1, "label": "Start gate"}, {"n": 2, "label": "Jump"}],
       "limits": {"pan_speed_max": 100.0, "tilt_speed_max": 60.0, "zoom_speed_max": 0.5,
-                 "preset_max": 254}
+                 "preset_max": 254},
+      "capabilities": []
     }
   ]
 }
@@ -109,7 +112,10 @@ have no side effects: the subnet scan calls it on every address. Needs no token.
   without presets.
 - `presets` lists the stored presets. When they change, the agent sends a
   `presets_changed` event and the studio reads `/agent/info` again.
-- `capabilities`: free-form feature flags. `fake_controls` marks the fake agent.
+- `capabilities` (agent level): free-form feature flags. `fake_controls` marks
+  the fake agent, `camera_node` the camera node.
+- `cameras[].capabilities` (1.1): per-camera feature flags; absent means none.
+  `snapshot`: the camera serves `GET /cameras/{id}/snapshot` (§6).
 
 ### `GET /agent/health`
 
@@ -311,6 +317,29 @@ narrower than the agent allows is widened, and the answer says so. The
 window jumps there and any `/move` velocity stops. `PUT /crop` is a studio
 motion command (§7).
 
+### Snapshot (1.1, only where advertised)
+
+`GET /cameras/{id}/snapshot?width=320` → `200 image/jpeg`: a small picture of
+the camera's **whole source frame** (not its crop), for the studio's
+preview, which draws the crop window on it.
+
+- Only a camera listing `snapshot` in its `capabilities` serves it; another
+  answers `400 not_supported` (an agent older than 1.1 answers the unknown
+  path with a `404`, and is never asked).
+- `width` (16 to 3840, default 320) is a hint: the picture is at most about
+  that wide, or the size the agent has. It keeps the frame's shape.
+- A new picture at most about once a second: an agent may answer the same
+  one for up to a second, and SHOULD take a new one only when asked.
+- `404 no_snapshot` while the camera has no picture yet (its video starting,
+  its device away), with the reason in `detail`.
+- `Content-Type` is `image/jpeg`; an agent MAY answer another image type it
+  names (a fake OBS answers PNG). `Cache-Control: no-store`.
+- `X-Snapshot-Shows: frame` (the default when absent) or `window`: an agent
+  that can only picture the crop itself (a camera node in OBS mode with no
+  uncropped preview source) says `window`, and then
+  `X-Crop-Window: x,y,w,h` says where the window was (fractions of the
+  frame), so the studio places the picture on the frame.
+
 ### Resync
 
 `POST /cameras/{id}/resync` → `{"accepted": true, "mode": "..."}`. Re-read the
@@ -377,6 +406,7 @@ latency is lowest and which keeps working when the studio link drops.
 | 401 | `unauthorized` | missing or wrong `X-Agent-Token` |
 | 404 | `unknown_camera` | no camera with that id |
 | 404 | `unknown_preset` | preset not stored |
+| 404 | `no_snapshot` | (1.1) a camera that serves snapshots has no picture yet |
 | 409 | `tracker_not_ready` | `auto` requested while the tracker cannot run |
 | 503 | `device_offline` | the camera behind the agent is not answering |
 
@@ -392,8 +422,12 @@ pytest tests/agent_contract --agent-url http://laptop:8890 --agent-token <token>
 ```
 
 Options: `--agent-token` (token checks are skipped without it) and
-`--agent-camera cam1` (which PTZ to test; default: the first PTZ). Against a
-real agent:
+`--agent-camera cam1` (the camera to test: the generic checks run on it, the
+PTZ or crop checks too if it is of that kind; default: the first PTZ for the
+PTZ checks, the first crop camera for the crop checks, and the first PTZ,
+else the first crop camera, for the generic ones). Without `--agent-url`,
+`--agent-impl node` checks an in-process camera node instead of the fake
+agent (cam1 in node mode, cam2 in OBS mode). Against a real agent:
 
 - the PTZ under test moves a little: slow, short velocity commands, each
   followed by `/stop`, and the camera is left in `manual`;
@@ -404,7 +438,11 @@ real agent:
 - checks that need the fake agent's failure switches (an offline device, a
   tracker that is not ready, a restart) are skipped;
 - crop checks run only if the agent has a `kind=crop` camera. They move its
-  window a little, and put it back afterwards.
+  window a little, and put it back afterwards;
+- checks of auto are skipped on a camera with `supports_auto: false`, which
+  must instead refuse auto with `400 not_supported` and keep `hold`;
+- snapshot checks (1.1) run only on a camera that lists `snapshot`, and the
+  `not_supported` check only on one that does not.
 
 The suite runs in real time and takes about ten seconds.
 
@@ -419,3 +457,4 @@ python -m baja_studio.fakes.fake_agent --port 8890 --cameras 2 [--crop-cameras 1
 | Version | Date | Change |
 |---|---|---|
 | 1.0 | 2026-11-01 | First version (LIVESTACK-33). |
+| 1.1 | 2026-11-16 | Additive (WP15, LIVESTACK-66, ADR 0023): per-camera `capabilities` in `/agent/info`; `snapshot` and `GET /cameras/{id}/snapshot` (§6) with `X-Snapshot-Shows` / `X-Crop-Window`; error `404 no_snapshot`. Nothing in 1.0 changed. |

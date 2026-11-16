@@ -10,6 +10,8 @@ Against a real agent these need a running tracker; if the agent answers
 
 from typing import Any
 
+import pytest
+
 from tests.agent_contract.agent_under_test import (
     MARGIN_SECONDS,
     PUSH_INTERVAL_MAX_SECONDS,
@@ -27,9 +29,9 @@ def mode_is(mode: str) -> Any:
 
 
 def test_a_move_in_auto_pauses_auto_and_auto_resumes_by_itself(
-    agent: AgentUnderTest, ptz: dict[str, Any]
+    agent: AgentUnderTest, movable: dict[str, Any]
 ) -> None:
-    camera_id = ptz["id"]
+    camera_id = movable["id"]
     put_in_auto(agent, camera_id, RESUME_AFTER_MS)
     with agent.socket() as socket:
         reply = agent.http.post(f"/cameras/{camera_id}/move", json={"pan": 0.1, "ttl_ms": 200})
@@ -77,8 +79,10 @@ def test_move_and_put_crop_pause_auto_on_a_crop_camera(
     assert agent.http.get(f"/cameras/{camera_id}/mode").json()["mode"] == "auto_paused"
 
 
-def test_put_mode_auto_ends_the_pause_at_once(agent: AgentUnderTest, ptz: dict[str, Any]) -> None:
-    camera_id = ptz["id"]
+def test_put_mode_auto_ends_the_pause_at_once(
+    agent: AgentUnderTest, movable: dict[str, Any]
+) -> None:
+    camera_id = movable["id"]
     put_in_auto(agent, camera_id, 60_000)  # a pause that would last a minute
     agent.http.post(f"/cameras/{camera_id}/stop")
 
@@ -88,9 +92,9 @@ def test_put_mode_auto_ends_the_pause_at_once(agent: AgentUnderTest, ptz: dict[s
 
 
 def test_manual_and_hold_never_resume_auto_by_themselves(
-    agent: AgentUnderTest, ptz: dict[str, Any]
+    agent: AgentUnderTest, movable: dict[str, Any]
 ) -> None:
-    camera_id = ptz["id"]
+    camera_id = movable["id"]
     with agent.socket() as socket:
         for mode in ("manual", "hold"):
             put_in_auto(agent, camera_id, 100)
@@ -110,21 +114,21 @@ def test_manual_and_hold_never_resume_auto_by_themselves(
 
 
 def test_auto_is_refused_with_409_when_the_tracker_cannot_run(
-    agent: AgentUnderTest, ptz: dict[str, Any]
+    agent: AgentUnderTest, movable: dict[str, Any]
 ) -> None:
-    agent.fake_switch(f"/cameras/{ptz['id']}/tracker", {"tracker": "not_ready"})
+    agent.fake_switch(f"/cameras/{movable['id']}/tracker", {"tracker": "not_ready"})
 
-    answer = agent.http.put(f"/cameras/{ptz['id']}/mode", json={"mode": "auto"})
+    answer = agent.http.put(f"/cameras/{movable['id']}/mode", json={"mode": "auto"})
 
     assert answer.status_code == 409
     assert answer.json()["error"] == "tracker_not_ready"
-    agent.fake_switch(f"/cameras/{ptz['id']}/tracker", {"tracker": "ready"})
+    agent.fake_switch(f"/cameras/{movable['id']}/tracker", {"tracker": "ready"})
 
 
 def test_after_a_restart_auto_is_restored_if_the_tracker_is_ready(
-    agent: AgentUnderTest, ptz: dict[str, Any]
+    agent: AgentUnderTest, movable: dict[str, Any]
 ) -> None:
-    camera_id = ptz["id"]
+    camera_id = movable["id"]
     put_in_auto(agent, camera_id, RESUME_AFTER_MS)
 
     agent.fake_switch("/restart", {})
@@ -134,9 +138,9 @@ def test_after_a_restart_auto_is_restored_if_the_tracker_is_ready(
 
 
 def test_after_a_restart_without_a_tracker_auto_becomes_manual_and_says_why(
-    agent: AgentUnderTest, ptz: dict[str, Any]
+    agent: AgentUnderTest, movable: dict[str, Any]
 ) -> None:
-    camera_id = ptz["id"]
+    camera_id = movable["id"]
     put_in_auto(agent, camera_id, RESUME_AFTER_MS)
     agent.fake_switch(f"/cameras/{camera_id}/tracker", {"tracker": "not_ready"})
 
@@ -155,3 +159,32 @@ def test_after_a_restart_without_a_tracker_auto_becomes_manual_and_says_why(
         )
     assert event["detail"] == {"from": "auto", "to": "manual", "reason": "tracker_not_ready"}
     agent.fake_switch(f"/cameras/{camera_id}/tracker", {"tracker": "ready"})
+
+
+def test_auto_is_refused_as_not_supported_on_a_camera_without_auto(
+    agent: AgentUnderTest, movable: dict[str, Any]
+) -> None:
+    # A camera with supports_auto false (a camera node's) has no tracker: asking
+    # for auto is "not supported", and the camera stays in its mode.
+    if movable["supports_auto"]:
+        pytest.skip(f"{movable['id']} supports auto")
+
+    answer = agent.http.put(f"/cameras/{movable['id']}/mode", json={"mode": "auto"})
+
+    assert answer.status_code == 400
+    assert answer.json()["error"] == "not_supported"
+    assert agent.http.get(f"/cameras/{movable['id']}/mode").json()["mode"] == "manual"
+
+
+def test_hold_is_kept_on_a_camera_without_auto(
+    agent: AgentUnderTest, movable: dict[str, Any]
+) -> None:
+    # Without a tracker, manual and hold are the only modes; hold must still be
+    # taken and reported, and a move must not change it.
+    camera_id = movable["id"]
+
+    agent.http.put(f"/cameras/{camera_id}/mode", json={"mode": "hold"})
+    reply = agent.http.post(f"/cameras/{camera_id}/move", json={"pan": 0.1, "ttl_ms": 100})
+
+    assert reply.json()["mode"] == "hold"
+    assert agent.http.get(f"/cameras/{camera_id}/mode").json()["mode"] == "hold"

@@ -52,9 +52,9 @@ def test_a_ping_is_answered_with_a_pong(agent: AgentUnderTest) -> None:
 
 
 def test_a_mode_change_is_an_event_and_in_the_next_state(
-    agent: AgentUnderTest, ptz: dict[str, Any]
+    agent: AgentUnderTest, movable: dict[str, Any]
 ) -> None:
-    camera_id = ptz["id"]
+    camera_id = movable["id"]
     with agent.socket() as socket:
         socket.receive(timeout=MARGIN_SECONDS)
 

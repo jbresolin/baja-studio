@@ -206,17 +206,21 @@ class WindowTarget:
 
     Click-to-centre on a preview sends `centre_window`; `reset_crop` shows
     the whole picture (also a way out after the source's resolution shrank
-    under a crop that no longer fits).
+    under a crop that no longer fits). `width` (the camera node's `PUT /crop`,
+    ADR 0023) also sets the window's width; None keeps the width it has.
     """
 
     centre_x: float = 0.5
     centre_y: float = 0.5
     whole: bool = False
+    width: float | None = None
 
     def describe(self) -> str:
         """For the command tail: "centre_window 0.25,0.40" or "reset_crop"."""
         if self.whole:
             return "reset_crop"
+        if self.width is not None:
+            return f"set_window {self.centre_x:.2f},{self.centre_y:.2f} width {self.width:.2f}"
         return f"centre_window {self.centre_x:.2f},{self.centre_y:.2f}"
 
 

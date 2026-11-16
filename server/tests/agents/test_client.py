@@ -49,7 +49,8 @@ def info_with_version(version: str) -> AgentInfo:
 
 
 def test_an_agent_with_the_same_major_version_is_compatible_even_if_newer() -> None:
-    # 1.3 only adds things to 1.0, so a 1.0 studio can still use it.
+    # 1.3 only adds things to 1.1, so a 1.1 studio can still use it; and a 1.0
+    # agent (the MV tracker's zone agent pins 1.0) is just as usable.
     assert incompatibility(info_with_version("1.0")) is None
     assert incompatibility(info_with_version("1.3")) is None
 
@@ -67,7 +68,8 @@ async def test_info_lists_the_agents_cameras(start_agent: StartAgent, client: Ag
 
     info = await client.info()
 
-    assert info.contract_version == "1.0"
+    # The fake speaks the studio's own version (1.1 since WP15 added snapshots).
+    assert info.contract_version == "1.1"
     assert [camera.id for camera in info.cameras] == ["cam1", "cam2"]
     assert client.incompatible_reason == ""
 
@@ -185,3 +187,28 @@ async def test_set_mode_auto_is_refused_while_the_tracker_is_not_ready(
         await client.set_mode("cam1", Mode.AUTO)
 
     assert (refused.value.status_code, refused.value.code) == (409, "tracker_not_ready")
+
+
+async def test_a_crop_cameras_snapshot_comes_with_what_it_shows(
+    start_agent: StartAgent, client: AgentClient
+) -> None:
+    # Contract 1.1: a crop camera of the fake agent lists "snapshot" and serves
+    # a JPEG of its whole frame (no window header: "frame").
+    start_agent(ptz_cameras=0, crop_cameras=1, token="secret")
+
+    snapshot = await client.snapshot("crop1", 160)
+
+    assert snapshot.media_type == "image/jpeg"
+    assert snapshot.content.startswith(b"\xff\xd8")
+    assert (snapshot.shows, snapshot.window) == ("frame", None)
+
+
+async def test_a_snapshot_a_ptz_does_not_serve_is_an_agent_error(
+    start_agent: StartAgent, client: AgentClient
+) -> None:
+    start_agent(ptz_cameras=1, token="secret")
+
+    with pytest.raises(AgentError) as refused:
+        await client.snapshot("cam1")
+
+    assert refused.value.code == "not_supported"

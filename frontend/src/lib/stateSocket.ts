@@ -187,8 +187,10 @@ export class StateSocket {
 
   private openSocket(): void {
     this.setStatus("connecting");
+    // The camera node's page puts its token in the URL already (`/ws?token=`).
+    const separator = this.url.includes("?") ? "&" : "?";
     const url = this.clientId
-      ? `${this.url}?client=${encodeURIComponent(this.clientId)}`
+      ? `${this.url}${separator}client=${encodeURIComponent(this.clientId)}`
       : this.url;
     const socket = this.createSocket(url);
     this.socket = socket;

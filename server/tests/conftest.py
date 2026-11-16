@@ -358,7 +358,18 @@ def pytest_addoption(parser: pytest.Parser) -> None:
     )
     group.addoption("--agent-token", default="", help="the X-Agent-Token the agent expects")
     group.addoption(
-        "--agent-camera", default=None, help="id of the PTZ to test (default: the first PTZ)"
+        "--agent-camera",
+        default=None,
+        help="id of the camera to test (default: the first PTZ, and the first crop camera)",
+    )
+    group.addoption(
+        "--agent-impl",
+        default="fake",
+        choices=["fake", "node"],
+        help=(
+            "without --agent-url: which agent to run in-process: the fake agent, or a camera "
+            "node with fake video (cam1 in node mode, cam2 in OBS mode on a fake OBS)"
+        ),
     )
 
 

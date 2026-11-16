@@ -236,4 +236,19 @@ describe("StateSocket", () => {
 
     expect(sockets.latest().url).toBe("ws://studio/ws?client=desk-pc");
   });
+
+  it("adds the client id after a query the address already has (the node's ?token=)", () => {
+    // The camera node's page opens its socket at /ws?token=...: the client id
+    // must join that query with "&", not start a second "?".
+    const sockets = fakeSocketFactory();
+    const client = new StateSocket({
+      url: "ws://node/ws?token=abc",
+      createSocket: sockets.create,
+      clientId: "phone",
+    });
+
+    client.connect();
+
+    expect(sockets.latest().url).toBe("ws://node/ws?token=abc&client=phone");
+  });
 });

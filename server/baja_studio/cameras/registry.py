@@ -27,6 +27,7 @@ from baja_studio.cameras.config import (
 )
 from baja_studio.cameras.crop_window import CropWindow
 from baja_studio.cameras.driver import CameraDriver, DriverHost
+from baja_studio.cameras.drivers.agent_crop_presets import AgentCropPresets
 from baja_studio.cameras.drivers.agent_gateway import AgentGateway
 from baja_studio.cameras.drivers.agent_proxy import AgentProxyDriver
 from baja_studio.cameras.drivers.fixed import FixedCameraDriver
@@ -187,10 +188,26 @@ class CameraRegistry:
                     fallback.address,
                     "fallback",
                 ),
+                crop_presets=self._agent_crop_presets(camera),
             )
         if camera.driver in (DriverKind.UVC, DriverKind.NONE):
             return self._usb_driver(camera, host)
         return self._visca_driver(camera, host, camera.address, "visca")
+
+    def _agent_crop_presets(self, camera: CameraConfig) -> AgentCropPresets | None:
+        """Where an agent crop camera's stored windows live: its own settings (ADR 0023)."""
+        save_window = self._save_crop_window
+        if save_window is None:
+            return None
+
+        def current() -> CameraConfig:
+            return self._configs.get(camera.id, camera)
+
+        return AgentCropPresets(
+            stored=lambda n: current().crop.window(n),
+            names=lambda: [preset.model_dump() for preset in current().presets],
+            save=lambda n, window: save_window(camera.id, n, window),
+        )
 
     def _usb_driver(self, camera: CameraConfig, host: DriverHost) -> CameraDriver:
         """WP6a: the Pixy (`uvc`), or a camera without motion (`none`)."""

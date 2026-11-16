@@ -2320,3 +2320,23 @@ button.small {
 .obs-test-ok {
   color: var(--ok);
 }
+
+/* The camera node's own page (src/node/, ADR 0023): one column, phone first. */
+.node-page {
+  max-width: 900px;
+  margin: 0 auto;
+  padding: 1rem;
+}
+
+.node-camera-form {
+  display: grid;
+  gap: 0.5rem;
+  margin: 1rem 0;
+}
+
+.node-log {
+  max-height: 16rem;
+  overflow: auto;
+  font-size: 0.8rem;
+  white-space: pre-wrap;
+}
