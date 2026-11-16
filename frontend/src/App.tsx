@@ -21,6 +21,7 @@ export function App() {
             Playout
           </NavLink>
           <NavLink to="/playout/settings">Playout setup</NavLink>
+          <NavLink to="/feeds">Feeds</NavLink>
           <NavLink to="/audio" end>
             Audio
           </NavLink>

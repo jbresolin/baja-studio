@@ -39,6 +39,7 @@ from baja_studio.modules.agents import AgentsModule
 from baja_studio.modules.audio import AudioModule
 from baja_studio.modules.cameras import CamerasModule
 from baja_studio.modules.echo import EchoModule
+from baja_studio.modules.feeds import FeedsModule, FeedsSystem
 from baja_studio.modules.gateway import GatewayModule, GatewaySystem, installed_caddy_version
 from baja_studio.modules.heartbeat import HeartbeatModule
 from baja_studio.modules.home import HomeModule
@@ -65,12 +66,13 @@ def build_module_list(
     service_control: ServiceControl | None = None,
     gateway_system: GatewaySystem | None = None,
     system_probes: SystemProbes | None = None,
+    feeds_system: FeedsSystem | None = None,
 ) -> list[Module]:
     """The modules this service runs, in the order they appear on the home page.
 
     The services and Caddy are found through the folder the installer
-    announced; tests pass fakes for both, and for the PC probes the
-    readiness checks use (disk, clock, load).
+    announced; tests pass fakes for both, for MediaMTX (`feeds_system`),
+    and for the PC probes the readiness checks use (disk, clock, load).
     """
     layout = InstallLayout.from_environment()
     if service_control is None:
@@ -88,6 +90,8 @@ def build_module_list(
         # Crop cameras and previews use playout's one OBS connection (ADR 0020).
         CamerasModule(agents, obs=playout.obs_gateway),
         playout,
+        # Add to OBS goes through playout's OBS connection too (ADR 0022).
+        FeedsModule(service_control, feeds_system or FeedsSystem(), obs=playout.obs_gateway),
         AudioModule(),
         HostsModule(registry),
         GatewayModule(service_control, gateway_system),

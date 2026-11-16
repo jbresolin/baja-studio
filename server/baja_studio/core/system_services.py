@@ -1,9 +1,10 @@
 """The Windows services the installer registers, and the folder it installs into.
 
-The installer (installer/BajaStudio.iss) registers two services with NSSM:
-`BajaStudio` (this service) and `BajaStudioGateway` (Caddy). It tells this
-service where the program folder is through `BAJA_STUDIO_INSTALL_DIR`, so
-the gateway module can find `nssm.exe` and `caddy.exe`.
+The installer (installer/BajaStudio.iss) registers three services with NSSM:
+`BajaStudio` (this service), `BajaStudioGateway` (Caddy) and
+`BajaStudioFeeds` (MediaMTX, the feeds module). It tells this service where
+the program folder is through `BAJA_STUDIO_INSTALL_DIR`, so the modules can
+find `nssm.exe`, `caddy.exe` and `mediamtx.exe`.
 
 A service never edits its own registration by hand: the only thing the
 studio changes is the gateway's `AppEnvironmentExtra` (the Cloudflare token,
@@ -22,6 +23,7 @@ from typing import Protocol
 INSTALL_DIRECTORY_ENVIRONMENT_VARIABLE = "BAJA_STUDIO_INSTALL_DIR"
 STUDIO_SERVICE = "BajaStudio"
 GATEWAY_SERVICE = "BajaStudioGateway"
+FEEDS_SERVICE = "BajaStudioFeeds"
 # `nssm restart` waits for the service to stop and start again; Caddy does both in seconds.
 NSSM_TIMEOUT_SECONDS = 30.0
 NOT_INSTALLED = "not installed"
@@ -42,6 +44,11 @@ class InstallLayout:
     def caddy_executable(self) -> Path:
         """The Caddy build with the Cloudflare DNS module."""
         return self.program_directory / "caddy" / "caddy.exe"
+
+    @property
+    def mediamtx_executable(self) -> Path:
+        """MediaMTX, which the feeds service runs."""
+        return self.program_directory / "mediamtx" / "mediamtx.exe"
 
     @classmethod
     def from_environment(

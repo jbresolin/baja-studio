@@ -6,14 +6,15 @@ Why it is built this way: [ADR 0007](../docs/adr/0007-installer-and-gateway.md).
 
 | File | What it is |
 | --- | --- |
-| `build.ps1` | Assembles `dist\app`: embeddable Python with the service and the tray installed from a wheelhouse, the built frontend, Caddy, NSSM, ffmpeg, the icon, `VERSION`, `wheelhouse-manifest.json` |
+| `build.ps1` | Assembles `dist\app`: embeddable Python with the service and the tray installed from a wheelhouse, the built frontend, Caddy, NSSM, ffmpeg, MediaMTX, the icon, `VERSION`, `wheelhouse-manifest.json` |
 | `BajaStudio.iss` | Inno Setup script: services (gateway started once the studio answers), firewall, tray at logon, Start menu, upgrades, uninstall |
-| `smoke-test.ps1` | Installs silently, checks no failed step, Caddy up within 5 s and started once, the services, health, ffmpeg, the tray, a diagnostics bundle; uninstalls |
+| `smoke-test.ps1` | Installs silently, checks no failed step, Caddy up within 5 s and started once, the services, health, ffmpeg, MediaMTX, the tray, a diagnostics bundle; uninstalls |
 | `release-notes.md` | The top of every GitHub Release's notes (install, upgrade); GitHub's list of changes follows |
 | `python/pin.json` | Embeddable Python (3.12.10, the last 3.12 with Windows binaries) URL and SHA-256 |
 | `nssm/pin.json` | NSSM 2.24-101 (the build that works on current Windows) URL and SHA-256 |
 | `caddy/pin.json` | Caddy version, the Cloudflare DNS module, the Go and xcaddy versions it is built with, and the SHA-256 of the result |
 | `ffmpeg/pin.json` | ffmpeg 9.0.2, gyan.dev "essentials" build (GPL, x64), from its GitHub release, and its SHA-256 |
+| `mediamtx/pin.json` | MediaMTX v1.21.3 (MIT) for the feeds service: the Windows amd64 zip and its SHA-256, and the Linux build CI runs in the rig tests |
 | `icons/baja-icone.svg` | The Baja mascot artwork the icon is made from |
 | `icons/make_icons.py` | Makes `tray/baja_studio_tray/assets/baja-studio.ico` (full artwork at 256/48/32, single-fill silhouette at 24/20/16); run by hand, the result is committed |
 
@@ -46,6 +47,12 @@ no Windows wheel early.
   `folder_in_zip`), download the file, put its SHA-256
   (`Get-FileHash -Algorithm SHA256`) in the pin. For ffmpeg, use a numbered
   release of `GyanD/codexffmpeg`, never a `git` build: those are replaced.
+- **MediaMTX**: a stable release at least two weeks old. Change the version,
+  both URLs and both SHA-256 (the release's `checksums.sha256` lists them; check
+  against your own download). Then measure the new binary as ADR 0022 did (the
+  rig tests `tests/rig/test_mediamtx_real.py` run it; re-record
+  `tests/modules/feeds_fixtures/` if its API answers changed) and update the
+  fake's `VERSION` (`fakes/fake_mediamtx.py`): a test fails until they agree.
 - **The tray's dependencies** (pystray, Pillow): pinned in `tray/pyproject.toml`.
   pystray is pinned exactly because the tray overrides one of its private
   methods (ADR 0010, decision 8); check `app.py` when changing it.

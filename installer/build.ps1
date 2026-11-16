@@ -7,13 +7,14 @@
                         (tray\) and their dependencies installed from a wheelhouse
     dist\app\frontend   the built web pages
     dist\app\caddy      Caddy with the Cloudflare DNS module, built with xcaddy (+ LICENSE.txt)
-    dist\app\nssm       NSSM, which runs both as Windows services
+    dist\app\nssm       NSSM, which runs the three Windows services
     dist\app\ffmpeg     ffmpeg and ffprobe for playout (+ LICENSE.txt, README.txt)
+    dist\app\mediamtx   MediaMTX for the feeds service (+ LICENSE.txt)
     dist\app\baja-studio.ico, dist\app\VERSION, dist\app\wheelhouse-manifest.json
 
     Every download and the Caddy build are checked against the pins in
-    installer\python, installer\nssm, installer\ffmpeg and installer\caddy. The version is the one
-    already stamped in server\baja_studio\__init__.py
+    installer\python, installer\nssm, installer\ffmpeg, installer\mediamtx and installer\caddy.
+    The version is the one already stamped in server\baja_studio\__init__.py
     (python -m baja_studio.release_tools stamp-version ...).
 
     Needs Windows, Python 3.12 (64-bit) and, unless -SkipCaddy, Go at the pinned
@@ -118,7 +119,7 @@ if ($PSCmdlet.ShouldProcess($wheelhouse, 'Build the wheelhouse')) {
     Invoke-Native python @('-m', 'pip', 'install', '--no-index', '--find-links', $wheelhouse,
         '--target', (Join-Path $pythonDirectory 'Lib\site-packages'), "baja_studio==$version", 'baja_studio_tray')
     $installed = Invoke-Native (Join-Path $pythonDirectory 'python.exe') @('-c',
-        'import baja_studio, fastapi, uvicorn, serial, rtmidi; print(baja_studio.__version__)')
+        'import baja_studio, fastapi, uvicorn, serial, rtmidi, argon2; print(baja_studio.__version__)')
     if ($installed.Trim() -ne $version) { throw "the embedded Python reports $installed, not $version" }
     # The tray, with its icon frames (pystray itself only loads on a desktop).
     Invoke-Native (Join-Path $pythonDirectory 'python.exe') @('-c',
@@ -166,6 +167,22 @@ if ($PSCmdlet.ShouldProcess((Join-Path $app 'nssm'), "Unpack NSSM $($nssmPin.ver
     Expand-Archive $zip -DestinationPath $unpacked
     New-Item -ItemType Directory -Force (Join-Path $app 'nssm') | Out-Null
     Copy-Item (Join-Path $unpacked $nssmPin.executable_in_zip) (Join-Path $app 'nssm\nssm.exe')
+}
+
+# --- MediaMTX for the feeds service (WP14): the pinned Windows release, checked ---------
+$mediamtxPin = Read-Pin 'mediamtx'
+if ($PSCmdlet.ShouldProcess((Join-Path $app 'mediamtx'), "Unpack MediaMTX $($mediamtxPin.version)")) {
+    $zip = Get-PinnedDownload $mediamtxPin "mediamtx_$($mediamtxPin.version)_windows_amd64.zip"
+    $unpacked = Join-Path $cache 'mediamtx'
+    if (Test-Path $unpacked) { Remove-Item $unpacked -Recurse -Force }
+    Expand-Archive $zip -DestinationPath $unpacked
+    $target = New-Item -ItemType Directory -Force (Join-Path $app 'mediamtx')
+    # Only the program and its licence (MIT): the sample mediamtx.yml in the zip is not
+    # used, the studio writes the config into the data folder.
+    Copy-Item (Join-Path $unpacked $mediamtxPin.executable_in_zip) (Join-Path $target 'mediamtx.exe')
+    Copy-Item (Join-Path $unpacked $mediamtxPin.license_in_zip) (Join-Path $target 'LICENSE.txt')
+    $reported = Invoke-Native (Join-Path $target 'mediamtx.exe') @('--version') | Select-Object -First 1
+    if ($reported.Trim() -ne $mediamtxPin.version) { throw "mediamtx.exe reports '$reported'" }
 }
 
 # --- Caddy: built with xcaddy from pinned versions, then checked ------------------------

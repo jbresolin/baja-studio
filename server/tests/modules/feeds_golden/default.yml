@@ -1,0 +1,67 @@
+# Written by Baja Studio from the feeds settings (Feeds page). Edits here are overwritten.
+# The body is JSON, which MediaMTX reads as YAML.
+{
+  "sysLogPrefix": "baja-studio-2ea21a3b8397398b",
+  "logLevel": "info",
+  "logDestinations": [
+    "stdout"
+  ],
+  "api": true,
+  "apiAddress": "127.0.0.1:9997",
+  "metrics": false,
+  "pprof": false,
+  "playback": false,
+  "hls": false,
+  "webrtc": false,
+  "moq": false,
+  "rtsp": true,
+  "rtspTransports": [
+    "tcp"
+  ],
+  "rtspEncryption": "no",
+  "rtspAddress": "127.0.0.1:8554",
+  "rtmp": true,
+  "rtmpEncryption": "no",
+  "rtmpAddress": ":1935",
+  "srt": true,
+  "srtAddress": ":8890",
+  "authMethod": "internal",
+  "authInternalUsers": [
+    {
+      "user": "any",
+      "pass": "",
+      "ips": [
+        "127.0.0.1",
+        "::1"
+      ],
+      "permissions": [
+        {
+          "action": "read",
+          "path": ""
+        }
+      ]
+    },
+    {
+      "user": "any",
+      "pass": "",
+      "ips": [
+        "127.0.0.1",
+        "::1"
+      ],
+      "permissions": [
+        {
+          "action": "api"
+        }
+      ]
+    }
+  ],
+  "pathDefaults": {
+    "record": false,
+    "recordPath": "C:/ProgramData/BajaStudio/feeds-recordings/%path/%Y-%m-%d_%H-%M-%S-%f_%z",
+    "recordFormat": "fmp4",
+    "recordSegmentDuration": "10m",
+    "recordDeleteAfter": "0s",
+    "overridePublisher": true
+  },
+  "paths": {}
+}

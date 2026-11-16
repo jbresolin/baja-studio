@@ -2257,6 +2257,61 @@ button.small {
   }
 }
 
+/* Feeds page (WP14): one card per feed, URLs to copy, usable on a phone. */
+.feed-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 26rem), 1fr));
+  gap: 1rem;
+}
+
+.feed-card {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.75rem;
+  min-width: 0;
+}
+
+.feed-card h3 {
+  font-size: 0.9rem;
+  margin: 0.75rem 0 0.25rem;
+}
+
+.copy-field {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 0.25rem;
+}
+
+.copy-field input {
+  flex: 1;
+  min-width: 0;
+  font-family: monospace;
+}
+
+.feed-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  margin-top: 0.75rem;
+}
+
+.feed-form {
+  flex-wrap: wrap;
+}
+
+.feeds-service {
+  margin-bottom: 1rem;
+}
+
+.log-tail {
+  max-height: 16rem;
+  overflow: auto;
+  font-size: 0.75rem;
+  white-space: pre-wrap;
+}
+
 /* Camera setup's "Test connection" answer for a remote OBS (WP13). */
 .obs-test {
   color: var(--offline);

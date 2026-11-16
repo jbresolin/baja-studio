@@ -320,6 +320,19 @@ reading its tests.
   generated config files name the variable (`{env.CLOUDFLARE_API_TOKEN}`).
   Secrets are never logged, never in state, never in a command result, and
   never in an error message (NSSM errors name the verb and service only).
+- **A password a program only checks is given as a hash.** MediaMTX checks
+  feed publish passwords; its config gets a salted argon2id hash
+  (`argon2:...`), never the password, and the hash is the same at every write
+  so the file only changes when something did (ADR 0022). A secret a program
+  *uses* (a token it sends elsewhere) still goes through the environment.
+  Secrets an operator enters are saved through the settings API, never as a
+  command argument: commands go to the command log.
+- **A program configured through a file it watches** (MediaMTX) has one
+  writer, which checks first anything that would make the program exit (a
+  taken port), never writes twice inside the program's reload blind spot,
+  and confirms each write through the program's API (a fingerprint of the
+  file the program reports back), writing again and only then restarting the
+  service. A restart is never the way to apply a setting that reloads.
   The diagnostics bundle masks settings and also scrubs every secret value
   from every file it collects.
 

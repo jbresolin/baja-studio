@@ -40,6 +40,20 @@ jobs:
           else
             sudo apt-get update && sudo apt-get install -y ffmpeg
           fi
+      # The feeds rig tests run the real MediaMTX (WP14): the pinned Linux build,
+      # checked against its SHA-256. On Windows they are skipped.
+      - name: Download the pinned MediaMTX (feeds rig tests)
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          pin=installer/mediamtx/pin.json
+          url=$(python -c "import json,sys; print(json.load(open(sys.argv[1]))['linux_url'])" $pin)
+          sha=$(python -c "import json,sys; print(json.load(open(sys.argv[1]))['linux_sha256'])" $pin)
+          curl -fsSL --retry 5 -o "$RUNNER_TEMP/mediamtx.tar.gz" "$url"
+          echo "$sha  $RUNNER_TEMP/mediamtx.tar.gz" | sha256sum -c -
+          mkdir -p "$RUNNER_TEMP/mediamtx"
+          tar xzf "$RUNNER_TEMP/mediamtx.tar.gz" -C "$RUNNER_TEMP/mediamtx"
+          echo "BAJA_STUDIO_TEST_MEDIAMTX=$RUNNER_TEMP/mediamtx/mediamtx" >> "$GITHUB_ENV"
       - name: Test the rehearsal rig (pytest -m rig)
         working-directory: server
         run: pytest -m rig

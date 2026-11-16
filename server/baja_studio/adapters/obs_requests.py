@@ -231,3 +231,23 @@ class ObsRequestsMixin:
         if width is not None:
             data["imageWidth"] = width
         return str(self.request("GetSourceScreenshot", data).get("imageData", ""))
+
+    def create_input(
+        self, scene_name: str, input_name: str, input_kind: str, settings: dict[str, Any]
+    ) -> int:
+        """Make a new input in `scene_name` (enabled); returns its scene item id.
+
+        OBS refuses a name that any source already has (code 601), so an
+        existing input is never changed by this request.
+        """
+        data = self.request(
+            "CreateInput",
+            {
+                "sceneName": scene_name,
+                "inputName": input_name,
+                "inputKind": input_kind,
+                "inputSettings": settings,
+                "sceneItemEnabled": True,
+            },
+        )
+        return int(data.get("sceneItemId", 0))

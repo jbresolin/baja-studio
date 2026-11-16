@@ -154,6 +154,12 @@ class FakeObs(FakeObsSources, FakeObsRequests):
             if not self.program_scene:
                 self.program_scene = name
 
+    def next_scene_item_id(self) -> int:
+        """A new scene item id, unique in this OBS (call with the lock held)."""
+        item_id = self._next_item_id
+        self._next_item_id += 1
+        return item_id
+
     def add_media_input(self, name: str) -> None:
         """Create a media source (`ffmpeg_source`) with no file."""
         with self.lock:

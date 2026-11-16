@@ -38,6 +38,7 @@ export const MODULE_SETTINGS_PAGES: Record<string, { path: string; title: string
   cameras: { path: "/cameras/config", title: "Camera setup" },
   playout: { path: "/playout/settings", title: "Playout setup" },
   audio: { path: "/audio/config", title: "Audio setup" },
+  feeds: { path: "/feeds", title: "Feeds" },
 };
 
 type Notice = { kind: "saved" | "error" | "conflict"; text: string } | null;

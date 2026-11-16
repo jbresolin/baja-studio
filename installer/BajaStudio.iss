@@ -2,9 +2,11 @@
 ;
 ; Installs dist\app (made by build.ps1) to %ProgramFiles%\BajaStudio, keeps the
 ; data in %ProgramData%\BajaStudio (or the folder chosen on first install), and
-; registers two Windows services with NSSM:
+; registers three Windows services with NSSM:
 ;   BajaStudio         the studio service (python -m baja_studio, port 8888)
 ;   BajaStudioGateway  Caddy on ports 80/443, started once BajaStudio answers /api/health
+;   BajaStudioFeeds    MediaMTX (RTMP 1935, SRT 8890/UDP, RTSP 8554 on 127.0.0.1), the remote
+;                      feeds; independent of BajaStudio, so feeds survive a studio restart
 ; and, unless the task is unticked, starts the tray icon (pythonw -m baja_studio_tray)
 ; at every user's logon. ffmpeg and ffprobe for playout are in {app}\ffmpeg.
 ;
@@ -51,7 +53,7 @@ CloseApplications=no
 SetupLogging=yes
 
 [Tasks]
-Name: firewall; Description: "Open the firewall for LAN access (TCP 80, 443 and 8888 on private and domain networks)"
+Name: firewall; Description: "Open the firewall for LAN access (TCP 80, 443, 8888 and 1935, UDP 8890 for SRT, on private and domain networks)"
 Name: tray; Description: "Show the Baja Studio status icon in the taskbar when anyone logs on"
 
 [InstallDelete]
@@ -61,6 +63,7 @@ Type: filesandordirs; Name: "{app}\frontend"
 Type: filesandordirs; Name: "{app}\caddy"
 Type: filesandordirs; Name: "{app}\nssm"
 Type: filesandordirs; Name: "{app}\ffmpeg"
+Type: filesandordirs; Name: "{app}\mediamtx"
 
 [Files]
 Source: "{#DistDirectory}\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs
@@ -94,7 +97,14 @@ Filename: "http://localhost:8888/"; Description: "Open Baja Studio in the browse
 const
   StudioService = 'BajaStudio';
   GatewayService = 'BajaStudioGateway';
+  FeedsService = 'BajaStudioFeeds';
   FirewallRule = 'Baja Studio (LAN)';
+  { netsh takes one protocol per rule: SRT (the feeds' UDP port) has its own. }
+  FeedsFirewallRule = 'Baja Studio feeds (LAN, SRT)';
+  { MediaMTX's ports as the feeds module's defaults (feeds/config.py); another port
+    chosen in the feeds settings must be opened by hand. }
+  RtmpPort = '1935';
+  SrtPort = '8890';
   RegistryKey = 'Software\BajaStudio';
   StudioHealthUrl = 'http://127.0.0.1:8888/api/health';
   { The studio answers within ~10 s; Caddy is started anyway after this. }
@@ -239,10 +249,13 @@ end;
 
 function PrepareToInstall(var NeedsRestart: Boolean): String;
 begin
-  { Upgrade: stop both services (Caddy first, it depends on the studio) so the
-    program folder can be replaced. NSSM is still the old version's here. }
+  { Upgrade: stop the services (Caddy first, it depends on the studio) so the
+    program folder can be replaced; MediaMTX too, its mediamtx.exe is replaced.
+    NSSM is still the old version's here; a service it does not know yet (the
+    feeds, on the first upgrade that brings them) just fails to stop. }
   if FileExists(ExpandConstant('{app}\nssm\nssm.exe')) then
   begin
+    Nssm('stop ' + FeedsService);
     Nssm('stop ' + GatewayService);
     Nssm('stop ' + StudioService);
   end;
@@ -296,16 +309,30 @@ begin
     'Baja Studio gateway', 'Caddy: HTTPS for the studio and the apps behind it.', 'caddy');
   NssmStep('set ' + GatewayService + ' AppParameters "run --config Caddyfile --adapter caddyfile"');
   NssmStep('set ' + GatewayService + ' DependOnService ' + StudioService);
+
+  { MediaMTX runs in <data>\mediamtx and reads the mediamtx.yml the studio writes
+    there (and reloads it by itself when it changes). No DependOnService: stopping
+    or restarting the studio must not stop the feeds OBS is showing. }
+  ConfigureCommon(FeedsService, ExpandConstant('{app}\mediamtx\mediamtx.exe'), Data + '\mediamtx',
+    'Baja Studio feeds', 'MediaMTX: drone and remote camera feeds (RTMP, SRT) for OBS.', 'mediamtx');
+  NssmStep('set ' + FeedsService + ' AppParameters mediamtx.yml');
 end;
 
 procedure ConfigureFirewall();
 begin
-  { Delete first, then add: running the installer again never doubles the rule. }
+  { Delete first, then add: running the installer again never doubles a rule.
+    RTSP (8554) stays closed: OBS reads the feeds on this PC. }
   NetSh('delete rule name="' + FirewallRule + '"');
+  NetSh('delete rule name="' + FeedsFirewallRule + '"');
   if WizardIsTaskSelected('firewall') then
+  begin
     if NetSh('add rule name="' + FirewallRule + '" dir=in action=allow protocol=TCP' +
-      ' localport=80,443,8888 profile=private,domain') <> 0 then
+      ' localport=80,443,8888,' + RtmpPort + ' profile=private,domain') <> 0 then
       FailedSteps := FailedSteps + #13#10 + 'firewall rule';
+    if NetSh('add rule name="' + FeedsFirewallRule + '" dir=in action=allow protocol=UDP' +
+      ' localport=' + SrtPort + ' profile=private,domain') <> 0 then
+      FailedSteps := FailedSteps + #13#10 + 'firewall rule for SRT';
+  end;
 end;
 
 procedure CurStepChanged(CurStep: TSetupStep);
@@ -317,16 +344,26 @@ begin
   Data := DataDirectory('');
   ForceDirectories(Data + '\logs');
   ForceDirectories(Data + '\caddy');
+  ForceDirectories(Data + '\mediamtx');
   { Caddy may start before the studio has written its Caddyfile: give it the
     default one now. An upgrade keeps the one the studio wrote. }
   if RunHidden(ExpandConstant('{app}\python\python.exe'),
       '-m baja_studio.modules.gateway.caddyfile --if-missing --data-dir ' + AddQuotes(Data)) <> 0 then
     FailedSteps := FailedSteps + #13#10 + 'writing the default Caddyfile';
+  { The same for MediaMTX, which does not wait for the studio. }
+  if RunHidden(ExpandConstant('{app}\python\python.exe'),
+      '-m baja_studio.modules.feeds.mediamtx_config --if-missing --data-dir ' + AddQuotes(Data)) <> 0 then
+    FailedSteps := FailedSteps + #13#10 + 'writing the default MediaMTX config';
   ConfigureServices();
   ConfigureFirewall();
   if not WizardIsTaskSelected('tray') then
     RegDeleteValue(HKLM, '{#RunKey}', '{#TrayRunValue}');
   NssmStep('start ' + StudioService);
+  { The feeds need nothing from the studio: back at once after an upgrade. Like
+    Caddy, NSSM keeps restarting MediaMTX if a port is taken (the Feeds page
+    names the program), so a failed first start is not a failed step. }
+  if Nssm('start ' + FeedsService) <> 0 then
+    Log('the feeds service did not start at once; NSSM keeps retrying it');
   if not WaitForStudio() then
     FailedSteps := FailedSteps + #13#10 +
       Format('Baja Studio did not answer within %d s (see logs\service-stderr.log)', [StudioWaitSeconds]);
@@ -351,7 +388,7 @@ begin
   KeepDataOnUninstall := ExpandConstant('{param:PURGEDATA|0}') <> '1';
   if KeepDataOnUninstall and (UninstallDataDirectory <> '') then
     KeepDataOnUninstall := SuppressibleMsgBox(
-      'Keep the settings, playout queue, logs and certificates in ' + UninstallDataDirectory +
+      'Keep the settings, playout queue, logs, certificates and feed recordings in ' + UninstallDataDirectory +
       '?' + #13#10#13#10 + 'Yes keeps them for a later install. No deletes them.',
       mbConfirmation, MB_YESNO, IDYES) = IDYES;
   Result := True;
@@ -362,11 +399,14 @@ begin
   if CurUninstallStep = usUninstall then
   begin
     StopTrays();
+    Nssm('stop ' + FeedsService);
     Nssm('stop ' + GatewayService);
     Nssm('stop ' + StudioService);
+    Nssm('remove ' + FeedsService + ' confirm');
     Nssm('remove ' + GatewayService + ' confirm');
     Nssm('remove ' + StudioService + ' confirm');
     NetSh('delete rule name="' + FirewallRule + '"');
+    NetSh('delete rule name="' + FeedsFirewallRule + '"');
   end;
   if (CurUninstallStep = usPostUninstall) and not KeepDataOnUninstall and
      (UninstallDataDirectory <> '') then

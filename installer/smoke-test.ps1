@@ -12,14 +12,15 @@
        it, so it never exits for want of a Caddyfile: LIVESTACK-55);
     3. wait for /api/health to answer with this version, home and gateway ok
        (playout and audio stay "offline: not configured" on a runner);
-    4. both services running; ffmpeg and ffprobe installed; the tray's Run entry
-       there, and the tray starts, polls once and reports this version;
+    4. the three services running; ffmpeg and ffprobe installed; MediaMTX's
+       control API answering on 127.0.0.1:9997 and the feeds module ok;
+       the tray's Run entry there, and the tray starts, polls once and reports this version;
     5. build a diagnostics bundle and check it holds no secret and the Caddy version;
-    6. uninstall silently; services, firewall rule and Run entry gone, data kept.
+    6. uninstall silently; services, firewall rules and Run entry gone, data kept.
 
     Leaves install.log, uninstall.log and the bundle in -OutputDirectory, and,
-    whatever happens, a copy of the data folder's logs and Caddyfile with
-    NSSM's view of both services (in data\), for when something fails.
+    whatever happens, a copy of the data folder's logs, Caddyfile and mediamtx.yml
+    with NSSM's view of the services (in data\), for when something fails.
 #>
 param(
     [Parameter(Mandatory)] [string] $Installer,
@@ -52,13 +53,13 @@ function Get-ModuleHealth($Health, [string] $Name) {
 function Save-ServiceEvidence {
     <# Copy what the services wrote, before the uninstaller (or the runner) removes it. #>
     $evidence = New-Item -ItemType Directory -Force (Join-Path $output 'data')
-    foreach ($item in 'logs', 'caddy\Caddyfile') {
+    foreach ($item in 'logs', 'caddy\Caddyfile', 'mediamtx\mediamtx.yml') {
         $source = Join-Path $dataDirectory $item
         if (Test-Path $source) { Copy-Item $source $evidence -Recurse -Force }
     }
     $nssm = Join-Path $programDirectory 'nssm\nssm.exe'
     if (Test-Path $nssm) {
-        foreach ($service in 'BajaStudio', 'BajaStudioGateway') {
+        foreach ($service in 'BajaStudio', 'BajaStudioGateway', 'BajaStudioFeeds') {
             "$service status: $(& $nssm status $service 2>&1)" | Add-Content (Join-Path $evidence 'services.txt')
             "$service params: $(& $nssm get $service AppParameters 2>&1)" | Add-Content (Join-Path $evidence 'services.txt')
         }
@@ -111,11 +112,12 @@ Wait-Until {
     $script:health = Invoke-RestMethod 'http://localhost:8888/api/health' -TimeoutSec 5
     $script:health.version -eq $Version -and
     (Get-ModuleHealth $script:health 'home') -eq 'ok' -and
-    (Get-ModuleHealth $script:health 'gateway') -eq 'ok'
-} "health answers $Version with home and gateway ok"
+    (Get-ModuleHealth $script:health 'gateway') -eq 'ok' -and
+    (Get-ModuleHealth $script:health 'feeds') -eq 'ok'
+} "health answers $Version with home, gateway and feeds ok"
 $health | ConvertTo-Json -Depth 5 | Write-Host
 
-foreach ($service in 'BajaStudio', 'BajaStudioGateway') {
+foreach ($service in 'BajaStudio', 'BajaStudioGateway', 'BajaStudioFeeds') {
     $status = (Get-Service $service).Status
     if ($status -ne 'Running') { throw "$service is $status" }
     Write-Host "ok: $service running"
@@ -129,6 +131,14 @@ foreach ($tool in 'ffmpeg', 'ffprobe') {
     Write-Host "ok: $banner"
 }
 if (-not (Test-Path (Join-Path $programDirectory 'ffmpeg\LICENSE.txt'))) { throw 'ffmpeg LICENSE.txt is missing' }
+
+Write-Host '--- MediaMTX (the feeds service) answers on loopback, with HLS off'
+$mediamtx = Invoke-RestMethod 'http://127.0.0.1:9997/v3/info' -TimeoutSec 5
+Write-Host "ok: MediaMTX $($mediamtx.version)"
+if (-not (Test-Path (Join-Path $programDirectory 'mediamtx\LICENSE.txt'))) { throw 'MediaMTX LICENSE.txt is missing' }
+# MediaMTX's own HLS default is 8888, the studio's port: the studio still owns it.
+$studioOn8888 = Get-NetTCPConnection -LocalPort 8888 -State Listen | ForEach-Object { (Get-Process -Id $_.OwningProcess).ProcessName }
+if ($studioOn8888 -contains 'mediamtx') { throw 'MediaMTX listens on 8888' }
 
 Write-Host '--- the tray starts at logon, and runs'
 $runEntry = (Get-ItemProperty $runKey -Name BajaStudioTray -ErrorAction SilentlyContinue).BajaStudioTray
@@ -174,9 +184,10 @@ Start-Process $uninstaller -Wait -ArgumentList @(
     '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', "/LOG=$(Join-Path $output 'uninstall.log')")
 # The uninstaller re-launches itself from %TEMP% and returns at once: wait for its work.
 Wait-Until { -not (Test-Path $uninstaller) } 'the program folder is removed'
-Wait-Until { -not (Get-Service 'BajaStudio', 'BajaStudioGateway' -ErrorAction SilentlyContinue) } 'both services are removed'
-$rule = Get-NetFirewallRule -DisplayName 'Baja Studio (LAN)' -ErrorAction SilentlyContinue
-if ($rule) { throw 'the firewall rule is still there' }
+Wait-Until { -not (Get-Service 'BajaStudio', 'BajaStudioGateway', 'BajaStudioFeeds' -ErrorAction SilentlyContinue) } 'the services are removed'
+foreach ($ruleName in 'Baja Studio (LAN)', 'Baja Studio feeds (LAN, SRT)') {
+    if (Get-NetFirewallRule -DisplayName $ruleName -ErrorAction SilentlyContinue) { throw "the firewall rule '$ruleName' is still there" }
+}
 if (Get-ItemProperty $runKey -Name BajaStudioTray -ErrorAction SilentlyContinue) { throw "the tray's Run entry is still there" }
 if (-not (Test-Path (Join-Path $dataDirectory 'baja-studio.sqlite3'))) { throw 'the data was not kept' }
 Write-Host 'ok: uninstalled, data kept'
