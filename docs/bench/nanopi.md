@@ -31,8 +31,9 @@ and the node's log (`journalctl -u baja-camera-node`, or its page).
       It prints `decoder: mjpeg_rkmpp (Rockchip board)`, the camera and its
       modes, and `encoder Rockchip MPP (h264_rkmpp): works`. Note: fps in and
       out, dropped frames, bitrate, window apply time, move latency and the
-      board's CPU % for the 60 s pass; then the 20 s CPU-decoder pass, for
-      comparison.
+      board's CPU % for the 60 s pass. (No CPU-decoder pass on this board:
+      decoding 4K on its CPU runs it out of memory.) Also `free -m`: the
+      lowest "available" during the pass (16 Nov, 4K30 on 1 GB: 219 MB).
 - [ ] If the encoder "does not work", keep its message (MPP/RGA permission,
       the patch missing, …) and the last lines it printed.
 - [ ] `--synthetic`: the same without the camera (test card uploaded to the
