@@ -40,7 +40,7 @@ studio's side.
    output size never changes, so nothing after the RGA is reconfigured (the
    laptop's `null` workaround is not needed).
 5. **ffmpeg-rockchip cannot move the RGA crop while running, so the node's
-   ffmpeg carries a patch**
+   ffmpeg carries a patch** (0001; 0002 and 0003 are in decision 8)
    (`installer/ffmpeg-rockchip/0001-vpp_rkrga-move-the-crop-while-running.patch`,
    about 100 lines): `cw`/`ch`/`cx`/`cy` become runtime options of
    `vpp_rkrga`; a command re-evaluates them, clamps the crop into the frame,
@@ -60,24 +60,35 @@ studio's side.
    counts as not working, with the reason. `h264_rkmpp` forced without the
    Rockchip decoder is refused untested; x264 forced on the Rockchip path
    gets the picture downloaded first.
-8. **The synthetic camera on the board is uploaded to the hardware**
+8. **Few 4K frame buffers, so a 1 GB board fits** (found on the bench,
+   16 Nov: 1080p60 ran, 4K30 froze the 1 GB R3S as its memory ran out). A
+   4K frame takes about 16 MB in every buffer that holds one, and stock
+   ffmpeg asks the webcam driver for its maximum (32 for uvcvideo) and lets
+   the MPP decoder keep 20: more than 850 MB. Two more patches of the
+   node's ffmpeg make both counts options (`-v4l2_buffers` on the V4L2
+   input, `-frame_pool` on `mjpeg_rkmpp`); the node asks for 4 and 10
+   (`rockchip.V4L2_CAPTURE_BUFFERS`, `DECODER_FRAME_POOL`), about 230 MB.
+   MJPEG keeps no reference frames, and the graph holds only a few at once
+   (the RGA's two in flight, the snapshot's one or two). Only the Rockchip
+   path passes them: a stock ffmpeg would refuse an unknown option.
+9. **The synthetic camera on the board is uploaded to the hardware**
    (`-init_hw_device rkmpp`, `format=nv12,hwupload`), so the bench measures
    the RGA and the encoder without a webcam.
 
 ### V4L2: cameras, modes, controls
 
-9. **ioctls, not a tool's text** (`adapters/v4l2_ioctl.py`): ctypes copies of
+10. **ioctls, not a tool's text** (`adapters/v4l2_ioctl.py`): ctypes copies of
    the kernel structures, sizes and request numbers checked against
    `videodev2.h` in a test. A `V4l2System`/`V4l2Device` protocol so the fake
    (`fakes/fake_v4l2.py`) runs the real listing and control code. Nothing is
    kept open: every question opens, asks, closes (an unplug never leaves a
    dead handle). `fcntl` is imported on Linux only: the laptop's node imports
    this module too.
-10. **A camera's identity is its `/dev/v4l/by-path/...-video-index0` link**:
+11. **A camera's identity is its `/dev/v4l/by-path/...-video-index0` link**:
     stable per USB port and different for two S600s, the same rule as
     DirectShow's device path (`imaging/usb_devices.py`). The pipeline opens
     the link; the UVC child finds the same camera by it.
-11. **Image controls through the same UVC child**, with a V4L2 backend
+12. **Image controls through the same UVC child**, with a V4L2 backend
     (`childprocs/uvc_v4l2.py`) beside the duvc one, chosen by platform
     (`uvc_child.make_backend`; `BAJA_STUDIO_UVC_BACKEND=fake-v4l2` for the
     fake). Auto partners are written first (turning auto off before writing
@@ -85,18 +96,18 @@ studio's side.
     with auto on is not written. A replug shows as a new device node under
     the same link and is reported as `reopened`, so the node writes the
     camera's settings again (as on Windows).
-12. **Exposure in DirectShow's units** (whole log2 seconds, one stop a step):
+13. **Exposure in DirectShow's units** (whole log2 seconds, one stop a step):
     V4L2 counts 100 µs steps; the backend converts both ways, so every USB
     camera in the studio speaks one unit and *Copy settings from* between a
     laptop's camera and the NanoPi's does not turn 1/32 s into 1/10000 s.
 
 ### Packaging
 
-13. **Target image: FriendlyElec's Ubuntu 24.04 (Noble) Core with its 6.1
+14. **Target image: FriendlyElec's Ubuntu 24.04 (Noble) Core with its 6.1
     vendor kernel**: the MPP and RGA drivers are in the vendor kernel only
     (a mainline image, Armbian's "current", has no `/dev/mpp_service`), and
     Noble has Python 3.12 (`requires-python`) and glibc 2.39.
-14. **The node's ffmpeg is built from source in CI**
+15. **The node's ffmpeg is built from source in CI**
     (`installer/ffmpeg-rockchip/build.sh`, pinned in its `pin.json`):
     nyanmisaka's MPP (jellyfin-mpp) and librga (jellyfin-rga), and
     ffmpeg-rockchip at a pinned commit with the patch, plus zmq, SRT and
@@ -106,7 +117,7 @@ studio's side.
     encoders, filters, SRT and the patch's runtime flags. jellyfin-mpp is
     rebased onto Rockchip's MPP as a whole, so its newest commit is younger
     than the two weeks the other pins wait: noted in the pin.
-15. **`BajaCameraNode-<version>-linux-arm64.tar.gz` and `install.sh`**
+16. **`BajaCameraNode-<version>-linux-arm64.tar.gz` and `install.sh`**
     (`installer/linux-node/`): a wheelhouse for arm64 Python 3.12 (the node's
     dependencies without python-rtmidi, which only the studio's audio uses:
     `release_tools linux-node-requirements`), the node's page, the ffmpeg
@@ -118,7 +129,7 @@ studio's side.
     control-group kill is the Linux side of the Windows job object**: every
     ffmpeg the node started goes with it. The udev rule gives group video
     `/dev/mpp_service`, `/dev/rga` and the DMA heaps.
-16. **The release workflow builds and smoke-tests it on an arm64 runner**:
+17. **The release workflow builds and smoke-tests it on an arm64 runner**:
     install, `/agent/info` (contract 1.1), the page, the ffmpeg's patch
     flag, an upgrade in place, uninstall; a tag attaches the package to the
     release. The runner has no Rockchip hardware: the hardware path is the
@@ -140,9 +151,10 @@ studio's side.
   ffmpeg-rockchip's sources, not a recorded board log.
 - The node's `ffmpeg_path` setting defaults to the bundled build; a system
   ffmpeg without the patch is refused by the encoder test with a reason.
-- Whether the MPP decoder's frame pool copes with the frames the snapshot
-  branch holds (`split` + `fps=1` keep one or two DRM frames alive); if the
-  decoder starves, the bench shows stalls and the snapshot branch moves
-  after a `hwdownload` of a smaller frame instead.
+- Whether 10 decoded frames are enough for what the graph holds (`split`,
+  the RGA's two in flight, `fps=1` on the snapshot branch); too few shows
+  as stalls on the bench, and the pool grows by a frame or two.
+- Whether the S600's 4K MJPEG buffer is really 16 MB
+  (`v4l2-ctl --get-fmt-video` shows its `Size Image`).
 - One camera per R3S: two 4K MJPEG streams would not fit its decoder (and
   it has one USB 3 port).

@@ -9,8 +9,9 @@
 #
 #   1. Rockchip MPP (the video codec's library: MJPEG decode, H.264 encode),
 #   2. librga (the 2D engine's library: crop and scale),
-#   3. ffmpeg-rockchip with the node's patch (the RGA crop can move while
-#      running, which the window needs), plus zmq, SRT and x264,
+#   3. ffmpeg-rockchip with the node's patches (the RGA crop can move while
+#      running, which the window needs; and options to keep few 4K frame
+#      buffers, so a 1 GB board does not run out), plus zmq, SRT and x264,
 #
 # all installed under /opt/baja-camera-node/ffmpeg (bin/ and lib/, ffmpeg's
 # RUNPATH pointing at ../lib), checks the result, and packs that folder.
@@ -95,6 +96,8 @@ filters=$("$ffmpeg" -hide_banner -filters)
 protocols=$("$ffmpeg" -hide_banner -protocols)
 rkmpp_help=$("$ffmpeg" -hide_banner -h encoder=h264_rkmpp)
 rga_help=$("$ffmpeg" -hide_banner -h filter=vpp_rkrga)
+v4l2_help=$("$ffmpeg" -hide_banner -h demuxer=v4l2)
+mjpeg_help=$("$ffmpeg" -hide_banner -h decoder=mjpeg_rkmpp)
 check() {  # check <what> <text> <extended regex>
   if grep -Eq -- "$3" <<<"$2"; then echo "ok: $1"; else echo "MISSING: $1" >&2; exit 1; fi
 }
@@ -112,6 +115,9 @@ check "h264_rkmpp -profile" "$rkmpp_help" '-profile '
 check "vpp_rkrga cw at runtime" "$rga_help" '^ +cw +<[a-z]+> +[^ ]*T'
 check "vpp_rkrga cx at runtime" "$rga_help" '^ +cx +<[a-z]+> +[^ ]*T'
 check "vpp_rkrga cy at runtime" "$rga_help" '^ +cy +<[a-z]+> +[^ ]*T'
+# Patches 0002 and 0003: few frame buffers, so 4K fits a 1 GB board.
+check "v4l2 -v4l2_buffers" "$v4l2_help" '-v4l2_buffers '
+check "mjpeg_rkmpp -frame_pool" "$mjpeg_help" '-frame_pool '
 
 tar -C "$(dirname "$prefix")" -cJf "$output" "$(basename "$prefix")"
 sha256sum "$output"

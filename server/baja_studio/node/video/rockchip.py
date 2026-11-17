@@ -52,6 +52,14 @@ RGA_ALIGNMENT = 2
 RGA_SNAPSHOT_WIDTH = 480
 # Device nodes a Rockchip board with MPP (video codec) and RGA (2D engine) has.
 ROCKCHIP_DEVICE_NODES = (Path("/dev/mpp_service"), Path("/dev/rga"))
+# Memory (the 1 GB R3S): a 4K frame is about 16 MB in every buffer that holds one, and
+# stock ffmpeg keeps far too many for a 1 GB board (the board froze at 4K30 on the
+# bench). These two options come from the node's ffmpeg patches 0002 and 0003.
+# Frames the webcam driver fills ahead (stock: the driver's maximum, 32 for uvcvideo).
+V4L2_CAPTURE_BUFFERS = 4
+# Decoded frames the MPP decoder may keep (stock: 20). MJPEG keeps no reference frames;
+# the graph holds a few at once (the RGA's two in flight, the snapshot's one or two).
+DECODER_FRAME_POOL = 10
 # The hardware device ffmpeg opens for the synthetic camera's upload (`-init_hw_device`).
 HW_DEVICE_NAME = "rk"
 HELP_TIMEOUT_SECONDS = 10.0
@@ -79,12 +87,18 @@ def min_rga_crop_width(output_width: int) -> int:
 
 
 def decoder_arguments() -> list[str]:
-    """Decode MJPEG on the VPU into DRM PRIME frames (given before `-i`)."""
+    """Decode MJPEG on the VPU into DRM PRIME frames, keeping few of them (given before `-i`)."""
     return [
         "-hwaccel", "rkmpp",
         "-hwaccel_output_format", "drm_prime",
         "-c:v", ROCKCHIP_DECODER,
+        "-frame_pool", str(DECODER_FRAME_POOL),
     ]  # fmt: skip
+
+
+def capture_buffer_arguments() -> list[str]:
+    """Ask the webcam driver for few frame buffers (a V4L2 input option, before `-i`)."""
+    return ["-v4l2_buffers", str(V4L2_CAPTURE_BUFFERS)]
 
 
 def synthetic_upload_arguments() -> list[str]:

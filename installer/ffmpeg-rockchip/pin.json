@@ -6,7 +6,9 @@
     "date": "2026-10-25",
     "version": "ffmpeg 9.0.2 with Rockchip MPP/RGA",
     "patches": [
-      "0001-vpp_rkrga-move-the-crop-while-running.patch"
+      "0001-vpp_rkrga-move-the-crop-while-running.patch",
+      "0002-v4l2-number-of-capture-buffers-as-an-option.patch",
+      "0003-rkmppdec-cap-on-the-decoded-frame-pool.patch"
     ]
   },
   "mpp": {

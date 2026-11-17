@@ -11,7 +11,10 @@ from pathlib import Path
 
 from baja_studio.node.video.crop_commands import CropPixels
 from baja_studio.node.video.rockchip import (
+    DECODER_FRAME_POOL,
     RGA_FILTER_TARGET,
+    V4L2_CAPTURE_BUFFERS,
+    capture_buffer_arguments,
     decoder_arguments,
     is_rockchip_board,
     min_rga_crop_width,
@@ -73,9 +76,20 @@ def test_the_narrowest_crop_is_what_the_rga_can_scale_eight_times() -> None:
 
 
 def test_the_camera_is_decoded_by_the_vpu_into_hardware_frames() -> None:
-    assert decoder_arguments() == [
+    assert decoder_arguments()[:6] == [
         "-hwaccel", "rkmpp", "-hwaccel_output_format", "drm_prime", "-c:v", "mjpeg_rkmpp",
     ]  # fmt: skip
+
+
+def test_few_4k_frames_are_kept_so_a_1_gb_board_does_not_run_out() -> None:
+    # A 4K frame takes about 16 MB in every buffer that holds one. Stock ffmpeg
+    # keeps up to 32 in the camera driver and 20 in the decoder: more than 850 MB,
+    # and the 1 GB board froze. The node asks for 4 and 10: about 230 MB.
+    assert decoder_arguments()[-2:] == ["-frame_pool", "10"]
+    assert capture_buffer_arguments() == ["-v4l2_buffers", "4"]
+    frame_megabytes = 3840 * 2160 * 2 / 1e6  # the decoder's 4:2:2 picture
+    held = (V4L2_CAPTURE_BUFFERS + DECODER_FRAME_POOL) * frame_megabytes
+    assert held < 250
 
 
 def test_the_rga_filter_keeps_a_fixed_1080p_output_and_a_16_by_9_crop() -> None:

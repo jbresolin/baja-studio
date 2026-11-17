@@ -119,10 +119,16 @@ def v4l2_input_arguments(spec: PipelineSpec) -> list[str]:
     The same start-up options as DirectShow's (`LIVE_INPUT_OPTIONS`), and a
     packet queue of about the same quarter second (`V4L2_QUEUE_PACKETS`).
     """
-    decoder = rockchip.decoder_arguments() if spec.on_rockchip else ["-c:v", spec.decoder]
+    if spec.on_rockchip:
+        # The node's own ffmpeg build: few buffers, so 4K fits a 1 GB board (rockchip.py).
+        decoder = rockchip.decoder_arguments()
+        buffers = rockchip.capture_buffer_arguments()
+    else:
+        decoder, buffers = ["-c:v", spec.decoder], []
     return [
         "-f", "v4l2",
         "-thread_queue_size", V4L2_QUEUE_PACKETS,
+        *buffers,
         *LIVE_INPUT_OPTIONS,
         "-input_format", "mjpeg",
         "-video_size", f"{spec.input_width}x{spec.input_height}",

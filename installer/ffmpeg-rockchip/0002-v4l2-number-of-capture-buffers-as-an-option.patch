@@ -1,0 +1,39 @@
+diff --git a/libavdevice/v4l2.c b/libavdevice/v4l2.c
+index ee68dae..a8e10a9 100644
+--- a/libavdevice/v4l2.c
++++ b/libavdevice/v4l2.c
+@@ -52,6 +52,7 @@
+ #include <libv4l2.h>
+ #endif
+ 
++/* Default for the "v4l2_buffers" option: as many as the driver allows (uvcvideo: 32). */
+ static const int desired_video_buffers = 256;
+ 
+ #define V4L_ALLFORMATS  3
+@@ -108,6 +109,7 @@ struct video_data {
+     char *framerate;    /**< Set by a private option. */
+ 
+     int use_libv4l2;
++    int desired_buffers; /* "v4l2_buffers": capture buffers asked of the driver */
+     int (*open_f)(const char *file, int oflag, ...);
+     int (*close_f)(int fd);
+     int (*dup_f)(int fd);
+@@ -357,7 +359,7 @@ static int mmap_init(AVFormatContext *ctx)
+     struct video_data *s = ctx->priv_data;
+     struct v4l2_requestbuffers req = {
+         .type   = (s->multi_planer) ? V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE : V4L2_BUF_TYPE_VIDEO_CAPTURE,
+-        .count  = desired_video_buffers,
++        .count  = s->desired_buffers,
+         .memory = V4L2_MEMORY_MMAP
+     };
+ 
+@@ -1236,6 +1238,9 @@ static const AVOption options[] = {
+     { "abs",          "use absolute timestamps (wall clock)",                     OFFSET(ts_mode),      AV_OPT_TYPE_CONST,  {.i64 = V4L_TS_ABS      }, 0, 2, DEC, .unit = "timestamps" },
+     { "mono2abs",     "force conversion from monotonic to absolute timestamps",   OFFSET(ts_mode),      AV_OPT_TYPE_CONST,  {.i64 = V4L_TS_MONO2ABS }, 0, 2, DEC, .unit = "timestamps" },
+     { "use_libv4l2",  "use libv4l2 (v4l-utils) conversion functions",             OFFSET(use_libv4l2),  AV_OPT_TYPE_BOOL,   {.i64 = 0}, 0, 1, DEC },
++    /* Each buffer is a whole frame (16 MB for 4K MJPEG on a UVC webcam): a board with 1 GB
++     * cannot afford the driver's maximum. */
++    { "v4l2_buffers", "number of capture buffers to ask the driver for",          OFFSET(desired_buffers), AV_OPT_TYPE_INT, {.i64 = desired_video_buffers }, 2, 256, DEC },
+     { NULL },
+ };
+ 

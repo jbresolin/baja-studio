@@ -192,10 +192,20 @@ def test_on_the_nanopi_the_mjpeg_is_decoded_by_the_vpu_into_hardware_frames() ->
     arguments = input_arguments(NANOPI_CAMERA)
     # The decoder options come before `-i`: they belong to this input.
     decoder_at = arguments.index("-hwaccel")
-    assert arguments[decoder_at : decoder_at + 6] == [
+    assert arguments[decoder_at : decoder_at + 8] == [
         "-hwaccel", "rkmpp", "-hwaccel_output_format", "drm_prime", "-c:v", "mjpeg_rkmpp",
+        "-frame_pool", "10",
     ]  # fmt: skip
     assert decoder_at < arguments.index("-i")
+    # Few camera buffers too, so 4K fits the 1 GB board (rockchip.py explains the numbers).
+    assert value_after(arguments, "-v4l2_buffers") == "4"
+
+
+def test_a_linux_pc_s_ffmpeg_is_not_given_the_node_build_s_options() -> None:
+    # A stock ffmpeg would refuse an option it does not know and stop, so the
+    # buffer options are only given on the Rockchip path (the node's own build).
+    arguments = input_arguments(replace(NANOPI_CAMERA, decoder="mjpeg"))
+    assert "-v4l2_buffers" not in arguments and "-frame_pool" not in arguments
 
 
 def test_the_rockchip_graph_crops_and_scales_on_the_rga_with_live_commands() -> None:

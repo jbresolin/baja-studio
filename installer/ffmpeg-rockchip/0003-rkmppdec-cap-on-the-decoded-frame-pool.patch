@@ -1,0 +1,44 @@
+diff --git a/libavcodec/rkmppdec.c b/libavcodec/rkmppdec.c
+index bec4fb8..773b83a 100644
+--- a/libavcodec/rkmppdec.c
++++ b/libavcodec/rkmppdec.c
+@@ -421,6 +421,8 @@ static int rkmpp_set_buffer_group(AVCodecContext *avctx,
+     hwfc->initial_pool_size = decoder_pool_size + 10;
+     if (avctx->extra_hw_frames > 0)
+         hwfc->initial_pool_size += avctx->extra_hw_frames;
++    if (r->frame_pool > 0)
++        hwfc->initial_pool_size = r->frame_pool;
+ 
+     if ((ret = av_hwframe_ctx_init(r->hwframe)) < 0) {
+         av_log(avctx, AV_LOG_ERROR, "Failed to init RKMPP frame pool\n");
+@@ -469,6 +471,8 @@ attach:
+         int group_limit = decoder_pool_size + ((width * height > (3840 * 2160 * 3)) ? 2 : 10);
+         if (avctx->extra_hw_frames > 0)
+             group_limit += avctx->extra_hw_frames;
++        if (r->frame_pool > 0)
++            group_limit = r->frame_pool;
+         if ((ret = mpp_buffer_group_limit_config(r->buf_group, 0, group_limit)) != MPP_OK)
+             av_log(avctx, AV_LOG_WARNING, "Failed to set buffer group limit: %d\n", ret);
+     }
+diff --git a/libavcodec/rkmppdec.h b/libavcodec/rkmppdec.h
+index 9a69d82..7e73063 100644
+--- a/libavcodec/rkmppdec.h
++++ b/libavcodec/rkmppdec.h
+@@ -68,6 +68,7 @@ typedef struct RKMPPDecContext {
+     int            afbc;
+     int            fast_parse;
+     int            buf_mode;
++    int            frame_pool; /* "frame_pool": decoded frames kept at most (0: automatic) */
+ } RKMPPDecContext;
+ 
+ enum {
+@@ -102,6 +103,9 @@ static const AVOption options[] = {
+     { "buf_mode",   "Set the buffer mode for MPP decoder", OFFSET(buf_mode), AV_OPT_TYPE_INT, { .i64 = RKMPP_DEC_HALF_INTERNAL }, 0, 1, VD, .unit = "buf_mode" },
+         { "half",   "Half internal mode",                      0, AV_OPT_TYPE_CONST, { .i64 = RKMPP_DEC_HALF_INTERNAL }, 0, 0, VD, .unit = "buf_mode" },
+         { "ext",    "Pure external mode",                      0, AV_OPT_TYPE_CONST, { .i64 = RKMPP_DEC_PURE_EXTERNAL }, 0, 0, VD, .unit = "buf_mode" },
++    /* A 4K frame is 16 MB: the automatic pool (20 frames) does not fit a 1 GB board.
++     * MJPEG keeps no reference frames, so a few more than the filters hold is enough. */
++    { "frame_pool", "Number of decoded frames to keep at most (0: automatic)", OFFSET(frame_pool), AV_OPT_TYPE_INT, { .i64 = 0 }, 0, 64, VD },
+     { NULL }
+ };
+ 
