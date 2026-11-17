@@ -55,6 +55,7 @@ from baja_studio.adapters.v4l2_structures import (
     FrameSizeEnum,
     QueryControl,
     QueryMenu,
+    fourcc,
 )
 
 # Imported by the laptop's node too (capture_devices.py), where Windows has no fcntl:
@@ -280,6 +281,39 @@ class KernelV4l2Device:
         return True
 
 
+# The format every node camera is captured in (ffmpeg's `-input_format mjpeg`).
+MJPEG = fourcc("MJPG")
+
+
+@dataclass(frozen=True)
+class CandidateNode:
+    """A capture node found through a by-path link, before `camera_nodes` chooses."""
+
+    node: DeviceNode
+    sends_mjpeg: bool
+
+
+def camera_nodes(candidates: list[CandidateNode]) -> list[DeviceNode]:
+    """The webcams among the capture nodes the by-path links point at: each once.
+
+    Found on the bench with a Logitech BRIO (16 Nov), which showed up four times:
+
+    - udev makes **two links for the same node** on Ubuntu 24.04, an older
+      `...-usb-0:1:1.0-...` and a newer `...-usbv3-0:1:1.0-...`: a node is
+      kept once, under the first of its links in sorted order, so the name a
+      setting holds does not change between listings;
+    - a camera can have **a second capture node that is not its picture**
+      (the BRIO's infrared camera, `video-index2`, grey 340x340 only): a
+      node is kept only if it sends MJPEG, the one format the node captures.
+    """
+    chosen: dict[str, DeviceNode] = {}
+    for candidate in sorted(candidates, key=lambda entry: entry.node.stable_path):
+        node = candidate.node
+        if candidate.sends_mjpeg and node.node_path not in chosen:
+            chosen[node.node_path] = node
+    return sorted(chosen.values(), key=lambda node: node.stable_path)
+
+
 class KernelV4l2System:
     """The computer's real video nodes, found through udev's `/dev/v4l/by-path` links."""
 
@@ -288,12 +322,12 @@ class KernelV4l2System:
         self._by_path = by_path
 
     def capture_nodes(self) -> list[DeviceNode]:
-        """Every capture node, by its per-port link, sorted by that link."""
+        """Every webcam, once, by its per-port link (see `camera_nodes`)."""
         try:
             links = sorted(self._by_path.iterdir())
         except OSError:
             return []
-        nodes = []
+        candidates = []
         for link in links:
             try:
                 node = os.path.realpath(link)
@@ -302,11 +336,14 @@ class KernelV4l2System:
                     if not device.is_video_capture():
                         continue
                     name = device.card_name()
+                    sends_mjpeg = MJPEG in device.pixel_formats()
             except OSError:
                 continue  # unplugged while we looked, or not ours to open
             identity = (getattr(status, "st_rdev", 0), status.st_ino)
-            nodes.append(DeviceNode(str(link), node, name, identity))
-        return nodes
+            candidates.append(
+                CandidateNode(DeviceNode(str(link), node, name, identity), sends_mjpeg)
+            )
+        return camera_nodes(candidates)
 
     def open(self, path: str) -> V4l2Device:
         """Open a node (its link or its `/dev/videoN`)."""

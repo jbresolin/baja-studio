@@ -7,10 +7,11 @@ What it does, in order, printing as it goes:
 3. runs **one camera** for `--seconds` (60) through the real pipeline to a
    local sink, playing operator on it (`bench_pass.py`), then **two cameras**
    together if there are two;
-4. on a real camera, tries the hardware MJPEG decoders (QuickSync, NVIDIA;
-   on a Rockchip board the CPU instead, for comparison) for 20 s each, to see
-   whether they work and how much CPU they save (`--skip-decoders` to leave
-   this out).
+4. on a real camera, tries the hardware MJPEG decoders (QuickSync, NVIDIA)
+   for 20 s each, to see whether they work and how much CPU they save
+   (`--skip-decoders` to leave this out). Not on a Rockchip board: there the
+   hardware path is the only one that fits (decoding 4K on its CPU ran the
+   1 GB R3S out of memory, 16 Nov).
 
 On the NanoPi (ADR 0024) the same tool runs from the node's own Python:
 `/opt/baja-camera-node/venv/bin/python -m baja_studio.node.video.bench`. The
@@ -47,13 +48,14 @@ from baja_studio.node.video.capture_devices import (
 from baja_studio.node.video.encoders import PROFILES, auto_order, probe_encoder
 from baja_studio.node.video.probe_reader import summarise_ms
 from baja_studio.node.video.rockchip import is_rockchip_board, resolve_decoder
-from baja_studio.node.video.spec import AUTO_DECODER, SOFTWARE_DECODER, PipelineSpec
+from baja_studio.node.video.spec import AUTO_DECODER, PipelineSpec
 from baja_studio.node.video.synthetic_sources import is_synthetic
 from baja_studio.playout.tools import FFMPEG, resolve_tool
 
 HARDWARE_DECODERS = ("mjpeg_qsv", "mjpeg_cuvid")
-# On a Rockchip board the hardware path is the default; the CPU pass shows what it saves.
-ROCKCHIP_COMPARISON_DECODERS = (SOFTWARE_DECODER,)
+# On a Rockchip board nothing is compared: the hardware path is the only one that fits
+# (the CPU pass at 4K ran the 1 GB R3S out of memory and Linux killed the bench).
+ROCKCHIP_COMPARISON_DECODERS: tuple[str, ...] = ()
 DECODER_PASS_SECONDS = 20.0
 
 

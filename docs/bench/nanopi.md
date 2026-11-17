@@ -36,7 +36,11 @@ and the node's log (`journalctl -u baja-camera-node`, or its page).
 - [ ] If the encoder "does not work", keep its message (MPP/RGA permission,
       the patch missing, …) and the last lines it printed.
 - [ ] `--synthetic`: the same without the camera (test card uploaded to the
-      hardware): measures the RGA and the encoder alone.
+      hardware): measures the RGA and the encoder alone. Its move latency is
+      the one to note: the test card's corners differ, while a real scene's
+      may look alike and the probe misses the move ("moves not seen"). The
+      probe decodes the H.264 on the board's own CPU, so its latency and CPU
+      include the probe; the studio's OBS is the real judge.
 - [ ] `htop` during the pass: what takes the CPU (ffmpeg's demux thread, the
       snapshot JPEG, Python)? `cat /sys/class/thermal/thermal_zone0/temp`
       after 10 minutes (the R3S has a metal case and no fan).
