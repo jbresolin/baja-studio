@@ -28,7 +28,8 @@ SERVICE_USER=baja-node
 PORT=8891
 UNIT_FILE=/etc/systemd/system/$SERVICE.service
 RULES_FILE=/etc/udev/rules.d/99-baja-camera-node.rules
-UBUNTU_PACKAGES=(python3.12 python3.12-venv libdrm2 libsrt1.5-openssl libzmq5 libx264-164 curl)
+# xz-utils unpacks the ffmpeg archive: FriendlyElec's core image does not have it.
+UBUNTU_PACKAGES=(python3.12 python3.12-venv libdrm2 libsrt1.5-openssl libzmq5 libx264-164 curl xz-utils)
 HERE=$(cd "$(dirname "$0")" && pwd)
 
 say() { printf '\n== %s\n' "$*"; }

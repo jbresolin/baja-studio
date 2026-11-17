@@ -5,7 +5,9 @@
     "commit": "e6fd228e1e2be00f9a4e1f003b287a72d252a55d",
     "date": "2026-10-25",
     "version": "ffmpeg 9.0.2 with Rockchip MPP/RGA",
-    "patches": ["0001-vpp_rkrga-move-the-crop-while-running.patch"]
+    "patches": [
+      "0001-vpp_rkrga-move-the-crop-while-running.patch"
+    ]
   },
   "mpp": {
     "repository": "https://github.com/nyanmisaka/mpp.git",
@@ -22,6 +24,12 @@
   },
   "build_image": "ubuntu:24.04",
   "target": "linux-arm64 (glibc 2.39: Ubuntu 24.04, FriendlyElec's Ubuntu Noble Core with the vendor 6.1 kernel)",
-  "runtime_packages": ["libdrm2", "libsrt1.5-openssl", "libzmq5", "libx264-164"],
+  "runtime_packages": [
+    "libdrm2",
+    "libsrt1.5-openssl",
+    "libzmq5",
+    "libx264-164",
+    "xz-utils"
+  ],
   "release_asset": "ffmpeg-rockchip-node-linux-arm64.tar.xz"
 }
