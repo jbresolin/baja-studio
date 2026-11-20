@@ -146,6 +146,40 @@ describe("the library", () => {
     });
     expect(screen.getByText(/web:desk-pc/)).toBeInTheDocument();
   });
+
+  it("plays a clip at once with the play button next to it", () => {
+    showPlayoutPage();
+
+    // The ▶ button on a clip's row sends play_now for that clip: no ticking,
+    // no queue. (The server airs it, or with take confirmation on, cues it
+    // and asks for a second press.)
+    fireEvent.click(screen.getByRole("button", { name: "Play Enduro · carro 42 now" }));
+
+    expect(lastCommand()).toMatchObject({
+      module: "playout",
+      command: "play_now",
+      args: { clip_id: 2 },
+    });
+  });
+
+  it("has no working play button on a clip whose file is missing", () => {
+    showPlayoutPage();
+
+    const missing = screen.getByTestId("clip-4");
+    expect(within(missing).getByRole("button", { name: /^Play .* now$/ })).toBeDisabled();
+  });
+
+  it("keeps the search and buttons outside the part that scrolls", () => {
+    showPlayoutPage();
+
+    // The clips and playlists sit in their own scrolling box, so a long
+    // library scrolls there and the rest of the page stays where it is.
+    // The search box and "Add to queue" stay above it, always visible.
+    const scrolling = screen.getByTestId("library-scroll");
+    expect(within(scrolling).getByTestId("group-Enduro")).toBeInTheDocument();
+    expect(within(scrolling).queryByLabelText("Search the library")).toBeNull();
+    expect(within(scrolling).queryByRole("button", { name: /Add to queue/ })).toBeNull();
+  });
 });
 
 describe("the queue", () => {

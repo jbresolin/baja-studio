@@ -99,6 +99,11 @@ instruction); the brief's shortcut list and OBS behaviour were used instead.
     - `return_to_scene` takes the clip off air now.
     - **`replay_last`** puts the last aired clip at the front of the queue
       and cues it if nothing is cued.
+    - **`play_now`** (the ▶ button on a library clip, added 2026-11-20)
+      cues that clip and takes it. A clip already in the preview goes back
+      to the front of the queue. With take confirmation on, the first press
+      cues and arms, and a second press (▶ or Take) airs it. A take armed
+      for a different clip is disarmed first, so it never airs this one.
     - Take confirmation: the first `take` arms for 3 s
       (`take_confirmation` in state, shown on every page); a second `take`
       from **any** client inside the window fires.

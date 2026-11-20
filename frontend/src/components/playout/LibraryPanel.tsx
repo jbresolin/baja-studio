@@ -7,10 +7,16 @@
  * the operator knows it exists) but cannot be picked. Files in the receiver
  * root that the manifest does not know are "unmatched": grey, and hidden
  * with one toggle. Each clip opens to edit notes, its played flag and, for
- * non-pipeline clips, its label.
+ * non-pipeline clips, its label. The play button next to a clip puts it on
+ * air at once (the server's `play_now`; with take confirmation on, a first
+ * press cues it and a second press airs it).
+ *
+ * The search and the buttons stay at the top; the playlists and the clips
+ * scroll on their own, so a long library never pushes the rest of the page
+ * (the program strip, the queue, Take) out of sight.
  */
 
-import { useState, type RefObject } from "react";
+import { useRef, useState, type RefObject } from "react";
 
 import {
   clipDetails,
@@ -22,6 +28,7 @@ import {
   type PlayoutClip,
   type Playlist,
 } from "../../lib/playout";
+import { useFitToWindowBottom } from "../../lib/useFitToWindowBottom";
 import { PlaylistList } from "./PlaylistList";
 
 type Run = (command: string, args?: Record<string, unknown>) => Promise<unknown>;
@@ -54,6 +61,8 @@ export function LibraryPanel({
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [openClip, setOpenClip] = useState<number | null>(null);
   const groups = groupLibrary(library, search, filter, hideUnmatched);
+  const panelRef = useRef<HTMLElement | null>(null);
+  useFitToWindowBottom(panelRef);
 
   function toggle(clipId: number) {
     const next = new Set(selected);
@@ -82,7 +91,7 @@ export function LibraryPanel({
   }
 
   return (
-    <section className="playout-library" aria-label="Library">
+    <section className="playout-library" aria-label="Library" ref={panelRef}>
       <div className="playout-toolbar">
         <input
           ref={searchRef}
@@ -120,99 +129,110 @@ export function LibraryPanel({
           Save as playlist
         </button>
       </div>
-      <PlaylistList playlists={playlists} library={library} run={run} />
-      {groups.length === 0 && <p className="muted">No clips match.</p>}
-      {groups.map((group) => (
-        <div
-          className={`clip-group clip-group-${group.kind}`}
-          key={group.name}
-          data-testid={`group-${group.name}`}
-        >
-          <div className="clip-group-bar">
-            <button
-              className="clip-group-header"
-              aria-expanded={!collapsed.has(group.name)}
-              onClick={() => toggleGroup(group.name)}
-              title={group.kind === "unmatched" ? UNMATCHED_HINT : undefined}
-            >
-              {collapsed.has(group.name) ? "▸" : "▾"} {group.name}{" "}
-              <span className="muted">({group.clips.length})</span>
-            </button>
-            {group.kind === "manual" && (
+      <div className="playout-library-scroll" data-testid="library-scroll">
+        <PlaylistList playlists={playlists} library={library} run={run} />
+        {groups.length === 0 && <p className="muted">No clips match.</p>}
+        {groups.map((group) => (
+          <div
+            className={`clip-group clip-group-${group.kind}`}
+            key={group.name}
+            data-testid={`group-${group.name}`}
+          >
+            <div className="clip-group-bar">
               <button
-                className="small"
-                title="Make a playlist of this folder's clips"
-                onClick={() => void run("playlist_create", { group: group.name })}
+                className="clip-group-header"
+                aria-expanded={!collapsed.has(group.name)}
+                onClick={() => toggleGroup(group.name)}
+                title={group.kind === "unmatched" ? UNMATCHED_HINT : undefined}
               >
-                + playlist
+                {collapsed.has(group.name) ? "▸" : "▾"} {group.name}{" "}
+                <span className="muted">({group.clips.length})</span>
               </button>
+              {group.kind === "manual" && (
+                <button
+                  className="small"
+                  title="Make a playlist of this folder's clips"
+                  onClick={() => void run("playlist_create", { group: group.name })}
+                >
+                  + playlist
+                </button>
+              )}
+            </div>
+            {!collapsed.has(group.name) && (
+              <ul className="clip-list">
+                {group.clips.map((clip) => (
+                  <li
+                    key={clip.id}
+                    className={[
+                      "clip",
+                      clip.missing ? "missing" : "",
+                      clip.kind === "unmatched" ? "unmatched" : "",
+                    ]
+                      .filter(Boolean)
+                      .join(" ")}
+                    data-testid={`clip-${clip.id}`}
+                    title={clip.kind === "unmatched" ? UNMATCHED_HINT : undefined}
+                  >
+                    <div className="clip-row">
+                      <input
+                        type="checkbox"
+                        aria-label={`Select ${clip.title}`}
+                        checked={selected.has(clip.id)}
+                        disabled={!clip.queueable}
+                        onChange={() => toggle(clip.id)}
+                      />
+                      <button
+                        className="small clip-play"
+                        aria-label={`Play ${clip.title} now`}
+                        title="Play now: on air at once (with take confirmation on, press twice)"
+                        disabled={!clip.queueable}
+                        onClick={() => void run("play_now", { clip_id: clip.id })}
+                      >
+                        ▶
+                      </button>
+                      {clip.has_thumbnail ? (
+                        <img className="clip-thumb" src={clipThumbnailUrl(clip.id)} alt="" />
+                      ) : (
+                        <span className="clip-thumb" />
+                      )}
+                      <button
+                        className="clip-title"
+                        onClick={() => setOpenClip(openClip === clip.id ? null : clip.id)}
+                      >
+                        {clip.title}
+                        {clipDetails(clip) && (
+                          <span className="clip-details muted">{clipDetails(clip)}</span>
+                        )}
+                      </button>
+                      <span className="clip-meta">
+                        {clip.missing ? (
+                          <span className="badge badge-offline">missing</span>
+                        ) : (
+                          <span
+                            data-testid={`duration-${clip.id}`}
+                            title={
+                              clip.duration_s === null
+                                ? (toolsProblem ?? clip.probe_error ?? "not measured yet")
+                                : undefined
+                            }
+                          >
+                            {formatKnownDuration(clip.duration_s)}
+                          </span>
+                        )}
+                        {clip.kind === "unmatched" && (
+                          <span className="badge badge-unmatched">unmatched</span>
+                        )}
+                        {clip.played_count > 0 && <span className="badge badge-ok">played</span>}
+                      </span>
+                    </div>
+                    {openClip === clip.id && <ClipEditor key={clip.id} clip={clip} run={run} />}
+                  </li>
+                ))}
+              </ul>
             )}
           </div>
-          {!collapsed.has(group.name) && (
-            <ul className="clip-list">
-              {group.clips.map((clip) => (
-                <li
-                  key={clip.id}
-                  className={[
-                    "clip",
-                    clip.missing ? "missing" : "",
-                    clip.kind === "unmatched" ? "unmatched" : "",
-                  ]
-                    .filter(Boolean)
-                    .join(" ")}
-                  data-testid={`clip-${clip.id}`}
-                  title={clip.kind === "unmatched" ? UNMATCHED_HINT : undefined}
-                >
-                  <div className="clip-row">
-                    <input
-                      type="checkbox"
-                      aria-label={`Select ${clip.title}`}
-                      checked={selected.has(clip.id)}
-                      disabled={!clip.queueable}
-                      onChange={() => toggle(clip.id)}
-                    />
-                    {clip.has_thumbnail ? (
-                      <img className="clip-thumb" src={clipThumbnailUrl(clip.id)} alt="" />
-                    ) : (
-                      <span className="clip-thumb" />
-                    )}
-                    <button
-                      className="clip-title"
-                      onClick={() => setOpenClip(openClip === clip.id ? null : clip.id)}
-                    >
-                      {clip.title}
-                      {clipDetails(clip) && (
-                        <span className="clip-details muted">{clipDetails(clip)}</span>
-                      )}
-                    </button>
-                    <span className="clip-meta">
-                      {clip.missing ? (
-                        <span className="badge badge-offline">missing</span>
-                      ) : (
-                        <span
-                          data-testid={`duration-${clip.id}`}
-                          title={
-                            clip.duration_s === null
-                              ? (toolsProblem ?? clip.probe_error ?? "not measured yet")
-                              : undefined
-                          }
-                        >
-                          {formatKnownDuration(clip.duration_s)}
-                        </span>
-                      )}
-                      {clip.kind === "unmatched" && (
-                        <span className="badge badge-unmatched">unmatched</span>
-                      )}
-                      {clip.played_count > 0 && <span className="badge badge-ok">played</span>}
-                    </span>
-                  </div>
-                  {openClip === clip.id && <ClipEditor key={clip.id} clip={clip} run={run} />}
-                </li>
-              ))}
-            </ul>
-          )}
-        </div>
-      ))}
+        ))}
+      </div>
     </section>
   );
 }

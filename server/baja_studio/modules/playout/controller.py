@@ -253,6 +253,29 @@ class PlayoutController:
                 return self.cue_next()
             return self.library.require_queueable(clip_id)
 
+    def play_now(self, clip_id: int, source: str) -> dict[str, Any]:
+        """The library's play button: put this clip on air now.
+
+        A clip already in the preview goes back to the front of the queue, so
+        nothing the operator lined up is lost. With take confirmation on, the
+        first press only cues the clip and arms the take ("Press Take again"):
+        a second press (play button or Take) airs it. A take armed earlier for
+        another clip never fires this one.
+        """
+        with self.lock:
+            self.library.require_queueable(clip_id)
+            cued = self.switcher.cued
+            if cued is None or cued.clip["id"] != clip_id:
+                # Whatever was armed was for a different clip: start over.
+                self._confirmation.disarm()
+                if cued is not None:
+                    self.switcher.discard_cue()
+                    self.queue.add([cued.clip["id"]], source, True, cued.playlist_id)
+                self.queue.add([clip_id], source, True, None)
+                self.publisher.publish_queue()
+                self.cue_next()
+            return self.take(source)
+
     def set_auto_play_next(self, enabled: bool) -> None:
         """Turn "auto-play next" on or off (off by default: hosts usually talk between passes)."""
         with self.lock:
