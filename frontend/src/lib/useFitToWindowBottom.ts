@@ -17,7 +17,7 @@ const SIDE_BY_SIDE_COLUMNS = "(min-width: 901px)";
 /** Never shrink the panel below this, even on a very short window. */
 const SMALLEST_HEIGHT_PX = 240;
 /** Space left under the panel, so it doesn't touch the window's edge. */
-const BOTTOM_MARGIN_PX = 12;
+const BOTTOM_MARGIN_PX = 20;
 
 export function useFitToWindowBottom(ref: RefObject<HTMLElement | null>): void {
   useLayoutEffect(() => {

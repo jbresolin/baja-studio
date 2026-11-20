@@ -38,10 +38,10 @@ afterEach(() => {
 
 describe("useFitToWindowBottom", () => {
   it("caps the panel at the space left down to the window's bottom", () => {
-    // A 1000 px window, the panel starting 300 px down: 1000 − 300 − 12 px margin.
+    // A 1000 px window, the panel starting 300 px down: 1000 − 300 − 20 px margin.
     windowOf(1000, true);
     const { getByTestId } = render(<Panel topPx={300} />);
-    expect(getByTestId("panel").style.maxHeight).toBe("688px");
+    expect(getByTestId("panel").style.maxHeight).toBe("680px");
   });
 
   it("never makes the panel shorter than 240 px on a very short window", () => {
