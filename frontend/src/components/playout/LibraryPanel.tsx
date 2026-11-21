@@ -11,6 +11,11 @@
  * air at once (the server's `play_now`; with take confirmation on, a first
  * press cues it and a second press airs it).
  *
+ * "hide played" leaves out clips already aired. "Select unplayed" ticks every
+ * unplayed clip shown (in open groups, after the search and filters), and each
+ * group's "select" ticks that group's shown clips (pressed again, unticks
+ * them). Clips whose file is missing are never ticked.
+ *
  * The search and the buttons stay at the top; the playlists and the clips
  * scroll on their own, so a long library never pushes the rest of the page
  * (the program strip, the queue, Take) out of sight.
@@ -23,6 +28,7 @@ import {
   clipThumbnailUrl,
   formatKnownDuration,
   groupLibrary,
+  selectableClipIds,
   UNMATCHED_HINT,
   type LibraryFilter,
   type PlayoutClip,
@@ -58,9 +64,15 @@ export function LibraryPanel({
   const [search, setSearch] = useState("");
   const [filter, setFilter] = useState<LibraryFilter>("all");
   const [hideUnmatched, setHideUnmatched] = useState(false);
+  const [hidePlayed, setHidePlayed] = useState(false);
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [openClip, setOpenClip] = useState<number | null>(null);
-  const groups = groupLibrary(library, search, filter, hideUnmatched);
+  const groups = groupLibrary(library, search, filter, hideUnmatched, hidePlayed);
+  // Unplayed clips the operator can see: in open groups, after search and filters.
+  const shownUnplayed = selectableClipIds(
+    groups.filter((group) => !collapsed.has(group.name)).flatMap((group) => group.clips),
+    true,
+  );
   const panelRef = useRef<HTMLElement | null>(null);
   useFitToWindowBottom(panelRef);
 
@@ -69,6 +81,22 @@ export function LibraryPanel({
     if (next.has(clipId)) next.delete(clipId);
     else next.add(clipId);
     onSelectedChange(next);
+  }
+
+  /** Tick these clips too (keeping what was already ticked). */
+  function selectAlso(clipIds: number[]) {
+    onSelectedChange(new Set([...selected, ...clipIds]));
+  }
+
+  /** A group's "select": tick its shown clips, or untick them if all already are. */
+  function toggleGroupSelection(clipIds: number[]) {
+    if (clipIds.length > 0 && clipIds.every((id) => selected.has(id))) {
+      const next = new Set(selected);
+      for (const id of clipIds) next.delete(id);
+      onSelectedChange(next);
+    } else {
+      selectAlso(clipIds);
+    }
   }
 
   function toggleGroup(name: string) {
@@ -120,6 +148,14 @@ export function LibraryPanel({
           />
           hide unmatched
         </label>
+        <label className="inline" title="Leave out clips that have already been on air">
+          <input
+            type="checkbox"
+            checked={hidePlayed}
+            onChange={(event) => setHidePlayed(event.target.checked)}
+          />
+          hide played
+        </label>
       </div>
       <div className="playout-toolbar">
         <button disabled={selected.size === 0} onClick={() => void addSelected()}>
@@ -127,6 +163,16 @@ export function LibraryPanel({
         </button>
         <button disabled={selected.size === 0} onClick={() => void saveSelectionAsPlaylist()}>
           Save as playlist
+        </button>
+        <button
+          disabled={shownUnplayed.length === 0}
+          title="Tick every unplayed clip shown (open groups, after the search and filters)"
+          onClick={() => selectAlso(shownUnplayed)}
+        >
+          Select unplayed{shownUnplayed.length > 0 ? ` (${shownUnplayed.length})` : ""}
+        </button>
+        <button disabled={selected.size === 0} onClick={() => onSelectedChange(new Set())}>
+          Select none
         </button>
       </div>
       <div className="playout-library-scroll" data-testid="library-scroll">
@@ -148,6 +194,12 @@ export function LibraryPanel({
                 {collapsed.has(group.name) ? "▸" : "▾"} {group.name}{" "}
                 <span className="muted">({group.clips.length})</span>
               </button>
+              <GroupSelectButton
+                group={group.name}
+                clipIds={selectableClipIds(group.clips)}
+                selected={selected}
+                onToggle={toggleGroupSelection}
+              />
               {group.kind === "manual" && (
                 <button
                   className="small"
@@ -234,6 +286,32 @@ export function LibraryPanel({
         ))}
       </div>
     </section>
+  );
+}
+
+/** A group's "select" / "unselect" button, for its shown clips that can be queued. */
+function GroupSelectButton({
+  group,
+  clipIds,
+  selected,
+  onToggle,
+}: {
+  group: string;
+  clipIds: number[];
+  selected: Set<number>;
+  onToggle: (clipIds: number[]) => void;
+}) {
+  const allSelected = clipIds.length > 0 && clipIds.every((id) => selected.has(id));
+  return (
+    <button
+      className="small"
+      aria-label={`${allSelected ? "Unselect" : "Select"} the shown clips of ${group}`}
+      title="Tick (or untick) this group's clips that are shown"
+      disabled={clipIds.length === 0}
+      onClick={() => onToggle(clipIds)}
+    >
+      {allSelected ? "unselect" : "select"}
+    </button>
   );
 }
 

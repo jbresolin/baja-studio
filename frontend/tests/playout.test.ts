@@ -17,6 +17,7 @@ import {
   playoutKeyAction,
   programProgress,
   remainingAfterOnAir,
+  selectableClipIds,
   transportArgs,
 } from "../src/lib/playout";
 import { clip } from "./playoutFixtures";
@@ -122,6 +123,21 @@ describe("groupLibrary", () => {
     expect(ids("unplayed")).toEqual([2, 1]);
     expect(ids("played")).toEqual([3]);
     expect(ids("missing")).toEqual([4]);
+  });
+
+  it("hides played clips with hidePlayed, on top of any filter", () => {
+    const shown = groupLibrary(library, "", "all", false, true).flatMap((group) =>
+      group.clips.map((item) => item.id),
+    );
+    // Clip 3 was played; the missing clip 4 is still listed (it was never played).
+    expect(shown.sort()).toEqual([1, 2, 4]);
+  });
+
+  it("selects only clips that can be queued, and only unplayed ones when asked", () => {
+    const all = Object.values(library);
+    // 4's file is missing: never selectable. 3 was played.
+    expect(selectableClipIds(all).sort()).toEqual([1, 2, 3]);
+    expect(selectableClipIds(all, true).sort()).toEqual([1, 2]);
   });
 
   it("matches every search word against title, prova, team and car number", () => {

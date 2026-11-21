@@ -323,11 +323,13 @@ export function groupLibrary(
   search: string,
   filter: LibraryFilter,
   hideUnmatched = false,
+  hidePlayed = false,
 ): ClipGroup[] {
   const words = search.toLowerCase().split(/\s+/).filter(Boolean);
   const groups = new Map<string, { kind: ClipKind; clips: PlayoutClip[] }>();
   for (const clip of Object.values(library)) {
     if (hideUnmatched && clip.kind === "unmatched") continue;
+    if (hidePlayed && clip.played_count > 0) continue;
     if (!matchesFilter(clip, filter) || !matchesSearch(clip, words)) continue;
     const group = groups.get(clip.group) ?? { kind: clip.kind, clips: [] };
     group.clips.push(clip);
@@ -347,6 +349,17 @@ export function groupLibrary(
         a.title.localeCompare(b.title),
     ),
   }));
+}
+
+/**
+ * The clips a library "select" button picks among `clips` (those shown, after
+ * the search and filters): the ones that can be queued (their file is
+ * there), and with `onlyUnplayed` only those never played.
+ */
+export function selectableClipIds(clips: PlayoutClip[], onlyUnplayed = false): number[] {
+  return clips
+    .filter((clip) => clip.queueable && (!onlyUnplayed || clip.played_count === 0))
+    .map((clip) => clip.id);
 }
 
 export type TransportKeyAction = "transport_toggle" | "transport_back" | "transport_forward";

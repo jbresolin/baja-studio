@@ -1436,6 +1436,11 @@ main:has(.playout-settings) {
   gap: 0.4rem;
 }
 
+/* "select" and "+ playlist" stay on one line each. */
+.clip-group-bar .small {
+  white-space: nowrap;
+}
+
 /* The library scrolls on its own: its height is capped (by
    useFitToWindowBottom) at the space down to the window's bottom, the search
    and buttons stay at the top, and the playlists and clips scroll. */
