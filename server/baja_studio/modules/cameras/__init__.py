@@ -53,6 +53,7 @@ from baja_studio.imaging.service import CameraEdit, ImagingHost, ImagingService
 from baja_studio.imaging.uvc_link import ChildHost, UvcChildLink
 from baja_studio.imaging.watch import ImagingWatch
 from baja_studio.modules.cameras.commands import CameraCommands
+from baja_studio.modules.cameras.d200_preset_route import d200_preset_routes
 from baja_studio.modules.cameras.image_commands import IMAGE_COMMANDS, ImageCommands
 from baja_studio.modules.cameras.obs_commands import (
     OBS_COMMANDS,
@@ -185,6 +186,10 @@ class CamerasModule(Module):
     def routes(self) -> APIRouter:
         """Camera previews (`preview_routes.py`)."""
         return camera_routes(lambda: self._previews)
+
+    def root_routes(self) -> APIRouter:
+        """`/action/preset/{camera}/{number}`: a preset from a URL, for the D200."""
+        return d200_preset_routes()
 
     def readiness_checks(self) -> list[ReadinessCheck]:
         """Every enabled camera and controller, from what their workers publish."""
