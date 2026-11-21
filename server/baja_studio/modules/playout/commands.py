@@ -285,6 +285,9 @@ HANDLERS: dict[str, Handler] = {
     "drop_next": lambda controller, args, source: controller.drop_next(),
     "return_to_scene": lambda controller, args, source: controller.return_to_scene(),
     "replay_last": lambda controller, args, source: controller.replay_last(source),
+    "play_now": lambda controller, args, source: controller.play_now(
+        _int_arg(args, "clip_id"), source
+    ),
     "set_notes": _set_notes,
     "mark_played": _mark_played,
     "set_label": _set_label,

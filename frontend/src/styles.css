@@ -1436,6 +1436,31 @@ main:has(.playout-settings) {
   gap: 0.4rem;
 }
 
+/* The library scrolls on its own: its height is capped (by
+   useFitToWindowBottom) at the space down to the window's bottom, the search
+   and buttons stay at the top, and the playlists and clips scroll. */
+.playout-library {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.playout-library-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-right: 0.3rem;
+}
+
+/* The library's play button: small and square, before the thumbnail. */
+.clip-play {
+  flex: none;
+  width: 1.9rem;
+  padding: 0.15rem 0;
+  line-height: 1;
+}
+
 .clip-details {
   display: block;
   font-size: 0.8rem;

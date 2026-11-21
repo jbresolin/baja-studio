@@ -630,3 +630,87 @@ def test_a_clip_s_frame_rate_comes_from_ffprobe(playout: PlayoutStudio) -> None:
     ready_studio(playout, ("a.mp4",))
 
     assert playout.clip("a.mp4")["fps"] == CLIP_FPS  # type: ignore[index]
+
+
+# --- the library's play button ("play now") --------------------------------------------
+
+
+def test_play_now_puts_a_clip_straight_on_air_without_queueing_it_first(
+    playout: PlayoutStudio,
+) -> None:
+    # The operator presses the play button next to a clip in the library.
+    # Without take confirmation that one press puts it on air.
+    _, second, _ = ready_studio(playout)
+
+    result = playout.command("play_now", clip_id=second)
+
+    assert result["status"] == "on_air"
+    assert playout.state("program")["clip"]["id"] == second
+    assert playout.obs.program_scene == "Playback A"
+    # It was never left behind in the queue.
+    assert playout.state("queue") == []
+
+
+def test_play_now_keeps_the_clip_that_was_in_the_preview_at_the_front_of_the_queue(
+    playout: PlayoutStudio,
+) -> None:
+    # Something was already lined up (cued in the preview, more in the queue).
+    # Playing another clip now must not lose it: it goes back to the front of
+    # the queue, ahead of what was queued after it.
+    first, second, third = ready_studio(playout)
+    playout.command("queue_add", clip_ids=[first, third])
+    playout.command("cue_next")  # `first` is in the preview, `third` waits
+
+    playout.command("play_now", clip_id=second)
+
+    assert playout.state("program")["clip"]["id"] == second
+    assert [entry["clip_id"] for entry in playout.state("queue")] == [first, third]
+
+
+def test_with_confirmation_on_play_now_first_cues_and_a_second_press_airs(
+    playout: PlayoutStudio,
+) -> None:
+    # With take confirmation on, the first press only cues the clip and shows
+    # "Press Take again"; nothing goes to air. A second press of the play
+    # button (or of Take) inside 3 s airs it.
+    _, second, _ = ready_studio(playout)
+    playout.configure(operators={"require_take_confirmation": True})
+
+    assert playout.command("play_now", clip_id=second)["status"] == "confirm"
+    assert playout.state("preview")["clip"]["id"] == second
+    assert playout.obs.program_scene == "Main"
+
+    playout.clock.advance(1.0)
+    assert playout.command("play_now", clip_id=second)["status"] == "on_air"
+    assert playout.state("program")["clip"]["id"] == second
+
+
+def test_with_confirmation_on_a_take_armed_for_another_clip_never_airs_play_now(
+    playout: PlayoutStudio,
+) -> None:
+    # Bob armed a Take for the clip in the preview. Alice then presses play on
+    # a different clip. That press must not ride on Bob's arming and air her
+    # clip unconfirmed: it cues her clip and asks for confirmation again.
+    first, second, _ = ready_studio(playout)
+    playout.configure(operators={"require_take_confirmation": True})
+    playout.command("queue_add", clip_ids=[first])
+    playout.command("cue_next")
+    assert playout.command("take", source="web:bob")["status"] == "confirm"
+
+    result = playout.command("play_now", source="web:alice", clip_id=second)
+
+    assert result["status"] == "confirm"
+    assert playout.obs.program_scene == "Main"
+    assert playout.state("preview")["clip"]["id"] == second
+    assert playout.state("take_confirmation")["requested_by"] == "web:alice"
+
+
+def test_play_now_refuses_a_clip_whose_file_is_missing(playout: PlayoutStudio) -> None:
+    # A missing file can't play; the refusal comes before anything changes.
+    first, _, _ = ready_studio(playout)
+    (playout.clips_folder / "a.mp4").unlink()
+    playout.soon(lambda: playout.clip("a.mp4")["missing"])  # type: ignore[index]
+
+    with pytest.raises(CommandError, match="file is missing"):
+        playout.command("play_now", clip_id=first)
+    assert playout.state("program") is None
