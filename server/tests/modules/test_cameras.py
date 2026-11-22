@@ -413,3 +413,65 @@ def test_an_agent_camera_without_a_fallback_just_goes_offline_with_its_agent(
     studio.soon(lambda: studio.status("trackside") == "offline")
     assert studio.camera("trackside")["route"] == "agent"
     assert studio.network.opened == []
+
+
+# --- a preset from a URL (the D200's buttons) ---------------------------------------------
+
+
+def test_a_d200_button_url_recalls_a_preset_counting_from_one(studio: Studio) -> None:
+    # The D200 can only open a URL. /action/preset/<camera>/<number> recalls
+    # the preset numbered as on the Cameras page: "1" is the first preset,
+    # which the recall_preset command calls 0.
+    camera = studio.network.add(SMTAV_HOST)
+    studio.configure(cameras=[smtav()])
+    eventually(lambda: studio.status("smtav") == "ok")
+    camera.pan.position = 1000
+    studio.command("store_preset", camera="smtav", n=0)  # "preset 1" on the page
+    eventually(lambda: 0 in camera.presets)
+    camera.pan.position = 0
+    assert studio.http is not None
+
+    response = studio.http.get("/action/preset/smtav/1")
+
+    assert response.status_code == 200
+    assert response.json() == {"ok": True, "camera": "smtav", "preset": 1}
+    eventually(lambda: camera.pan.position == 1000)
+    # It is in the command log as the D200, like its audio buttons.
+    assert ("recall_preset", "ok", {"camera": "smtav", "n": 0}) in studio.log("device:d200")
+
+
+def test_the_d200_url_finds_a_camera_by_its_label_in_any_case_and_answers_post_too(
+    studio: Studio,
+) -> None:
+    # Ulanzi Studio may send GET or POST; the camera can be named by its id or
+    # by the label shown on the Cameras page, upper or lower case.
+    camera = studio.network.add(SMTAV_HOST)
+    studio.configure(cameras=[smtav(label="Finish PTZ")])
+    eventually(lambda: studio.status("smtav") == "ok")
+    studio.command("store_preset", camera="smtav", n=2)
+    eventually(lambda: 2 in camera.presets)
+    assert studio.http is not None
+
+    response = studio.http.post("/action/preset/finish ptz/3")
+
+    assert response.status_code == 200
+    assert response.json()["camera"] == "smtav"
+    assert studio.http.get("/action/preset/SMTAV/3").status_code == 200
+
+
+def test_the_d200_url_refuses_unknown_cameras_and_bad_numbers_with_an_error(
+    studio: Studio,
+) -> None:
+    # A typo in the D200's URL gets a clear message (and nothing moves).
+    studio.network.add(SMTAV_HOST)
+    studio.configure(cameras=[smtav()])
+    assert studio.http is not None
+
+    unknown = studio.http.get("/action/preset/nope/1")
+    assert unknown.status_code == 404
+    assert unknown.json() == {"error": "no camera called 'nope'"}
+    for number in ("0", "one", "-2"):
+        bad = studio.http.get(f"/action/preset/smtav/{number}")
+        assert bad.status_code == 400, number
+        assert "counts from 1" in bad.json()["error"]
+    assert studio.log("device:d200") == []
