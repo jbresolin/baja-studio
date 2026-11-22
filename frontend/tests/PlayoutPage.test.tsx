@@ -180,6 +180,98 @@ describe("the library", () => {
     expect(within(scrolling).queryByLabelText("Search the library")).toBeNull();
     expect(within(scrolling).queryByRole("button", { name: /Add to queue/ })).toBeNull();
   });
+
+  /** The page's library, with Enduro carro 7 already played and a third, unplayed Enduro pass. */
+  function libraryWithPlayed(): PlayoutState["library"] {
+    const clips = library();
+    clips["3"] = { ...clips["3"]!, played_count: 1 };
+    clips["5"] = clip({
+      id: 5,
+      source: "orchestrator",
+      title: "Enduro · carro 99",
+      prova: "Enduro",
+      car_number: 99,
+    });
+    return clips;
+  }
+
+  /** The clip ids the next "Add to queue" would send, sorted. */
+  function queuedIds(): number[] {
+    fireEvent.click(screen.getByRole("button", { name: /^Add to queue/ }));
+    return [...(lastCommand().args.clip_ids as number[])].sort((a, b) => a - b);
+  }
+
+  it("hides clips already on air with 'hide played'", () => {
+    showPlayoutPage(playoutState({ library: libraryWithPlayed() }));
+    expect(screen.getByTestId("clip-3")).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText("hide played"));
+
+    // Carro 7 was played: gone. The unplayed ones stay.
+    expect(screen.queryByTestId("clip-3")).toBeNull();
+    expect(screen.getByTestId("clip-2")).toBeInTheDocument();
+    expect(screen.getByTestId("clip-5")).toBeInTheDocument();
+  });
+
+  it("'Select unplayed' ticks only the unplayed clips shown, after the search", () => {
+    showPlayoutPage(playoutState({ library: libraryWithPlayed() }));
+    // Searching "enduro" hides the Intro; carro 7 is played; the Suspensão
+    // clip's file is missing. That leaves carros 42 and 99.
+    fireEvent.change(screen.getByLabelText("Search the library"), {
+      target: { value: "enduro" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /^Select unplayed/ }));
+
+    expect(queuedIds()).toEqual([2, 5]);
+  });
+
+  it("'Select unplayed' leaves out the clips of a collapsed group", () => {
+    showPlayoutPage(playoutState({ library: libraryWithPlayed() }));
+    // Close the Enduro group: its clips are not shown, so not ticked. Only
+    // the Intro (its own folder group) is left.
+    fireEvent.click(screen.getByRole("button", { name: /^▾ Enduro/ }));
+
+    fireEvent.click(screen.getByRole("button", { name: /^Select unplayed/ }));
+
+    expect(queuedIds()).toEqual([1]);
+  });
+
+  it("a prova's 'select' ticks its shown clips, and pressed again unticks them", () => {
+    showPlayoutPage(playoutState({ library: libraryWithPlayed() }));
+    fireEvent.click(screen.getByLabelText("hide played"));
+    const enduro = screen.getByTestId("group-Enduro");
+
+    // With "hide played" on, carro 7 isn't shown, so it isn't ticked.
+    fireEvent.click(
+      within(enduro).getByRole("button", { name: "Select the shown clips of Enduro" }),
+    );
+    expect(screen.getByLabelText("Select Enduro · carro 42")).toBeChecked();
+    expect(screen.getByLabelText("Select Enduro · carro 99")).toBeChecked();
+    expect(screen.getByLabelText("Select Intro")).not.toBeChecked();
+
+    fireEvent.click(
+      within(enduro).getByRole("button", { name: "Unselect the shown clips of Enduro" }),
+    );
+    expect(screen.getByLabelText("Select Enduro · carro 42")).not.toBeChecked();
+    expect(screen.getByLabelText("Select Enduro · carro 99")).not.toBeChecked();
+  });
+
+  it("never ticks a clip whose file is missing, and 'Select none' clears the ticks", () => {
+    showPlayoutPage(playoutState({ library: libraryWithPlayed() }));
+    const suspensao = screen.getByTestId("group-Suspensão");
+
+    // The Suspensão group only has a missing clip: its "select" can't do anything.
+    expect(
+      within(suspensao).getByRole("button", { name: "Select the shown clips of Suspensão" }),
+    ).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("button", { name: /^Select unplayed/ }));
+    expect(screen.getByLabelText("Select Intro")).toBeChecked();
+    fireEvent.click(screen.getByRole("button", { name: "Select none" }));
+    expect(screen.getByLabelText("Select Intro")).not.toBeChecked();
+    expect(screen.getByRole("button", { name: /^Add to queue/ })).toBeDisabled();
+  });
 });
 
 describe("the queue", () => {
